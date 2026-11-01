@@ -5,7 +5,7 @@ import (
 	"os"
 	"runtime"
 
- "github.com/jakej985-rgb/m3tal-review/internal/git"
+	"github.com/jakej985-rgb/m3tal-review/internal/git"
 )
 
 var (
@@ -38,13 +38,14 @@ func execute(command string) error {
 			return fmt.Errorf("get working directory: %w", err)
 		}
 
-  repositoryRoot, err := git.RepositoryRoot(workingDir)
-	if err != nil {
-		return err
-	}
+		repositoryRoot, err := git.RepositoryRoot(workingDir)
+		if err != nil {
+			return err
+		}
 
 		fmt.Println("M3TAL Review")
 		fmt.Println("Working directory:", workingDir)
+		fmt.Println("Repository root:", repositoryRoot)
 
 		return nil
 
