@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+
+"github.com/jakej985-rgb/m3tal-review/internal/git"
 )
 
 var (
