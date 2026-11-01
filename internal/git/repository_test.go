@@ -63,3 +63,26 @@ func TestIsClean(t *testing.T) {
 		t.Fatal("IsClean() = true, want false when an untracked file exists")
 	}
 }
+
+func TestCurrentBranch(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	createBranch := exec.Command("git", "-C", repoDir, "checkout", "-b", "review-test")
+	if output, err := createBranch.CombinedOutput(); err != nil {
+		t.Fatalf("create test branch: %v\n%s", err, output)
+	}
+
+	branch, err := CurrentBranch(repoDir)
+	if err != nil {
+		t.Fatalf("CurrentBranch() error: %v", err)
+	}
+
+	if branch != "review-test" {
+		t.Errorf("CurrentBranch() = %q, want %q", branch, "review-test")
+	}
+}

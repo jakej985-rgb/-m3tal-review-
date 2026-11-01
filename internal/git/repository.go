@@ -46,3 +46,23 @@ func IsClean(path string) (bool, error) {
 
 	return strings.TrimSpace(string(output)) == "", nil
 }
+
+func CurrentBranch(path string) (string, error) {
+	command := exec.Command("git", "-C", path, "branch", "--show-current")
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf(
+			"get current branch: %s: %w",
+			strings.TrimSpace(string(output)),
+			err,
+		)
+	}
+
+	branch := strings.TrimSpace(string(output))
+	if branch == "" {
+		return "", fmt.Errorf("get current branch: repository is in detached HEAD state")
+	}
+
+	return branch, nil
+}
