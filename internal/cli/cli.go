@@ -38,6 +38,11 @@ func execute(command string) error {
 			return fmt.Errorf("get working directory: %w", err)
 		}
 
+  repositoryRoot, err := git.RepositoryRoot(workingDir)
+	if err != nil {
+		return err
+	}
+
 		fmt.Println("M3TAL Review")
 		fmt.Println("Working directory:", workingDir)
 
