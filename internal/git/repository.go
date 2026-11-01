@@ -9,9 +9,13 @@ import (
 func RepositoryRoot(path string) (string, error) {
 	command := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
 
-	output, err := command.Output()
+	output, err := command.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("find repository root: %w", err)
+		return "", fmt.Errorf(
+			"find repository root: %s: %w",
+			strings.TrimSpace(string(output)),
+			err,
+		)
 	}
 
 	root := strings.TrimSpace(string(output))

@@ -23,3 +23,12 @@ func TestRepositoryRoot(t *testing.T) {
 		t.Errorf("RepositoryRoot() = %q, want %q", root, filepath.Clean(repoDir))
 	}
 }
+
+func TestRepositoryRootOutsideRepository(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := RepositoryRoot(dir)
+	if err == nil {
+		t.Fatal("RepositoryRoot() expected an error for a non-repository directory")
+	}
+}
