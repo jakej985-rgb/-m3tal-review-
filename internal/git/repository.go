@@ -18,3 +18,12 @@ func RepositoryRoot(path string) (string, error) {
 
 	return root, nil
 }
+
+func Available() error {
+	_, err := exec.LookPath("git")
+	if err != nil {
+		return fmt.Errorf("git executable not found: %w", err)
+	}
+
+	return nil
+}

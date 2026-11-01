@@ -38,6 +38,10 @@ func execute(command string) error {
 			return fmt.Errorf("get working directory: %w", err)
 		}
 
+		if err := git.Available(); err != nil {
+			return err
+		}
+
 		repositoryRoot, err := git.RepositoryRoot(workingDir)
 		if err != nil {
 			return err
