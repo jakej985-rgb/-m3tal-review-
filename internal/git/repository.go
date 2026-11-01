@@ -31,3 +31,18 @@ func Available() error {
 
 	return nil
 }
+
+func IsClean(path string) (bool, error) {
+	command := exec.Command("git", "-C", path, "status", "--porcelain")
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf(
+			"check working tree status: %s: %w",
+			strings.TrimSpace(string(output)),
+			err,
+		)
+	}
+
+	return strings.TrimSpace(string(output)) == "", nil
+}
