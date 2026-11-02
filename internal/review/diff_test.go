@@ -140,3 +140,4 @@ func TestParseDiffMultipleHunks(t *testing.T) {
 		t.Errorf("AddedLines = %v, want [3 12]", fd.AddedLines)
 	}
 }
+
