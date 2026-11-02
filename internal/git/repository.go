@@ -102,7 +102,7 @@ func UntrackedFiles(path string) ([]string, error) {
 		)
 	}
 
-	files := strings.Split(strings.TrimSpace(string(output)), "\n")
+	files := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
 	if len(files) == 1 && files[0] == "" {
 		return []string{}, nil
 	}
