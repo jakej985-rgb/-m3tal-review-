@@ -366,3 +366,120 @@ func main() {
 		t.Fatalf("expected excessive nesting finding for depth 5 at line 7, got %+v", findings)
 	}
 }
+
+func TestSlopRuleSiblingDepthNotInherited(t *testing.T) {
+	source := `package main
+func main() { // 1
+	if true { // 2
+		if true { // 3
+		}
+	}
+	if true { // 2
+		if true { // 3
+		}
+	}
+}`
+	repoDir := setupSlopTestRepo(t, source)
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -6,4 +6,5 @@
+	}
+	if true { // 2
++		if true { // 3
++		}
+	}
+ }`
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	for _, f := range findings {
+		if f.Message == "Excessive AST nesting depth (4+ levels)" {
+			t.Fatalf("expected NO excessive nesting finding for depth 3, got %+v", findings)
+		}
+	}
+}
+
+func TestSlopRuleNoDuplicateFindings(t *testing.T) {
+	source := `package main
+func main() {
+	if true == true {}
+}`
+	repoDir := setupSlopTestRepo(t, source)
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -2,2 +2,3 @@
+ func main() {
++	if true == true {}
+ }`
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+
+	// This has an empty block AND a redundant boolean comparison on the exact same line!
+	// It should return exactly two findings, one for each rule, no duplicates!
+	if len(findings) != 2 {
+		t.Fatalf("expected exactly 2 findings, got %d: %+v", len(findings), findings)
+	}
+
+	foundEmpty := false
+	foundRedundant := false
+	for _, f := range findings {
+		if f.Message == "Empty block" {
+			if foundEmpty {
+				t.Fatalf("Duplicate Empty block finding!")
+			}
+			foundEmpty = true
+		}
+		if f.Message == "Redundant boolean comparison" {
+			if foundRedundant {
+				t.Fatalf("Duplicate Redundant boolean comparison finding!")
+			}
+			foundRedundant = true
+		}
+	}
+}
+
+func TestSlopRuleAnalysisErrorOnInvalidSyntax(t *testing.T) {
+	source := `package main
+func main() {
+	if true == true { // Missing closing brace`
+	repoDir := setupSlopTestRepo(t, source)
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -2,2 +2,3 @@
+ func main() {
++	if true == true { // Missing closing brace`
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+
+	foundError := false
+	for _, f := range findings {
+		if f.Rule == "code-slop-analysis-error" && f.Severity == "high" {
+			foundError = true
+		}
+	}
+	if !foundError {
+		t.Fatalf("expected code-slop-analysis-error finding for invalid syntax, got: %+v", findings)
+	}
+}
+
+func TestSlopRuleAnalysisErrorOnMissingFile(t *testing.T) {
+	repoDir := setupSlopTestRepo(t, "package main")
+
+	// Create a diff for a file that isn't staged
+	diff := `diff --git a/missing.go b/missing.go
+--- a/missing.go
++++ b/missing.go
+@@ -1,2 +1,3 @@
+ package main
++func missing() {}`
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+
+	foundError := false
+	for _, f := range findings {
+		if f.Rule == "code-slop-analysis-error" && f.Severity == "high" {
+			foundError = true
+		}
+	}
+	if !foundError {
+		t.Fatalf("expected code-slop-analysis-error finding for missing file, got: %+v", findings)
+	}
+}

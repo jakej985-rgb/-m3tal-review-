@@ -73,6 +73,9 @@ func (r SlopRule) Check(diff string) []Finding {
 	}
 
 	for file, lines := range addedLines {
+		if file == "/dev/null" {
+			continue
+		}
 		if strings.HasSuffix(file, ".go") && r.RepositoryRoot != "" {
 			findings = append(findings, r.checkGoFileAST(file, lines)...)
 		} else {
@@ -223,13 +226,18 @@ func (w *slopWrapperVisitor) Visit(n ast.Node) ast.Visitor {
 func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
 	content, err := git.StagedFileContent(r.RepositoryRoot, file)
 	if err != nil {
+		// If git show fails because the file is deleted (e.g. fatal: path '...' exists on disk, but not in ...),
+		// we should NOT fail the analysis. We should just return nil.
+		// "Deleted files are handled as deletions, not analysis errors."
+		// How do we distinguish? `git show` on a deleted file returns a specific error or we can check diff!
+		// Wait, if a file is deleted, the diff has `+++ /dev/null`.
 		return []Finding{{
-			Rule:        "code-slop",
+			Rule:        "code-slop-analysis-error",
 			Severity:    "high",
 			File:        file,
 			Line:        0,
 			Message:     "Failed to read staged content: " + err.Error(),
-			Remediation: "Check git index or file permissions.",
+			Remediation: "Ensure the file exists in the git index or exclude it.",
 		}}
 	}
 
@@ -237,7 +245,7 @@ func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
 	f, err := parser.ParseFile(fset, file, content, parser.ParseComments)
 	if err != nil {
 		return []Finding{{
-			Rule:        "code-slop",
+			Rule:        "code-slop-analysis-error",
 			Severity:    "high",
 			File:        file,
 			Line:        0,
