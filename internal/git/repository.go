@@ -66,3 +66,23 @@ func CurrentBranch(path string) (string, error) {
 
 	return branch, nil
 }
+
+func ChangedFiles(path string) ([]string, error) {
+	command := exec.Command("git", "-C", path, "diff", "--name-only", "HEAD")
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get changed files: %s: %w",
+			strings.TrimSpace(string(output)),
+			err,
+		)
+	}
+
+	files := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(files) == 1 && files[0] == "" {
+		return []string{}, nil
+	}
+
+	return files, nil
+}

@@ -162,3 +162,45 @@ func TestCurrentBranchDetachedHEAD(t *testing.T) {
 		t.Fatalf("CurrentBranch() = %q, want error for detached HEAD", branch)
 	}
 }
+
+func TestChangedFiles(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	filePath := filepath.Join(repoDir, "tracked.txt")
+	if err := os.WriteFile(filePath, []byte("initial"), 0644); err != nil {
+		t.Fatalf("write tracked file: %v", err)
+	}
+
+	add := exec.Command("git", "-C", repoDir, "add", "tracked.txt")
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("stage tracked file: %v\n%s", err, output)
+	}
+
+	commit := exec.Command(
+		"git", "-C", repoDir,
+		"-c", "user.name=Test User",
+		"-c", "user.email=test@example.com",
+		"commit", "-m", "initial commit",
+	)
+	if output, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("create initial commit: %v\n%s", err, output)
+	}
+
+	if err := os.WriteFile(filePath, []byte("modified"), 0644); err != nil {
+		t.Fatalf("modify tracked file: %v", err)
+	}
+
+	files, err := ChangedFiles(repoDir)
+	if err != nil {
+		t.Fatalf("ChangedFiles() error: %v", err)
+	}
+
+	if len(files) != 1 || files[0] != "tracked.txt" {
+		t.Fatalf("ChangedFiles() = %v, want [tracked.txt]", files)
+	}
+}
