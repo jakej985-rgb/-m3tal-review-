@@ -214,6 +214,7 @@ func execute(command string) error {
 			review.TodoRule{},
 			review.DebugRule{},
 			review.SecurityRule{},
+			review.ShellRule{},
 		)
 
 		findings := engine.Run(diff)
