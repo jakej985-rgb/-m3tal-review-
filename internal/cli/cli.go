@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/git"
+"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
 var (
