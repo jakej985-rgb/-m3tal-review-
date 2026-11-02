@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/git"
@@ -120,6 +121,11 @@ func execute(command string) error {
 			return err
 		}
 
+		branch, err := git.CurrentBranch(repositoryRoot)
+		if err != nil {
+			return err
+		}
+
 		diff, err := git.StagedDiff(repositoryRoot)
 		if err != nil {
 			return err
@@ -130,17 +136,37 @@ func execute(command string) error {
 			return nil
 		}
 
+		runID, err := review.NewRunID()
+		if err != nil {
+			return err
+		}
+
 		engine := review.NewEngine(review.TodoRule{})
 		findings := engine.Run(diff)
 
-		if len(findings) == 0 {
-			fmt.Println("Review passed. No findings.")
-			return nil
+		report := review.NewReport(
+			runID,
+			repositoryRoot,
+			branch,
+			findings,
+		)
+
+		reportPath := filepath.Join(
+			repositoryRoot,
+			".m3tal-review",
+			"reports",
+			runID+".json",
+		)
+
+		if err := review.WriteReport(reportPath, report); err != nil {
+			return err
 		}
 
-		fmt.Printf("Review found %d issue(s):\n", len(findings))
+		fmt.Println(report.Summary)
+		fmt.Println("Run ID:", report.RunID)
+		fmt.Println("Report:", reportPath)
 
-		for _, finding := range findings {
+		for _, finding := range report.Findings {
 			fmt.Printf(
 				"[%s] %s:%d: %s (%s)\n",
 				finding.Severity,
@@ -151,7 +177,11 @@ func execute(command string) error {
 			)
 		}
 
-		return fmt.Errorf("review found %d issue(s)", len(findings))
+		if !report.Passed {
+			return fmt.Errorf("review found %d issue(s)", len(report.Findings))
+		}
+
+		return nil
 
 	case "help":
 		printHelp()
@@ -171,3 +201,4 @@ func printHelp() {
 	fmt.Println("  review")
 	fmt.Println("  help")
 }
+// TODO: test review report
