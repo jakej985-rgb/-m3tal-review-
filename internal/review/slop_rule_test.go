@@ -655,3 +655,107 @@ func funcThree() {
 		t.Fatalf("expected 2 redundant boolean comparison findings across multiple hunks, got %d: %+v", redundantCount, findings)
 	}
 }
+
+func TestSlopRuleSimilarFindingsInSeparateFiles(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runCmd := func(args ...string) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %v failed: %v\noutput: %s", args, err, out)
+		}
+	}
+
+	runCmd("git", "init")
+	runCmd("git", "config", "user.name", "test")
+	runCmd("git", "config", "user.email", "test@test.com")
+
+	fileA := filepath.Join(repoDir, "a.go")
+	if err := os.WriteFile(fileA, []byte("package main\n\nfunc checkA() {\n\tif true == true {}\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	fileB := filepath.Join(repoDir, "b.go")
+	if err := os.WriteFile(fileB, []byte("package main\n\nfunc checkB() {\n\tif false == false {}\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runCmd("git", "add", "a.go", "b.go")
+
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+
+	foundA := false
+	foundB := false
+	for _, f := range findings {
+		if f.File == "a.go" && f.Message == "Redundant boolean comparison" {
+			foundA = true
+		}
+		if f.File == "b.go" && f.Message == "Redundant boolean comparison" {
+			foundB = true
+		}
+	}
+
+	if !foundA || !foundB {
+		t.Fatalf("expected findings for both a.go and b.go, got: %+v", findings)
+	}
+}
+
+func TestSlopRuleStableDeterministicOrder(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runCmd := func(args ...string) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %v failed: %v\noutput: %s", args, err, out)
+		}
+	}
+
+	runCmd("git", "init")
+	runCmd("git", "config", "user.name", "test")
+	runCmd("git", "config", "user.email", "test@test.com")
+
+	code := `package main
+
+func first() {
+	if true == true {}
+}
+
+func second() {
+	if false == false {}
+}
+`
+	if err := os.WriteFile(filepath.Join(repoDir, "order.go"), []byte(code), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runCmd("git", "add", "order.go")
+
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+
+	runs := 5
+	var firstRunFindings []Finding
+	for i := 0; i < runs; i++ {
+		findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+		if i == 0 {
+			firstRunFindings = findings
+		} else {
+			if len(findings) != len(firstRunFindings) {
+				t.Fatalf("run %d produced %d findings, expected %d", i, len(findings), len(firstRunFindings))
+			}
+			for j := range findings {
+				if findings[j].Line != firstRunFindings[j].Line || findings[j].Message != firstRunFindings[j].Message {
+					t.Fatalf("run %d finding %d differs: %+v vs %+v", i, j, findings[j], firstRunFindings[j])
+				}
+			}
+		}
+	}
+}

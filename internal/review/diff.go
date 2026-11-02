@@ -133,4 +133,3 @@ func ParseDiff(diff string) []FileDiff {
 	finish()
 	return fileDiffs
 }
-

@@ -58,7 +58,7 @@ func (DebugRule) Check(diff string) []Finding {
 						File:        file,
 						Line:        lineNumber,
 						Message:     debugPattern.message,
-						Remediation: "Remove debug statements before committing.",
+						Remediation: "Remove debug output before merging, or replace it with the project's approved logging.",
 					})
 					break
 				}

@@ -243,6 +243,111 @@ func TestRunShowDisplaysReport(t *testing.T) {
 	}
 }
 
+func TestRunShowDisplaysRemediation(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	runID := "b2c3d4e5f6071829"
+
+	findings := []review.Finding{
+		{
+			Rule:        "hardcoded-credential",
+			Severity:    "high",
+			File:        "config.go",
+			Line:        15,
+			Message:     "Possible hardcoded credential assigned to password",
+			Remediation: "Remove hardcoded credentials. Use environment variables.",
+		},
+	}
+
+	report := review.NewReport(
+		runID,
+		repoDir,
+		"main",
+		"commit-sha-123",
+		"",
+		"",
+		"1.0.0",
+		[]string{"config.go"},
+		findings,
+	)
+
+	reportPath := filepath.Join(
+		repoDir,
+		".m3tal-review",
+		"reports",
+		runID+".json",
+	)
+
+	if err := review.WriteReport(reportPath, report); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create output pipe: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	os.Stdout = writer
+
+	runErr := Run([]string{"show", runID})
+
+	os.Stdout = originalStdout
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close output writer: %v", err)
+	}
+
+	var captured strings.Builder
+	buffer := make([]byte, 1024)
+
+	for {
+		n, readErr := reader.Read(buffer)
+		captured.Write(buffer[:n])
+
+		if readErr != nil {
+			break
+		}
+	}
+
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close output reader: %v", err)
+	}
+
+	if runErr != nil {
+		t.Fatalf("Run(show) error: %v", runErr)
+	}
+
+	outputText := captured.String()
+
+	if !strings.Contains(outputText, "[high] config.go:15: Possible hardcoded credential assigned to password (hardcoded-credential)") {
+		t.Errorf("output missing finding line:\n%s", outputText)
+	}
+
+	if !strings.Contains(outputText, "Remediation: Remove hardcoded credentials. Use environment variables.") {
+		t.Errorf("output missing finding remediation:\n%s", outputText)
+	}
+}
+
 func TestRunShowRejectsInvalidRunID(t *testing.T) {
 	tests := []string{
 		"",
