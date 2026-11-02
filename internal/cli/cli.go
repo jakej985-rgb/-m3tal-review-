@@ -214,7 +214,14 @@ func execute(command string) error {
 			review.TodoRule{},
 			review.DebugRule{},
 		)
+
 		findings := engine.Run(diff)
+
+		lintFindings := (review.LintRule{
+			RepositoryRoot: repositoryRoot,
+		}).Check(diff)
+
+		findings = append(findings, lintFindings...)
 
 		report := review.NewReport(
 			runID,
