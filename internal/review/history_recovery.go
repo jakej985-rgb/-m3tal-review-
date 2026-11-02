@@ -112,3 +112,4 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 
 	return len(recoveredEntries), nil
 }
+
