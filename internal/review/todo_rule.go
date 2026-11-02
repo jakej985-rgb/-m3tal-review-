@@ -37,11 +37,12 @@ func (TodoRule) Check(diff string) []Finding {
 			!strings.HasPrefix(line, "+++") {
 			if strings.Contains(strings.ToUpper(line), "TODO") {
 				findings = append(findings, Finding{
-					Rule:     "todo-marker",
-					Severity: "low",
-					File:     file,
-					Line:     lineNumber,
-					Message:  "Added line contains a TODO marker",
+					Rule:        "todo-marker",
+					Severity:    "low",
+					File:        file,
+					Line:        lineNumber,
+					Message:     "Added line contains a TODO marker",
+					Remediation: "Resolve the TODO or create a tracked issue with an owner and follow-up plan.",
 				})
 			}
 
