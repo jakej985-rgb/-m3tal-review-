@@ -54,10 +54,6 @@ func TestLintRuleFindsUnformattedFile(t *testing.T) {
 
 	findings := (LintRule{RepositoryRoot: repoDir}).Check("")
 
-	if len(findings) == 0 {
-		t.Fatal("Check() returned no findings, want formatting finding")
-	}
-
 	found := false
 	for _, finding := range findings {
 		if finding.Rule == "repository-lint" &&
@@ -70,4 +66,26 @@ func TestLintRuleFindsUnformattedFile(t *testing.T) {
 	if !found {
 		t.Errorf("formatting finding not found: %+v", findings)
 	}
+}
+
+func TestLintRuleReportsGoVetFileAndLine(t *testing.T) {
+	repoDir := setupLintTestRepo(t)
+
+	mainPath := filepath.Join(repoDir, "main.go")
+	source := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(mainPath, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	findings := (LintRule{RepositoryRoot: repoDir}).Check("")
+
+	for _, finding := range findings {
+		if finding.Rule == "repository-lint" &&
+			finding.File == "main.go" &&
+			finding.Line == 4 {
+			return
+		}
+	}
+
+	t.Fatalf("go vet file/line finding not found: %+v", findings)
 }
