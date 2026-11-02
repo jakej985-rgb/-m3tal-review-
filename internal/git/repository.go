@@ -90,7 +90,7 @@ func ChangedFiles(path string) ([]string, error) {
 func UntrackedFiles(path string) ([]string, error) {
 	command := exec.Command(
 		"git", "-C", path,
-		"ls-files", "--others", "--exclude-standard",
+		"ls-files", "--others", "--exclude-standard", "-z",
 	)
 
 	output, err := command.CombinedOutput()
