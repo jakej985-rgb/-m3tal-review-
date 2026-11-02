@@ -62,6 +62,38 @@ func TestIsClean(t *testing.T) {
 	if clean {
 		t.Fatal("IsClean() = true, want false when an untracked file exists")
 	}
+
+	trackedPath := filepath.Join(repoDir, "tracked.txt")
+	if err := os.WriteFile(trackedPath, []byte("initial"), 0644); err != nil {
+		t.Fatalf("write tracked file: %v", err)
+	}
+
+	add := exec.Command("git", "-C", repoDir, "add", "tracked.txt")
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("stage tracked file: %v\n%s", err, output)
+	}
+
+	commit := exec.Command(
+		"git", "-C", repoDir,
+		"-c", "user.name=Test User",
+		"-c", "user.email=test@example.com",
+		"commit", "-m", "add tracked file",
+	)
+	if output, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("commit tracked file: %v\n%s", err, output)
+	}
+
+	if err := os.WriteFile(trackedPath, []byte("modified"), 0644); err != nil {
+		t.Fatalf("modify tracked file: %v", err)
+	}
+
+	clean, err = IsClean(repoDir)
+	if err != nil {
+		t.Fatalf("IsClean() error after tracked file modification: %v", err)
+	}
+	if clean {
+		t.Fatal("IsClean() = true, want false when a tracked file is modified")
+	}
 }
 
 func TestCurrentBranch(t *testing.T) {
