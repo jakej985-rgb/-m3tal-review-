@@ -22,8 +22,14 @@ func WriteReport(path string, report Report) error {
 		return fmt.Errorf("create report directory: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("write report: %w", err)
+	tempPath := path + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		return fmt.Errorf("write temporary report: %w", err)
+	}
+
+	if err := os.Rename(tempPath, path); err != nil {
+		os.Remove(tempPath) // Clean up the temporary file if rename fails
+		return fmt.Errorf("rename temporary report to final path: %w", err)
 	}
 
 	return nil

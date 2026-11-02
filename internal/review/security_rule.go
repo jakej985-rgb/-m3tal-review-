@@ -59,11 +59,12 @@ func (SecurityRule) Check(diff string) []Finding {
 
 				if !isPlaceholder {
 					findings = append(findings, Finding{
-						Rule:     "hardcoded-credential",
-						Severity: "high",
-						File:     file,
-						Line:     lineNumber,
-						Message:  "Possible hardcoded credential assigned to " + match[1],
+						Rule:        "hardcoded-credential",
+						Severity:    "high",
+						File:        file,
+						Line:        lineNumber,
+						Message:     "Possible hardcoded credential assigned to " + match[1],
+						Remediation: "Remove hardcoded credentials. Use environment variables or a secret management system.",
 					})
 				}
 			}

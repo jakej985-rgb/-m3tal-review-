@@ -53,11 +53,12 @@ func (DebugRule) Check(diff string) []Finding {
 			for _, debugPattern := range debugPatterns {
 				if debugPattern.pattern.MatchString(addedLine) {
 					findings = append(findings, Finding{
-						Rule:     "debug-leftover",
-						Severity: "medium",
-						File:     file,
-						Line:     lineNumber,
-						Message:  debugPattern.message,
+						Rule:        "debug-leftover",
+						Severity:    "medium",
+						File:        file,
+						Line:        lineNumber,
+						Message:     debugPattern.message,
+						Remediation: "Remove debug statements before committing.",
 					})
 					break
 				}

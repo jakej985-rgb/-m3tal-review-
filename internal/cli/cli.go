@@ -89,6 +89,9 @@ func showReport(runID string) error {
 			finding.Message,
 			finding.Rule,
 		)
+		if finding.Remediation != "" {
+			fmt.Printf("  Remediation: %s\n", finding.Remediation)
+		}
 	}
 
 	return nil
@@ -216,6 +219,7 @@ func execute(command string) error {
 			review.SecurityRule{},
 			review.ShellRule{},
 			review.PermissionsRule{},
+			review.SlopRule{},
 		)
 
 		findings := engine.Run(diff)
@@ -269,6 +273,9 @@ func execute(command string) error {
 				finding.Message,
 				finding.Rule,
 			)
+			if finding.Remediation != "" {
+				fmt.Printf("  Remediation: %s\n", finding.Remediation)
+			}
 		}
 
 		if !report.Passed {

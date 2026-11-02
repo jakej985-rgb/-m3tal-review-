@@ -25,7 +25,8 @@ func ReadHistory(path string) ([]HistoryEntry, error) {
 		var entry HistoryEntry
 
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			return nil, fmt.Errorf("decode history entry: %w", err)
+			// Skip corrupt or unparseable lines gracefully to keep history usable
+			continue
 		}
 
 		entries = append(entries, entry)
