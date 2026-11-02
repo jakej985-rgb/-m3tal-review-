@@ -332,3 +332,49 @@ func TestUntrackedFilesHandlesNewlineInFilename(t *testing.T) {
 		t.Fatalf("UntrackedFiles() = %q, want [%q]", files, filename)
 	}
 }
+
+func TestStagedFiles(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	filePath := filepath.Join(repoDir, "staged.txt")
+	if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
+		t.Fatalf("write staged file: %v", err)
+	}
+
+	add := exec.Command("git", "-C", repoDir, "add", "staged.txt")
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("stage file: %v\n%s", err, output)
+	}
+
+	files, err := StagedFiles(repoDir)
+	if err != nil {
+		t.Fatalf("StagedFiles() error: %v", err)
+	}
+
+	if len(files) != 1 || files[0] != "staged.txt" {
+		t.Fatalf("StagedFiles() = %v, want [staged.txt]", files)
+	}
+}
+
+func TestStagedFilesEmpty(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	files, err := StagedFiles(repoDir)
+	if err != nil {
+		t.Fatalf("StagedFiles() error: %v", err)
+	}
+
+	if len(files) != 0 {
+		t.Fatalf("StagedFiles() = %v, want empty slice", files)
+	}
+}

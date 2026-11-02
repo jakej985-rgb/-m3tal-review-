@@ -87,6 +87,26 @@ func ChangedFiles(path string) ([]string, error) {
 	return files, nil
 }
 
+func StagedFiles(path string) ([]string, error) {
+	command := exec.Command("git", "-C", path, "diff", "--cached", "--name-only", "-z")
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get staged files: %s: %w",
+			strings.TrimSpace(string(output)),
+			err,
+		)
+	}
+
+	files := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+	if len(files) == 1 && files[0] == "" {
+		return []string{}, nil
+	}
+
+	return files, nil
+}
+
 func UntrackedFiles(path string) ([]string, error) {
 	command := exec.Command(
 		"git", "-C", path,
