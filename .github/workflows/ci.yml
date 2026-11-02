@@ -38,3 +38,4 @@ jobs:
 
       - name: Build binary
         run: go build -v ./cmd/m3tal-review
+
