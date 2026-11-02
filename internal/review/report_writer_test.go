@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -86,6 +87,28 @@ func TestWriteReportFailureCleanup(t *testing.T) {
 	for _, entry := range entries {
 		if entry.Name() != "review.json" {
 			t.Errorf("found unexpected file in reports directory: %s", entry.Name())
+		}
+	}
+}
+
+func TestWriteReportConcurrency(t *testing.T) {
+	tempDir := t.TempDir()
+	reportsDir := filepath.Join(tempDir, "reports")
+
+	done := make(chan error)
+	concurrency := 10
+
+	for i := 0; i < concurrency; i++ {
+		go func(id int) {
+			reportPath := filepath.Join(reportsDir, fmt.Sprintf("review-%d.json", id))
+			report := NewReport("run-001", tempDir, "main", nil)
+			done <- WriteReport(reportPath, report)
+		}(i)
+	}
+
+	for i := 0; i < concurrency; i++ {
+		if err := <-done; err != nil {
+			t.Errorf("concurrent WriteReport failed: %v", err)
 		}
 	}
 }
