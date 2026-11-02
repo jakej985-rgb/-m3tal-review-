@@ -34,6 +34,10 @@ func Run(args []string) error {
 }
 
 func showReport(runID string) error {
+	if !review.IsValidRunID(runID) {
+		return fmt.Errorf("invalid run ID %q: expected 16 lowercase hexadecimal characters", runID)
+	}
+
 	if runID == "" {
 		return fmt.Errorf("run ID cannot be empty")
 	}
@@ -204,7 +208,10 @@ func execute(command string) error {
 			return err
 		}
 
-		engine := review.NewEngine(review.TodoRule{})
+		engine := review.NewEngine(
+			review.TodoRule{},
+			review.DebugRule{},
+		)
 		findings := engine.Run(diff)
 
 		report := review.NewReport(

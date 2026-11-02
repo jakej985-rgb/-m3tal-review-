@@ -139,7 +139,7 @@ func TestRunShowUnknownReport(t *testing.T) {
 		}
 	})
 
-	err = Run([]string{"show", "unknown-run-id"})
+	err = Run([]string{"show", "ffffffffffffffff"})
 	if err == nil {
 		t.Fatal("Run(show) expected an error for an unknown report")
 	}
@@ -153,7 +153,7 @@ func TestRunShowDisplaysReport(t *testing.T) {
 		t.Fatalf("initialize test repository: %v\n%s", err, output)
 	}
 
-	runID := "test-run-123"
+	runID := "a1b2c3d4e5f60718"
 
 	report := review.NewReport(
 		runID,
@@ -235,5 +235,29 @@ func TestRunShowDisplaysReport(t *testing.T) {
 
 	if !strings.Contains(outputText, "Findings: (none)") {
 		t.Errorf("output missing empty findings message:\n%s", outputText)
+	}
+}
+
+func TestRunShowRejectsInvalidRunID(t *testing.T) {
+	tests := []string{
+		"",
+		"short",
+		"../../etc/passwd",
+		"08D28520B0879CEE",
+		"not-a-valid-run-id",
+	}
+
+	for _, runID := range tests {
+		t.Run(runID, func(t *testing.T) {
+			err := showReport(runID)
+
+			if err == nil {
+				t.Fatalf("showReport(%q) expected an error", runID)
+			}
+
+			if !strings.Contains(err.Error(), "invalid run ID") {
+				t.Errorf("showReport(%q) error = %v, want invalid run ID error", runID, err)
+			}
+		})
 	}
 }

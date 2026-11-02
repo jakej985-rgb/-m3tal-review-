@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 func NewRunID() (string, error) {
@@ -14,4 +15,17 @@ func NewRunID() (string, error) {
 	}
 
 	return hex.EncodeToString(bytes), nil
+}
+
+func IsValidRunID(runID string) bool {
+	if len(runID) != 16 {
+		return false
+	}
+
+	_, err := hex.DecodeString(runID)
+	if err != nil {
+		return false
+	}
+
+	return strings.ToLower(runID) == runID
 }
