@@ -62,6 +62,11 @@ func execute(command string) error {
 			return err
 		}
 
+		untrackedFiles, err := git.UntrackedFiles(repositoryRoot)
+		if err != nil {
+			return err
+		}
+
 		fmt.Println("M3TAL Review")
 		fmt.Println("Working directory:", workingDir)
 		fmt.Println("Repository root:", repositoryRoot)
@@ -72,6 +77,14 @@ func execute(command string) error {
 			fmt.Println("  (none)")
 		} else {
 			for _, file := range changedFiles {
+				fmt.Println("  ", file)
+			}
+		}
+		fmt.Println("Untracked files:")
+		if len(untrackedFiles) == 0 {
+			fmt.Println("  (none)")
+		} else {
+			for _, file := range untrackedFiles {
 				fmt.Println("  ", file)
 			}
 		}
