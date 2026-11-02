@@ -8,7 +8,9 @@ It provides actionable findings, records review trails (history), and supports a
 
 - **Review Engine**: Runs deterministic checks on staged Git changes.
 - **Remediation Guidance**: Every finding provides actionable steps to fix the issue.
-- **Slop Detector**: Uses deterministic line-by-line regex (not AST parsing) to detect unidiomatic code. Flags redundant boolean comparisons (e.g., `== true`), empty blocks (ignoring `interface{}`), and excessive nesting (using an indentation-based heuristic of 4+ tabs/16+ spaces).
+- **Slop Detector**: For Go files, parses the exact staged file contents into an AST (`go/parser` and `go/ast`) to analyze added lines, detecting redundant boolean comparisons (`== true`), empty blocks (ignoring `interface{}`), and excessive nesting depth (4+ levels). Because it evaluates real AST nodes, string literals and comments are ignored and cannot produce false positives. For non-Go files (or when repository root is unset), falls back to deterministic regex-based heuristics.
+- **Staged-Only Semantics**: Accurately inspects staged content from the Git index (`git show :<file>`). Working-tree modifications that have not been staged are ignored. Deleted files are classified and handled without invoking AST analysis or generating false errors.
+- **Analysis Error Reporting**: Syntax errors in staged Go code or git index retrieval errors produce distinct high-severity findings (`code-slop-analysis-error`), ensuring that analysis failures cannot result in a passing review.
 - **Security Checks**: Detects hardcoded credentials, world-writable file permissions (0777), disabled TLS verification, and risky shell executions.
 - **Code Quality**: Identifies leftover `TODO` markers, debug print statements, and runs `gofmt` and `go vet` to enforce formatting and find subtle bugs.
 - **Review History**: Maintains a JSONL log of previous reviews.

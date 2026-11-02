@@ -1,26 +1,37 @@
-## Final PR #1 Hardening Phase Completion Report (Revision 2)
+## PR #1 Hardening Phase Completion Report (Revision 3)
 
 1. **Summary of changes**:
-   - Fixed the AST depth tracker to properly encapsulate all sibling block statements correctly inside the unified pass by refactoring `isBlock` wrapper management. Checked and ensured multiple siblings do not mistakenly accrue depth increments.
-   - Refactored AST `addFinding` to explicitly prevent duplicate identical findings outputting for the exact same source lines (deduplicated by map).
-   - Added specific tests ensuring depth boundary constraints correctly hit on the 4th level, validating that boundaries inside outer functions evaluate effectively without off-by-one errors.
-   - Forced analysis failure outcomes `code-slop-analysis-error` to emit distinctly from typical warnings, ensuring syntax-broken or missing files prevent a misleading "Passing" report status locally (with tests).
+   - Implemented structured Git diff header parsing and file classification in `internal/review/diff.go` (`ParseDiff`). Accurately classifies added, modified, deleted, and renamed files.
+   - Deleted files are recognized from diff headers (`deleted file mode` / `+++ /dev/null`) and their canonical paths are preserved without using `/dev/null` as a target file. `StagedFileContent` and AST analysis are never invoked for deleted files, preventing false analysis errors.
+   - Refactored `SlopRule` AST traversal to use an explicit node stack with `ast.Inspect`. This guarantees that each AST node is visited exactly once, nesting depth increments/decrements cleanly across block statements, sibling blocks never inherit depth from each other, and function boundaries reset depth.
+   - Preserved `code-slop-analysis-error` as a distinct high-severity finding for genuine staged-content retrieval or Go syntax parsing failures, preventing a misleading passing review. Removed temporary unfinished developer comments.
+   - Updated `README.md` to document the AST-based Go analysis, staged-only inspection semantics, and regex fallback for non-Go files.
+
 2. **Files changed and why**:
-   - `internal/review/slop_rule.go`: Hardened the AST visitor to evaluate depth purely within functional paths, averting the cross-contamination of siblings. Introduced a deduplication map inside `addFinding`. Distinguishes parse errors forcefully.
-   - `internal/review/slop_rule_test.go`: Added rigorous tests (`TestSlopRuleSiblingDepthNotInherited`, `TestSlopRuleNoDuplicateFindings`, `TestSlopRuleAnalysisErrorOnInvalidSyntax`, `TestSlopRuleAnalysisErrorOnMissingFile`, etc.) validating exact expected boundary depth increments, un-inherited sibling depths, and explicit non-failing on deleted git show paths vs invalid syntax.
+   - `internal/review/diff.go`: Implemented `ParseDiff` to classify added, modified, deleted, and renamed files, and track added lines across multiple diff hunks.
+   - `internal/review/diff_test.go`: Added comprehensive unit tests for added, deleted, renamed (with and without edits), and multi-hunk diffs.
+   - `internal/review/slop_rule.go`: Integrated `ParseDiff`, replaced wrapper visitor with stack-based `ast.Inspect`, cleaned up comments, and preserved `code-slop-analysis-error`.
+   - `internal/review/slop_rule_test.go`: Added integration tests using real temporary Git repositories for staged deletions, staged renames, and multiple diff hunks.
+   - `README.md`: Updated documentation to accurately reflect AST Go analysis, regex fallback, and staged review semantics.
+
 3. **Tests added**:
-   - `TestSlopRuleSiblingDepthNotInherited`: Checks depth isolated to the exact subtree.
-   - `TestSlopRuleNoDuplicateFindings`: Asserts that an empty block + redundant boolean on the exact same line yields exactly two independent findings, none duplicated.
-   - `TestSlopRuleAnalysisErrorOnInvalidSyntax`: Asserts compiler failures block review passage dynamically.
-   - `TestSlopRuleAnalysisErrorOnMissingFile`: Asserts non-tracked index files abort securely.
+   - `TestParseDiffAddedFile`: Verifies added file classification and line mapping.
+   - `TestParseDiffDeletedFile`: Verifies deleted file classification and path preservation without `/dev/null`.
+   - `TestParseDiffRenamedFile`: Verifies clean rename handling without duplicate findings.
+   - `TestParseDiffRenamedWithModifications`: Verifies rename with modifications captures added lines under new path.
+   - `TestParseDiffMultipleHunks`: Verifies added line tracking across multiple diff hunks.
+   - `TestSlopRuleRealGitStagedDeletion`: Verifies a real staged deletion produces zero findings and no analysis error.
+   - `TestSlopRuleRealGitStagedRename`: Verifies real staged rename attributes findings to the new filename without duplicates.
+   - `TestSlopRuleRealGitMultipleHunks`: Verifies real Git diff with multiple hunks identifies findings across all hunks.
+
 4. **Exact validation commands and results**:
-   - `gofmt -w .`: Passed.
-   - `go vet ./...`: Passed.
-   - `go test ./...`: Passed.
-   - `go test -race ./...`: Passed.
-   - `go build ./cmd/m3tal-review`: Passed.
-   - `git diff --check`: Passed cleanly.
+   - `gofmt -w .`: Passed without changes.
+   - `go test ./...`: Passed (all packages green).
+   - `go test -race ./...`: Passed with race detector enabled.
+   - `go vet ./...`: Passed without warnings.
+   - `git diff --check`: Clean, no whitespace or formatting errors.
+   - `go build ./cmd/m3tal-review`: Succeeded, produced executable binary.
+
 5. **Remaining limitations**:
-   - As requested, no autonomous repair loops or extraneous scopes were added. The CLI is focused entirely on accurate detection.
-6. **Recommendation**:
-   - The AST logic is 100% airtight and correctly bounds to staged data securely. It is **Ready to merge**.
+   - Go AST analysis requires syntactically valid Go code; syntax errors are reported as high-severity `code-slop-analysis-error` findings so users fix compilation before reviewing logic slop.
+   - Non-Go files continue to use deterministic regex heuristics for slop detection as they cannot be parsed by `go/parser`.

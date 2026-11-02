@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/git"
 )
 
 func setupSlopTestRepo(t *testing.T, source string) string {
@@ -481,5 +483,175 @@ func TestSlopRuleAnalysisErrorOnMissingFile(t *testing.T) {
 	}
 	if !foundError {
 		t.Fatalf("expected code-slop-analysis-error finding for missing file, got: %+v", findings)
+	}
+}
+
+func TestSlopRuleRealGitStagedDeletion(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runCmd := func(args ...string) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %v failed: %v\noutput: %s", args, err, out)
+		}
+	}
+
+	runCmd("git", "init")
+	runCmd("git", "config", "user.name", "test")
+	runCmd("git", "config", "user.email", "test@test.com")
+
+	filePath := filepath.Join(repoDir, "to_delete.go")
+	if err := os.WriteFile(filePath, []byte("package main\n\nfunc unused() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runCmd("git", "add", "to_delete.go")
+	runCmd("git", "commit", "-m", "add file to delete")
+
+	runCmd("git", "rm", "to_delete.go")
+
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	for _, f := range findings {
+		if f.Rule == "code-slop-analysis-error" {
+			t.Fatalf("unexpected analysis error for deleted file: %+v", f)
+		}
+	}
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for staged deletion, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestSlopRuleRealGitStagedRename(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runCmd := func(args ...string) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %v failed: %v\noutput: %s", args, err, out)
+		}
+	}
+
+	runCmd("git", "init")
+	runCmd("git", "config", "user.name", "test")
+	runCmd("git", "config", "user.email", "test@test.com")
+
+	oldPath := filepath.Join(repoDir, "old.go")
+	if err := os.WriteFile(oldPath, []byte("package main\n\nfunc hello() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runCmd("git", "add", "old.go")
+	runCmd("git", "commit", "-m", "initial commit")
+
+	runCmd("git", "mv", "old.go", "new.go")
+
+	newPath := filepath.Join(repoDir, "new.go")
+	if err := os.WriteFile(newPath, []byte("package main\n\nfunc hello() {\n\tif true == true {}\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runCmd("git", "add", "new.go")
+
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	for _, f := range findings {
+		if f.File != "new.go" {
+			t.Errorf("Finding file = %q, want %q", f.File, "new.go")
+		}
+	}
+
+	seen := make(map[string]bool)
+	for _, f := range findings {
+		key := f.Message
+		if seen[key] {
+			t.Fatalf("duplicate finding detected for rename: %+v", f)
+		}
+		seen[key] = true
+	}
+}
+
+func TestSlopRuleRealGitMultipleHunks(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runCmd := func(args ...string) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %v failed: %v\noutput: %s", args, err, out)
+		}
+	}
+
+	runCmd("git", "init")
+	runCmd("git", "config", "user.name", "test")
+	runCmd("git", "config", "user.email", "test@test.com")
+
+	filePath := filepath.Join(repoDir, "multi.go")
+	initialContent := `package main
+
+func funcOne() {
+	println("1")
+}
+
+func funcTwo() {
+	println("2")
+}
+
+func funcThree() {
+	println("3")
+}
+`
+	if err := os.WriteFile(filePath, []byte(initialContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runCmd("git", "add", "multi.go")
+	runCmd("git", "commit", "-m", "initial commit")
+
+	modifiedContent := `package main
+
+func funcOne() {
+	if true == false {}
+	println("1")
+}
+
+func funcTwo() {
+	println("2")
+}
+
+func funcThree() {
+	if false == true {}
+	println("3")
+}
+`
+	if err := os.WriteFile(filePath, []byte(modifiedContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runCmd("git", "add", "multi.go")
+
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	redundantCount := 0
+	for _, f := range findings {
+		if f.Message == "Redundant boolean comparison" {
+			redundantCount++
+		}
+	}
+
+	if redundantCount != 2 {
+		t.Fatalf("expected 2 redundant boolean comparison findings across multiple hunks, got %d: %+v", redundantCount, findings)
 	}
 }
