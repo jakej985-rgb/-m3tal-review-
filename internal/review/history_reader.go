@@ -20,6 +20,9 @@ func ReadHistory(path string) ([]HistoryEntry, error) {
 
 	var entries []HistoryEntry
 	scanner := bufio.NewScanner(file)
+	// Support larger history lines up to 10MB
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 10*1024*1024)
 
 	for scanner.Scan() {
 		var entry HistoryEntry

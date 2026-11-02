@@ -1,12 +1,19 @@
 package review
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-type SlopRule struct{}
+type SlopRule struct {
+	RepositoryRoot string
+}
 
 func (SlopRule) Name() string {
 	return "code-slop"
@@ -34,15 +41,18 @@ var slopPatterns = []struct {
 	},
 }
 
-func (SlopRule) Check(diff string) []Finding {
+func (r SlopRule) Check(diff string) []Finding {
 	var findings []Finding
 
-	var file string
+	// Parse diff to find added lines
+	addedLines := make(map[string][]int)
+
+	var currentFile string
 	lineNumber := 0
 
 	for _, line := range strings.Split(diff, "\n") {
 		if strings.HasPrefix(line, "+++ b/") {
-			file = strings.TrimPrefix(line, "+++ b/")
+			currentFile = strings.TrimPrefix(line, "+++ b/")
 			continue
 		}
 
@@ -52,35 +62,7 @@ func (SlopRule) Check(diff string) []Finding {
 		}
 
 		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			addedLine := strings.TrimPrefix(line, "+")
-
-			// Simple exclusion for comments to reduce false positives
-			if strings.HasPrefix(strings.TrimSpace(addedLine), "//") || strings.HasPrefix(strings.TrimSpace(addedLine), "/*") {
-				lineNumber++
-				continue
-			}
-
-			for _, slopPattern := range slopPatterns {
-				if slopPattern.pattern.MatchString(addedLine) {
-					// Ignore interface{} for empty block rule
-					if slopPattern.message == "Empty block" && strings.Contains(addedLine, "interface{}") {
-						continue
-					}
-					// Note: Because this detector uses regex instead of AST parsing to remain lightweight and local,
-					// it may occasionally flag slop patterns inside multi-line string literals.
-					// We do not suppress lines containing quotes to avoid masking legitimate findings (e.g. `if x == true { log("x") }`).
-
-					findings = append(findings, Finding{
-						Rule:        "code-slop",
-						Severity:    "low",
-						File:        file,
-						Line:        lineNumber,
-						Message:     slopPattern.message,
-						Remediation: slopPattern.remediation,
-					})
-				}
-			}
-
+			addedLines[currentFile] = append(addedLines[currentFile], lineNumber)
 			lineNumber++
 			continue
 		}
@@ -89,6 +71,170 @@ func (SlopRule) Check(diff string) []Finding {
 			lineNumber++
 		}
 	}
+
+	for file, lines := range addedLines {
+		if strings.HasSuffix(file, ".go") && r.RepositoryRoot != "" {
+			findings = append(findings, r.checkGoFileAST(file, lines)...)
+		} else {
+			// Fallback to regex for non-Go files or if RepoRoot is not set
+			findings = append(findings, r.checkFileRegex(diff, file, lines)...)
+		}
+	}
+
+	return findings
+}
+
+func (r SlopRule) checkFileRegex(diff string, targetFile string, addedLines []int) []Finding {
+	var findings []Finding
+
+	var currentFile string
+	lineNumber := 0
+
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "+++ b/") {
+			currentFile = strings.TrimPrefix(line, "+++ b/")
+			continue
+		}
+
+		if matches := hunkHeader.FindStringSubmatch(line); matches != nil {
+			lineNumber, _ = strconv.Atoi(matches[1])
+			continue
+		}
+
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			if currentFile == targetFile {
+				addedLine := strings.TrimPrefix(line, "+")
+
+				if strings.HasPrefix(strings.TrimSpace(addedLine), "//") || strings.HasPrefix(strings.TrimSpace(addedLine), "/*") {
+					lineNumber++
+					continue
+				}
+
+				for _, slopPattern := range slopPatterns {
+					if slopPattern.pattern.MatchString(addedLine) {
+						if slopPattern.message == "Empty block" && strings.Contains(addedLine, "interface{}") {
+							continue
+						}
+
+						findings = append(findings, Finding{
+							Rule:        "code-slop",
+							Severity:    "low",
+							File:        currentFile,
+							Line:        lineNumber,
+							Message:     slopPattern.message,
+							Remediation: slopPattern.remediation,
+						})
+					}
+				}
+			}
+			lineNumber++
+			continue
+		}
+
+		if strings.HasPrefix(line, " ") {
+			lineNumber++
+		}
+	}
+
+	return findings
+}
+
+func isBoolLiteral(e ast.Expr) bool {
+	ident, ok := e.(*ast.Ident)
+	return ok && (ident.Name == "true" || ident.Name == "false")
+}
+
+func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
+	var findings []Finding
+
+	path := filepath.Join(r.RepositoryRoot, file)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return findings // Cannot parse AST if file doesn't exist
+	}
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, content, parser.ParseComments)
+	if err != nil {
+		return findings // Gracefully fail if parsing fails
+	}
+
+	lineMap := make(map[int]bool)
+	for _, l := range addedLines {
+		lineMap[l] = true
+	}
+
+	var inspectNode func(n ast.Node, depth int)
+	inspectNode = func(n ast.Node, depth int) {
+		if n == nil {
+			return
+		}
+
+		pos := fset.Position(n.Pos())
+		line := pos.Line
+
+		// 3. Excessive nesting (AST depth)
+		// We only want to report this if the block starts on an added line
+		if _, ok := n.(*ast.BlockStmt); ok {
+			if depth >= 4 && lineMap[line] {
+				findings = append(findings, Finding{
+					Rule:        "code-slop",
+					Severity:    "low",
+					File:        file,
+					Line:        line,
+					Message:     "Excessive AST nesting depth (4+ levels)",
+					Remediation: "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.",
+				})
+			}
+		}
+
+		if lineMap[line] {
+			// 1. Redundant boolean
+			if binExpr, ok := n.(*ast.BinaryExpr); ok {
+				if binExpr.Op == token.EQL || binExpr.Op == token.NEQ {
+					if isBoolLiteral(binExpr.X) || isBoolLiteral(binExpr.Y) {
+						findings = append(findings, Finding{
+							Rule:        "code-slop",
+							Severity:    "low",
+							File:        file,
+							Line:        line,
+							Message:     "Redundant boolean comparison",
+							Remediation: "Remove the explicit comparison to true/false. Use the boolean expression directly.",
+						})
+					}
+				}
+			}
+
+			// 2. Empty block
+			if block, ok := n.(*ast.BlockStmt); ok {
+				if len(block.List) == 0 {
+					findings = append(findings, Finding{
+						Rule:        "code-slop",
+						Severity:    "low",
+						File:        file,
+						Line:        line,
+						Message:     "Empty block",
+						Remediation: "Remove the empty block or add a comment explaining why it is empty.",
+					})
+				}
+			}
+		}
+
+		nextDepth := depth
+		if _, ok := n.(*ast.BlockStmt); ok {
+			nextDepth++
+		}
+
+		ast.Inspect(n, func(child ast.Node) bool {
+			if child != n && child != nil {
+				inspectNode(child, nextDepth)
+				return false
+			}
+			return true
+		})
+	}
+
+	inspectNode(f, 0)
 
 	return findings
 }

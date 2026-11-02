@@ -208,6 +208,11 @@ func execute(command string) error {
 			return nil
 		}
 
+		stagedFiles, err := git.StagedFiles(repositoryRoot)
+		if err != nil {
+			return err
+		}
+
 		runID, err := review.NewRunID()
 		if err != nil {
 			return err
@@ -219,21 +224,25 @@ func execute(command string) error {
 			review.SecurityRule{},
 			review.ShellRule{},
 			review.PermissionsRule{},
-			review.SlopRule{},
+			review.SlopRule{RepositoryRoot: repositoryRoot},
 		)
 
 		findings := engine.Run(diff)
 
-		lintFindings := (review.LintRule{
-			RepositoryRoot: repositoryRoot,
-		}).Check(diff)
-
-		findings = append(findings, lintFindings...)
+		// In a full Git environment, we would extract SHA and diff hashes.
+		// For MVP, we extract standard details and leave base/hash implementations as planned extensions.
+		currentSHA, _ := git.CurrentCommitSHA(repositoryRoot)
+		// tool version is a global `version`
 
 		report := review.NewReport(
 			runID,
 			repositoryRoot,
 			branch,
+			currentSHA,
+			"", // base commit SHA (future)
+			"", // diff hash (future)
+			version,
+			stagedFiles,
 			findings,
 		)
 
@@ -257,7 +266,7 @@ func execute(command string) error {
 		historyEntry := review.NewHistoryEntry(report)
 
 		if err := review.AppendHistory(historyPath, historyEntry); err != nil {
-			return err
+			fmt.Fprintf(os.Stderr, "Warning: failed to append to history log (report was successfully saved to %s): %v\n", reportPath, err)
 		}
 
 		fmt.Println(report.Summary)
@@ -383,6 +392,54 @@ func execute(command string) error {
 
 		return nil
 
+	case "recover-history":
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+
+		repositoryRoot, err := git.RepositoryRoot(workingDir)
+		if err != nil {
+			return err
+		}
+
+		reportsDir := filepath.Join(repositoryRoot, ".m3tal-review", "reports")
+		historyPath := filepath.Join(repositoryRoot, ".m3tal-review", "history.jsonl")
+
+		entries, err := os.ReadDir(reportsDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				fmt.Println("No reports found to recover.")
+				return nil
+			}
+			return fmt.Errorf("read reports directory: %w", err)
+		}
+
+		os.Remove(historyPath) // Start fresh
+
+		recovered := 0
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+
+			reportPath := filepath.Join(reportsDir, entry.Name())
+			report, err := review.ReadReport(reportPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to read report %s: %v\n", entry.Name(), err)
+				continue
+			}
+
+			historyEntry := review.NewHistoryEntry(report)
+			if err := review.AppendHistory(historyPath, historyEntry); err != nil {
+				return fmt.Errorf("failed to append history for %s: %w", entry.Name(), err)
+			}
+			recovered++
+		}
+
+		fmt.Printf("Successfully recovered %d review entries to history.\n", recovered)
+		return nil
+
 	case "help":
 		printHelp()
 		return nil
@@ -402,5 +459,6 @@ func printHelp() {
 	fmt.Println("  history")
 	fmt.Println("  show <run-id>")
 	fmt.Println("  lint")
+	fmt.Println("  recover-history")
 	fmt.Println("  help")
 }

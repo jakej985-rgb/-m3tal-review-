@@ -38,6 +38,10 @@ func WriteReport(path string, report Report) error {
 		return fmt.Errorf("write temporary report: %w", err)
 	}
 
+	if err := tempFile.Sync(); err != nil {
+		return fmt.Errorf("sync temporary report: %w", err)
+	}
+
 	if err := tempFile.Close(); err != nil {
 		return fmt.Errorf("close temporary report: %w", err)
 	}

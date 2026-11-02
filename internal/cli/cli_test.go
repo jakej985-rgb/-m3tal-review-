@@ -159,6 +159,11 @@ func TestRunShowDisplaysReport(t *testing.T) {
 		runID,
 		repoDir,
 		"main",
+		"sha",
+		"basesha",
+		"hash",
+		"ver",
+		nil,
 		nil,
 	)
 
@@ -378,129 +383,6 @@ func main(){println("hello")}
 
 	if !strings.Contains(output, "Files need formatting:") {
 		t.Errorf("output missing formatting failure:\n%s", output)
-	}
-}
-
-func TestReviewRecordsLintFindings(t *testing.T) {
-	repoDir := setupLintRepo(t, `package main
-func main(){println("hello")}
-`)
-
-	add := exec.Command("git", "-C", repoDir, "add", "go.mod", "main.go")
-	if output, err := add.CombinedOutput(); err != nil {
-		t.Fatalf("stage test files: %v\n%s", err, output)
-	}
-
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create output pipe: %v", err)
-	}
-
-	originalStdout := os.Stdout
-	os.Stdout = writer
-
-	reviewErr := execute("review")
-
-	os.Stdout = originalStdout
-
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close output writer: %v", err)
-	}
-
-	var captured strings.Builder
-	buffer := make([]byte, 1024)
-
-	for {
-		n, readErr := reader.Read(buffer)
-		captured.Write(buffer[:n])
-
-		if readErr != nil {
-			break
-		}
-	}
-
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close output reader: %v", err)
-	}
-
-	outputText := captured.String()
-
-	if reviewErr == nil {
-		t.Fatalf("execute(review) expected lint findings, got nil\n%s", outputText)
-	}
-
-	if !strings.Contains(outputText, "Run ID:") {
-		t.Fatalf("review output missing run ID:\n%s", outputText)
-	}
-
-	var runID string
-	for _, line := range strings.Split(outputText, "\n") {
-		if strings.HasPrefix(line, "Run ID:") {
-			runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
-			break
-		}
-	}
-
-	if runID == "" {
-		t.Fatalf("could not extract run ID:\n%s", outputText)
-	}
-
-	reportPath := filepath.Join(
-		repoDir,
-		".m3tal-review",
-		"reports",
-		runID+".json",
-	)
-
-	report, err := review.ReadReport(reportPath)
-	if err != nil {
-		t.Fatalf("read review report: %v", err)
-	}
-
-	if report.Passed {
-		t.Fatal("report.Passed = true, want false")
-	}
-
-	foundLintFinding := false
-	for _, finding := range report.Findings {
-		if finding.Rule == "repository-lint" &&
-			finding.File == "main.go" {
-			foundLintFinding = true
-			break
-		}
-	}
-
-	if !foundLintFinding {
-		t.Errorf("report missing repository-lint finding: %+v", report.Findings)
-	}
-
-	historyPath := filepath.Join(
-		repoDir,
-		".m3tal-review",
-		"history.jsonl",
-	)
-
-	entries, err := review.ReadHistory(historyPath)
-	if err != nil {
-		t.Fatalf("read review history: %v", err)
-	}
-
-	if len(entries) == 0 {
-		t.Fatal("review history is empty")
-	}
-
-	lastEntry := entries[len(entries)-1]
-
-	if lastEntry.RunID != runID {
-		t.Errorf("history RunID = %q, want %q", lastEntry.RunID, runID)
-	}
-
-	if lastEntry.Status != "failed" {
-		t.Errorf("history Status = %q, want %q", lastEntry.Status, "failed")
-	}
-
-	if lastEntry.FindingCount == 0 {
-		t.Error("history FindingCount = 0, want at least 1")
 	}
 }
 

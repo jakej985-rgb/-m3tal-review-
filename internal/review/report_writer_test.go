@@ -15,6 +15,11 @@ func TestWriteReport(t *testing.T) {
 		"run-001",
 		tempDir,
 		"main",
+		"sha",
+		"basesha",
+		"hash",
+		"ver",
+		nil,
 		nil,
 	)
 
@@ -70,7 +75,7 @@ func TestWriteReportFailureCleanup(t *testing.T) {
 		t.Fatalf("create blocking dir: %v", err)
 	}
 
-	report := NewReport("run-001", tempDir, "main", nil)
+	report := NewReport("run-001", tempDir, "main", "sha", "basesha", "hash", "ver", nil, nil)
 
 	err := WriteReport(reportPath, report)
 	if err == nil {
@@ -100,7 +105,7 @@ func TestWriteReportConcurrency(t *testing.T) {
 	for i := 0; i < concurrency; i++ {
 		go func(id int) {
 			reportPath := filepath.Join(reportsDir, "review-shared.json")
-			report := NewReport("run-001", tempDir, "main", nil)
+			report := NewReport("run-001", tempDir, "main", "sha", "basesha", "hash", "ver", nil, nil)
 			done <- WriteReport(reportPath, report)
 		}(i)
 	}
