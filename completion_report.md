@@ -68,4 +68,4 @@ All 8 documented CLI commands were verified end-to-end:
 
 ### 6. Final Commit SHA
 
-- Final commit pushed to `jules-1396316513410934157-e93d59f9`.
+- `f8445f0` (pushed to `origin/jules-1396316513410934157-e93d59f9`)
