@@ -129,3 +129,27 @@ func UntrackedFiles(path string) ([]string, error) {
 
 	return files, nil
 }
+
+// StagedDiff returns the patch for changes staged for commit.
+func StagedDiff(path string) (string, error) {
+	command := exec.Command(
+		"git",
+		"-C",
+		path,
+		"diff",
+		"--cached",
+		"--no-ext-diff",
+		"--unified=0",
+	)
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf(
+			"get staged diff: %s: %w",
+			strings.TrimSpace(string(output)),
+			err,
+		)
+	}
+
+	return string(output), nil
+}

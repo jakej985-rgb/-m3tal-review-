@@ -62,6 +62,11 @@ func execute(command string) error {
 			return err
 		}
 
+		stagedFiles, err := git.StagedFiles(repositoryRoot)
+		if err != nil {
+			return err
+		}
+
 		untrackedFiles, err := git.UntrackedFiles(repositoryRoot)
 		if err != nil {
 			return err
@@ -85,6 +90,14 @@ func execute(command string) error {
 			fmt.Println("  (none)")
 		} else {
 			for _, file := range untrackedFiles {
+				fmt.Println("  ", file)
+			}
+		}
+		fmt.Println("Staged files:")
+		if len(stagedFiles) == 0 {
+			fmt.Println("  (none)")
+		} else {
+			for _, file := range stagedFiles {
 				fmt.Println("  ", file)
 			}
 		}
