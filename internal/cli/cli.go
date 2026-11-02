@@ -168,5 +168,6 @@ func printHelp() {
 	fmt.Println("Available commands:")
 	fmt.Println("  version")
 	fmt.Println("  check")
+ fmt.Println("  review")
 	fmt.Println("  help")
 }
