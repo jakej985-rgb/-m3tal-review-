@@ -759,3 +759,218 @@ func second() {
 		}
 	}
 }
+
+func TestSlopRuleControlFlowNesting4Levels(t *testing.T) {
+	source := `package main
+func main() {
+	if true {
+		for i := 0; i < 10; i++ {
+			if i > 2 {
+				for j := 0; j < 5; j++ {
+					println(j)
+				}
+			}
+		}
+	}
+}`
+	repoDir := setupSlopTestRepo(t, source)
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	foundNesting := false
+	for _, f := range findings {
+		if f.Message == "Excessive AST nesting depth (4+ levels)" {
+			foundNesting = true
+		}
+	}
+	if !foundNesting {
+		t.Fatalf("expected Excessive AST nesting depth finding, got: %+v", findings)
+	}
+}
+
+func TestSlopRuleControlFlowNesting3Levels(t *testing.T) {
+	source := `package main
+func main() {
+	if true {
+		for i := 0; i < 10; i++ {
+			if i > 2 {
+				println(i)
+			}
+		}
+	}
+}`
+	repoDir := setupSlopTestRepo(t, source)
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	for _, f := range findings {
+		if f.Message == "Excessive AST nesting depth (4+ levels)" {
+			t.Fatalf("did not expect nesting finding for 3 levels, got: %+v", f)
+		}
+	}
+}
+
+func TestSlopRuleControlFlowSequentialSiblingIfs(t *testing.T) {
+	source := `package main
+func main() {
+	if true {
+		println(1)
+	}
+	if true {
+		println(2)
+	}
+	if true {
+		println(3)
+	}
+	if true {
+		println(4)
+	}
+	if true {
+		println(5)
+	}
+}`
+	repoDir := setupSlopTestRepo(t, source)
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	for _, f := range findings {
+		if f.Message == "Excessive AST nesting depth (4+ levels)" {
+			t.Fatalf("did not expect nesting finding for sequential sibling ifs, got: %+v", f)
+		}
+	}
+}
+
+func TestSlopRuleControlFlowNestedLoopsAndSwitches(t *testing.T) {
+	source := `package main
+func test() {
+	ch := make(chan int, 1)
+	for i := 0; i < 10; i++ {
+		switch i {
+		case 1:
+			for j := 0; j < 5; j++ {
+				select {
+				case ch <- j:
+					println(j)
+				default:
+				}
+			}
+		}
+	}
+}`
+	repoDir := setupSlopTestRepo(t, source)
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	foundNesting := false
+	for _, f := range findings {
+		if f.Message == "Excessive AST nesting depth (4+ levels)" {
+			foundNesting = true
+		}
+	}
+	if !foundNesting {
+		t.Fatalf("expected Excessive AST nesting depth finding for nested loop/switch/loop/select, got: %+v", findings)
+	}
+}
+
+func TestSlopRuleControlFlowMultipleFunctions(t *testing.T) {
+	source := `package main
+
+func first() {
+	if true {
+		for i := 0; i < 10; i++ {
+			if i > 2 {
+				println(i)
+			}
+		}
+	}
+}
+
+func second() {
+	if true {
+		for j := 0; j < 5; j++ {
+			if j > 1 {
+				println(j)
+			}
+		}
+	}
+}
+`
+	repoDir := setupSlopTestRepo(t, source)
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	for _, f := range findings {
+		if f.Message == "Excessive AST nesting depth (4+ levels)" {
+			t.Fatalf("nesting depth should reset per function; neither has 4 levels, got: %+v", f)
+		}
+	}
+}
+
+func TestSlopRuleRealRepoWithSpacesInFilename(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runCmd := func(args ...string) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %v failed: %v\noutput: %s", args, err, out)
+		}
+	}
+
+	runCmd("git", "init")
+	runCmd("git", "config", "user.name", "test")
+	runCmd("git", "config", "user.email", "test@test.com")
+
+	subDir := filepath.Join(repoDir, "my space dir")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	src := `package main
+func test() {
+	if true == false {
+		println("oops")
+	}
+}
+`
+	filePath := filepath.Join(subDir, "my file.go")
+	if err := os.WriteFile(filePath, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runCmd("git", "add", "my space dir/my file.go")
+
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+
+	foundRedundant := false
+	for _, f := range findings {
+		if f.Rule == "code-slop-analysis-error" {
+			t.Fatalf("unexpected analysis error for path with spaces: %+v", f)
+		}
+		if f.Message == "Redundant boolean comparison" {
+			foundRedundant = true
+			if f.File != "my space dir/my file.go" {
+				t.Errorf("expected File = 'my space dir/my file.go', got %q", f.File)
+			}
+		}
+	}
+
+	if !foundRedundant {
+		t.Fatalf("expected Redundant boolean comparison finding, got: %+v", findings)
+	}
+}

@@ -140,3 +140,79 @@ func TestParseDiffMultipleHunks(t *testing.T) {
 		t.Errorf("AddedLines = %v, want [3 12]", fd.AddedLines)
 	}
 }
+
+func TestParseDiffWithSpacesInFilenames(t *testing.T) {
+	diff := "diff --git a/path with spaces/new file.go b/path with spaces/new file.go\n" +
+		"new file mode 100644\n" +
+		"index 0000000..e69de29\n" +
+		"--- /dev/null\n" +
+		"+++ b/path with spaces/new file.go\t\n" +
+		"@@ -0,0 +1,2 @@\n" +
+		"+package main\n" +
+		"+func test() {}\n" +
+		"diff --git a/folder/file to delete.go b/folder/file to delete.go\n" +
+		"deleted file mode 100644\n" +
+		"--- a/folder/file to delete.go\n" +
+		"+++ /dev/null\n" +
+		"@@ -1,2 +0,0 @@\n" +
+		"-package main\n" +
+		"-func del() {}\n" +
+		"diff --git a/old name with space.go b/new name with space.go\n" +
+		"similarity index 100%\n" +
+		"rename from old name with space.go\n" +
+		"rename to new name with space.go\n"
+	fileDiffs := ParseDiff(diff)
+	if len(fileDiffs) != 3 {
+		t.Fatalf("expected 3 file diffs, got %d", len(fileDiffs))
+	}
+
+	// 1. Addition with spaces
+	if fileDiffs[0].ChangeType != FileAdded {
+		t.Errorf("fileDiffs[0].ChangeType = %q, want %q", fileDiffs[0].ChangeType, FileAdded)
+	}
+	if fileDiffs[0].Path != "path with spaces/new file.go" {
+		t.Errorf("fileDiffs[0].Path = %q, want %q", fileDiffs[0].Path, "path with spaces/new file.go")
+	}
+	if !reflect.DeepEqual(fileDiffs[0].AddedLines, []int{1, 2}) {
+		t.Errorf("fileDiffs[0].AddedLines = %v, want [1 2]", fileDiffs[0].AddedLines)
+	}
+
+	// 2. Deletion with spaces
+	if fileDiffs[1].ChangeType != FileDeleted {
+		t.Errorf("fileDiffs[1].ChangeType = %q, want %q", fileDiffs[1].ChangeType, FileDeleted)
+	}
+	if fileDiffs[1].Path != "folder/file to delete.go" {
+		t.Errorf("fileDiffs[1].Path = %q, want %q", fileDiffs[1].Path, "folder/file to delete.go")
+	}
+
+	// 3. Rename with spaces
+	if fileDiffs[2].ChangeType != FileRenamed {
+		t.Errorf("fileDiffs[2].ChangeType = %q, want %q", fileDiffs[2].ChangeType, FileRenamed)
+	}
+	if fileDiffs[2].OldPath != "old name with space.go" {
+		t.Errorf("fileDiffs[2].OldPath = %q, want %q", fileDiffs[2].OldPath, "old name with space.go")
+	}
+	if fileDiffs[2].Path != "new name with space.go" {
+		t.Errorf("fileDiffs[2].Path = %q, want %q", fileDiffs[2].Path, "new name with space.go")
+	}
+}
+
+func TestParseDiffWithQuotesInFilenames(t *testing.T) {
+	diff := `diff --git "a/quoted\"file.go" "b/quoted\"file.go"
+new file mode 100644
+--- /dev/null
++++ "b/quoted\"file.go"
+@@ -0,0 +1 @@
++package main
+`
+	fileDiffs := ParseDiff(diff)
+	if len(fileDiffs) != 1 {
+		t.Fatalf("expected 1 file diff, got %d", len(fileDiffs))
+	}
+	if fileDiffs[0].Path != "quoted\"file.go" {
+		t.Errorf("Path = %q, want %q", fileDiffs[0].Path, "quoted\"file.go")
+	}
+	if fileDiffs[0].ChangeType != FileAdded {
+		t.Errorf("ChangeType = %q, want %q", fileDiffs[0].ChangeType, FileAdded)
+	}
+}

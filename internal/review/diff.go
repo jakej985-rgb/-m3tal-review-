@@ -22,6 +22,43 @@ type FileDiff struct {
 	AddedLines []int
 }
 
+func unquoteDiffPath(s string) string {
+	trimmed := strings.TrimRight(s, "\t\r\n ")
+	trimmed = strings.TrimSpace(trimmed)
+	if unquoted, err := strconv.Unquote(trimmed); err == nil {
+		return unquoted
+	}
+	return strings.Trim(trimmed, "\"")
+}
+
+func parseGitDiffHeaderPaths(line string) (string, string) {
+	rest := strings.TrimPrefix(line, "diff --git ")
+	var oldPart, newPart string
+
+	if strings.HasPrefix(rest, "\"") {
+		if idx := strings.Index(rest, "\" \"b/"); idx != -1 {
+			oldPart = rest[:idx+1]
+			newPart = rest[idx+2:]
+		}
+	}
+	if oldPart == "" && newPart == "" {
+		if idx := strings.Index(rest, " b/"); idx != -1 {
+			oldPart = rest[:idx]
+			newPart = rest[idx+len(" b/"):]
+		}
+	}
+
+	cleanOld := unquoteDiffPath(oldPart)
+	if strings.HasPrefix(cleanOld, "a/") {
+		cleanOld = strings.TrimPrefix(cleanOld, "a/")
+	}
+	cleanNew := unquoteDiffPath(newPart)
+	if strings.HasPrefix(cleanNew, "b/") {
+		cleanNew = strings.TrimPrefix(cleanNew, "b/")
+	}
+	return cleanOld, cleanNew
+}
+
 // ParseDiff parses a unified git diff into individual file diffs with classifications
 // (added, modified, deleted, renamed) and their corresponding added line numbers.
 func ParseDiff(diff string) []FileDiff {
@@ -62,14 +99,7 @@ func ParseDiff(diff string) []FileDiff {
 		if strings.HasPrefix(line, "diff --git ") {
 			finish()
 			inHunk = false
-			parts := strings.Split(strings.TrimPrefix(line, "diff --git "), " ")
-			var oldPath, newPath string
-			if len(parts) > 0 && strings.HasPrefix(parts[0], "a/") {
-				oldPath = strings.TrimPrefix(parts[0], "a/")
-			}
-			if len(parts) > 1 && strings.HasPrefix(parts[1], "b/") {
-				newPath = strings.TrimPrefix(parts[1], "b/")
-			}
+			oldPath, newPath := parseGitDiffHeaderPaths(line)
 			current = &FileDiff{
 				OldPath: oldPath,
 				NewPath: newPath,
@@ -89,19 +119,19 @@ func ParseDiff(diff string) []FileDiff {
 				current.ChangeType = FileAdded
 			} else if strings.HasPrefix(line, "rename from ") {
 				current.ChangeType = FileRenamed
-				current.OldPath = strings.TrimPrefix(line, "rename from ")
+				current.OldPath = unquoteDiffPath(strings.TrimPrefix(line, "rename from "))
 			} else if strings.HasPrefix(line, "rename to ") {
 				current.ChangeType = FileRenamed
-				current.NewPath = strings.TrimPrefix(line, "rename to ")
+				current.NewPath = unquoteDiffPath(strings.TrimPrefix(line, "rename to "))
 			} else if strings.HasPrefix(line, "--- ") {
-				p := strings.TrimPrefix(line, "--- ")
+				p := unquoteDiffPath(strings.TrimPrefix(line, "--- "))
 				if p == "/dev/null" {
 					current.ChangeType = FileAdded
 				} else if strings.HasPrefix(p, "a/") {
 					current.OldPath = strings.TrimPrefix(p, "a/")
 				}
 			} else if strings.HasPrefix(line, "+++ ") {
-				p := strings.TrimPrefix(line, "+++ ")
+				p := unquoteDiffPath(strings.TrimPrefix(line, "+++ "))
 				if p == "/dev/null" {
 					current.ChangeType = FileDeleted
 				} else if strings.HasPrefix(p, "b/") {

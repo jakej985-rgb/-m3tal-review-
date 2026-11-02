@@ -130,4 +130,3 @@ func TestReadReportWithoutRemediationField(t *testing.T) {
 		t.Fatal("marshaled data is empty")
 	}
 }
-

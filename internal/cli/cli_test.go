@@ -665,3 +665,167 @@ func main() {
 		t.Fatalf("report missing expected code-slop finding: %+v", report.Findings)
 	}
 }
+
+func TestLintVsReviewSeparation(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v error: %v\n%s", args, err, out)
+		}
+	}
+
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "go.mod"), []byte("module testmod\n\ngo 1.23\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".")
+	runGit("commit", "-m", "initial")
+
+	// Create an unstaged file with terrible formatting that fails gofmt
+	badFormatFile := filepath.Join(repoDir, "unstaged_bad.go")
+	if err := os.WriteFile(badFormatFile, []byte("package   main\n\nfunc    bad(  )   {\n\tprintln(\"bad\")\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stage a clean change in main.go
+	cleanMain := "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\nfunc cleanHelper() {\n\tprintln(\"helper\")\n}\n"
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte(cleanMain), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "main.go")
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalDir)
+	})
+
+	// 1. review should succeed because staged changes in main.go are clean
+	reviewErr := execute("review")
+	if reviewErr != nil {
+		t.Fatalf("review expected to pass staged-only check, got error: %v", reviewErr)
+	}
+
+	// 2. lint should fail because unstaged_bad.go is not formatted with gofmt
+	lintErr := execute("lint")
+	if lintErr == nil {
+		t.Fatalf("lint expected to fail repository-wide check due to unformatted file, but passed")
+	}
+}
+
+func TestReviewHandlesMissingCommitMetadataUnbornBranch(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v error: %v\n%s", args, err, out)
+		}
+	}
+
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+
+	cleanMain := "package main\n\nfunc main() {\n\tprintln(\"unborn\")\n}\n"
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte(cleanMain), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "main.go")
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalDir)
+	})
+
+	// Capture stdout
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = stdoutW
+
+	// Capture stderr
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = stderrW
+
+	reviewErr := execute("review")
+
+	os.Stdout = origStdout
+	os.Stderr = origStderr
+	stdoutW.Close()
+	stderrW.Close()
+
+	var stdoutBuf, stderrBuf strings.Builder
+	buf := make([]byte, 1024)
+	for {
+		n, rerr := stdoutR.Read(buf)
+		stdoutBuf.Write(buf[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	for {
+		n, rerr := stderrR.Read(buf)
+		stderrBuf.Write(buf[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	stdoutR.Close()
+	stderrR.Close()
+
+	if reviewErr != nil {
+		t.Fatalf("review on unborn branch returned unexpected error: %v", reviewErr)
+	}
+
+	stderrOut := stderrBuf.String()
+	if !strings.Contains(stderrOut, "Warning: unable to determine current commit SHA") {
+		t.Errorf("expected warning in stderr about commit SHA, got:\n%s", stderrOut)
+	}
+
+	stdoutOut := stdoutBuf.String()
+	var runID string
+	for _, line := range strings.Split(stdoutOut, "\n") {
+		if strings.HasPrefix(line, "Run ID:") {
+			runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
+			break
+		}
+	}
+	if runID == "" {
+		t.Fatalf("could not extract run ID from stdout:\n%s", stdoutOut)
+	}
+
+	reportPath := filepath.Join(repoDir, ".m3tal-review", "reports", runID+".json")
+	report, err := review.ReadReport(reportPath)
+	if err != nil {
+		t.Fatalf("failed to read report: %v", err)
+	}
+	if report.CommitSHA != "unavailable" {
+		t.Errorf("expected CommitSHA == 'unavailable', got %q", report.CommitSHA)
+	}
+}

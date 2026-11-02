@@ -463,3 +463,67 @@ func TestStagedDiff(t *testing.T) {
 		t.Fatalf("diff included unstaged change:\n%s", diff)
 	}
 }
+
+func TestStagedFileStatuses(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v error: %v\n%s", args, err, out)
+		}
+	}
+
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+
+	// Commit initial files
+	fileA := filepath.Join(repoDir, "to_modify.txt")
+	fileB := filepath.Join(repoDir, "to_delete.txt")
+	fileC := filepath.Join(repoDir, "to_rename with space.txt")
+	os.WriteFile(fileA, []byte("orig content a"), 0644)
+	os.WriteFile(fileB, []byte("orig content b"), 0644)
+	os.WriteFile(fileC, []byte("orig content c"), 0644)
+
+	runGit("add", ".")
+	runGit("commit", "-m", "initial")
+
+	// Now stage:
+	// 1. Addition (with space)
+	fileAdd := filepath.Join(repoDir, "new file.txt")
+	os.WriteFile(fileAdd, []byte("new"), 0644)
+	runGit("add", "new file.txt")
+
+	// 2. Modification
+	os.WriteFile(fileA, []byte("modified"), 0644)
+	runGit("add", "to_modify.txt")
+
+	// 3. Deletion
+	runGit("rm", "to_delete.txt")
+
+	// 4. Rename (with space)
+	runGit("mv", "to_rename with space.txt", "renamed file.txt")
+
+	statuses, err := StagedFileStatuses(repoDir)
+	if err != nil {
+		t.Fatalf("StagedFileStatuses() error: %v", err)
+	}
+
+	if statuses["new file.txt"] != "A" {
+		t.Errorf("status of new file.txt = %q, want 'A'", statuses["new file.txt"])
+	}
+	if statuses["to_modify.txt"] != "M" {
+		t.Errorf("status of to_modify.txt = %q, want 'M'", statuses["to_modify.txt"])
+	}
+	if statuses["to_delete.txt"] != "D" {
+		t.Errorf("status of to_delete.txt = %q, want 'D'", statuses["to_delete.txt"])
+	}
+	if !strings.HasPrefix(statuses["renamed file.txt"], "R") {
+		t.Errorf("status of renamed file.txt = %q, want starting with 'R'", statuses["renamed file.txt"])
+	}
+}

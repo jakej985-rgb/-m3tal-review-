@@ -151,14 +151,24 @@ func isBoolLiteral(e ast.Expr) bool {
 	return ok && (ident.Name == "true" || ident.Name == "false")
 }
 
+func isControlFlow(n ast.Node) bool {
+	switch n.(type) {
+	case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
+		return true
+	default:
+		return false
+	}
+}
+
 type slopInspector struct {
-	file     string
-	fset     *token.FileSet
-	lineMap  map[int]bool
-	findings []Finding
-	seen     map[string]bool
-	depth    int
-	stack    []ast.Node
+	file       string
+	fset       *token.FileSet
+	lineMap    map[int]bool
+	findings   []Finding
+	seen       map[string]bool
+	depth      int
+	stack      []ast.Node
+	depthStack []int
 }
 
 func (v *slopInspector) addFinding(line int, message, remediation string) {
@@ -222,18 +232,33 @@ func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
 			if len(inspector.stack) > 0 {
 				top := inspector.stack[len(inspector.stack)-1]
 				inspector.stack = inspector.stack[:len(inspector.stack)-1]
-				if _, ok := top.(*ast.BlockStmt); ok {
+				if isControlFlow(top) {
 					inspector.depth--
+				}
+				if _, isFunc := top.(*ast.FuncDecl); isFunc {
+					inspector.depth = inspector.depthStack[len(inspector.depthStack)-1]
+					inspector.depthStack = inspector.depthStack[:len(inspector.depthStack)-1]
+				} else if _, isFuncLit := top.(*ast.FuncLit); isFuncLit {
+					inspector.depth = inspector.depthStack[len(inspector.depthStack)-1]
+					inspector.depthStack = inspector.depthStack[:len(inspector.depthStack)-1]
 				}
 			}
 			return false
+		}
+
+		if _, isFunc := n.(*ast.FuncDecl); isFunc {
+			inspector.depthStack = append(inspector.depthStack, inspector.depth)
+			inspector.depth = 0
+		} else if _, isFuncLit := n.(*ast.FuncLit); isFuncLit {
+			inspector.depthStack = append(inspector.depthStack, inspector.depth)
+			inspector.depth = 0
 		}
 
 		inspector.stack = append(inspector.stack, n)
 		pos := inspector.fset.Position(n.Pos())
 		line := pos.Line
 
-		if _, ok := n.(*ast.BlockStmt); ok {
+		if isControlFlow(n) {
 			inspector.depth++
 			if inspector.depth >= 4 && inspector.lineMap[line] {
 				inspector.addFinding(line, "Excessive AST nesting depth (4+ levels)", "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.")

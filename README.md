@@ -12,8 +12,9 @@ It provides actionable findings, records review trails (history), and supports a
 - **Staged-Only Semantics**: Accurately inspects staged content from the Git index (`git show :<file>`). Working-tree modifications that have not been staged are ignored. Deleted files are classified and handled without invoking AST analysis or generating false errors.
 - **Analysis Error Reporting**: Syntax errors in staged Go code or git index retrieval errors produce distinct high-severity findings (`code-slop-analysis-error`), ensuring that analysis failures cannot result in a passing review.
 - **Security Checks**: Detects hardcoded credentials, world-writable file permissions (0777), disabled TLS verification, and risky shell executions.
-- **Code Quality**: Identifies leftover `TODO` markers, debug print statements, and runs `gofmt` and `go vet` to enforce formatting and find subtle bugs.
-- **Review History**: Maintains a JSONL log of previous reviews.
+- **Code Quality**: Identifies leftover `TODO` markers and debug print statements in staged diffs.
+- **Independent Repository Linting**: Dedicated `lint` command runs `gofmt` and `go vet` across the entire repository to enforce formatting and catch subtle bugs without interfering with staged-only diff reviews.
+- **Review History**: Maintains a JSONL log of previous reviews with atomic writes and durable recovery.
 - **Detailed Reports**: Saves full review results as JSON files.
 
 ## Installation
@@ -75,6 +76,14 @@ Run standard Go formatting and vet checks across the repository:
 
 ```bash
 m3tal-review lint
+```
+
+### Recover History
+
+Rebuild the review history log (`history.jsonl`) non-destructively from valid report files:
+
+```bash
+m3tal-review recover-history
 ```
 
 ## Interpreting Findings

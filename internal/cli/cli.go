@@ -229,9 +229,11 @@ func execute(command string) error {
 
 		findings := engine.Run(diff)
 
-		// In a full Git environment, we would extract SHA and diff hashes.
-		// For MVP, we extract standard details and leave base/hash implementations as planned extensions.
-		currentSHA, _ := git.CurrentCommitSHA(repositoryRoot)
+		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: unable to determine current commit SHA: %v\n", err)
+			currentSHA = "unavailable"
+		}
 		// tool version is a global `version`
 
 		report := review.NewReport(
@@ -406,35 +408,14 @@ func execute(command string) error {
 		reportsDir := filepath.Join(repositoryRoot, ".m3tal-review", "reports")
 		historyPath := filepath.Join(repositoryRoot, ".m3tal-review", "history.jsonl")
 
-		entries, err := os.ReadDir(reportsDir)
+		recovered, err := review.RecoverHistory(reportsDir, historyPath)
 		if err != nil {
-			if os.IsNotExist(err) {
-				fmt.Println("No reports found to recover.")
-				return nil
-			}
-			return fmt.Errorf("read reports directory: %w", err)
+			return fmt.Errorf("recover history: %w", err)
 		}
 
-		os.Remove(historyPath) // Start fresh
-
-		recovered := 0
-		for _, entry := range entries {
-			if !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-
-			reportPath := filepath.Join(reportsDir, entry.Name())
-			report, err := review.ReadReport(reportPath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to read report %s: %v\n", entry.Name(), err)
-				continue
-			}
-
-			historyEntry := review.NewHistoryEntry(report)
-			if err := review.AppendHistory(historyPath, historyEntry); err != nil {
-				return fmt.Errorf("failed to append history for %s: %w", entry.Name(), err)
-			}
-			recovered++
+		if recovered == 0 {
+			fmt.Println("No reports found to recover.")
+			return nil
 		}
 
 		fmt.Printf("Successfully recovered %d review entries to history.\n", recovered)

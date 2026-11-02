@@ -34,6 +34,10 @@ func WriteReport(path string, report Report) error {
 		os.Remove(tempPath) // Clean up if rename hasn't succeeded (or just cleanup in general)
 	}()
 
+	if err := tempFile.Chmod(0644); err != nil {
+		return fmt.Errorf("chmod temporary report file: %w", err)
+	}
+
 	if _, err := tempFile.Write(data); err != nil {
 		return fmt.Errorf("write temporary report: %w", err)
 	}
@@ -48,6 +52,11 @@ func WriteReport(path string, report Report) error {
 
 	if err := os.Rename(tempPath, path); err != nil {
 		return fmt.Errorf("rename temporary report to final path: %w", err)
+	}
+
+	if parentDir, err := os.Open(dir); err == nil {
+		_ = parentDir.Sync()
+		_ = parentDir.Close()
 	}
 
 	return nil

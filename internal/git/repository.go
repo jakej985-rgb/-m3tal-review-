@@ -107,6 +107,53 @@ func StagedFiles(path string) ([]string, error) {
 	return files, nil
 }
 
+// StagedFileStatuses returns a map of staged file paths to their git status (e.g. A, M, D, R).
+func StagedFileStatuses(path string) (map[string]string, error) {
+	command := exec.Command("git", "-C", path, "diff", "--cached", "--name-status", "-z")
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get staged file statuses: %s: %w",
+			strings.TrimSpace(string(output)),
+			err,
+		)
+	}
+
+	statuses := make(map[string]string)
+	tokens := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+	if len(tokens) == 1 && tokens[0] == "" {
+		return statuses, nil
+	}
+
+	for i := 0; i < len(tokens); {
+		if tokens[i] == "" {
+			i++
+			continue
+		}
+		status := tokens[i]
+		if strings.HasPrefix(status, "R") || strings.HasPrefix(status, "C") {
+			// Rename/Copy has status, oldPath, newPath
+			if i+2 < len(tokens) {
+				newPath := tokens[i+2]
+				statuses[newPath] = status
+				i += 3
+				continue
+			}
+			break
+		}
+		if i+1 < len(tokens) {
+			filePath := tokens[i+1]
+			statuses[filePath] = status
+			i += 2
+			continue
+		}
+		break
+	}
+
+	return statuses, nil
+}
+
 func UntrackedFiles(path string) ([]string, error) {
 	command := exec.Command(
 		"git", "-C", path,
