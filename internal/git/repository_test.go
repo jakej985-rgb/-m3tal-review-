@@ -378,3 +378,32 @@ func TestStagedFilesEmpty(t *testing.T) {
 		t.Fatalf("StagedFiles() = %v, want empty slice", files)
 	}
 }
+
+func TestStagedFilesHandlesNewlineInFilename(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	filename := "file\nwith-newline.txt"
+	filePath := filepath.Join(repoDir, filename)
+	if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
+		t.Fatalf("write file with newline: %v", err)
+	}
+
+	add := exec.Command("git", "-C", repoDir, "add", filename)
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("stage file with newline: %v\n%s", err, output)
+	}
+
+	files, err := StagedFiles(repoDir)
+	if err != nil {
+		t.Fatalf("StagedFiles() error: %v", err)
+	}
+
+	if len(files) != 1 || files[0] != filename {
+		t.Fatalf("StagedFiles() = %q, want [%q]", files, filename)
+	}
+}
