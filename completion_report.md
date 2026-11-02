@@ -80,5 +80,5 @@ All 8 documented CLI commands verified end-to-end:
 
 ### 6. Final Commit SHA and CI Status
 
-- Pushed to `origin/jules-1396316513410934157-e93d59f9`.
+- Pushed to `origin/jules-1396316513410934157-e93d59f9` at commit `77a9267`.
 - Verified live GitHub Actions CI run on PR head: **PASS** (`✓`).
