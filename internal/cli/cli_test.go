@@ -74,12 +74,6 @@ func TestCheckDisplaysChangedAndUntrackedFiles(t *testing.T) {
 		t.Fatalf("close output writer: %v", err)
 	}
 
-	output, err := os.ReadFile("/dev/null")
-	if err != nil {
-		t.Fatalf("read null device: %v", err)
-	}
-	_ = output
-
 	var captured strings.Builder
 	buffer := make([]byte, 1024)
 	for {
