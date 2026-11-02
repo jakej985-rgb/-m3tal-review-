@@ -1,9 +1,9 @@
 package review
 
 type Finding struct {
-	Rule     string
-	Severity string
-	File     string
-	Line     int
-	Message  string
+	Rule     string `json:"rule"`
+	Severity string `json:"severity"`
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Message  string `json:"message"`
 }
