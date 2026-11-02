@@ -150,6 +150,23 @@ type slopVisitor struct {
 	lineMap  map[int]bool
 	findings []Finding
 	depth    int
+	seen     map[string]bool
+}
+
+func (v *slopVisitor) addFinding(line int, message, remediation string) {
+	key := strconv.Itoa(line) + ":" + message
+	if v.seen[key] {
+		return
+	}
+	v.seen[key] = true
+	v.findings = append(v.findings, Finding{
+		Rule:        "code-slop",
+		Severity:    "low",
+		File:        v.file,
+		Line:        line,
+		Message:     message,
+		Remediation: remediation,
+	})
 }
 
 func (v *slopVisitor) Visit(n ast.Node) ast.Visitor {
@@ -160,65 +177,37 @@ func (v *slopVisitor) Visit(n ast.Node) ast.Visitor {
 	pos := v.fset.Position(n.Pos())
 	line := pos.Line
 
-	// 3. Excessive nesting (AST depth)
 	isBlock := false
 	if _, ok := n.(*ast.BlockStmt); ok {
 		isBlock = true
+		v.depth++
 		if v.depth >= 4 && v.lineMap[line] {
-			v.findings = append(v.findings, Finding{
-				Rule:        "code-slop",
-				Severity:    "low",
-				File:        v.file,
-				Line:        line,
-				Message:     "Excessive AST nesting depth (4+ levels)",
-				Remediation: "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.",
-			})
+			v.addFinding(line, "Excessive AST nesting depth (4+ levels)", "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.")
 		}
 	}
 
 	if v.lineMap[line] {
-		// 1. Redundant boolean
 		if binExpr, ok := n.(*ast.BinaryExpr); ok {
 			if binExpr.Op == token.EQL || binExpr.Op == token.NEQ {
 				if isBoolLiteral(binExpr.X) || isBoolLiteral(binExpr.Y) {
-					v.findings = append(v.findings, Finding{
-						Rule:        "code-slop",
-						Severity:    "low",
-						File:        v.file,
-						Line:        line,
-						Message:     "Redundant boolean comparison",
-						Remediation: "Remove the explicit comparison to true/false. Use the boolean expression directly.",
-					})
+					v.addFinding(line, "Redundant boolean comparison", "Remove the explicit comparison to true/false. Use the boolean expression directly.")
 				}
 			}
 		}
 
-		// 2. Empty block
 		if block, ok := n.(*ast.BlockStmt); ok {
 			if len(block.List) == 0 {
-				v.findings = append(v.findings, Finding{
-					Rule:        "code-slop",
-					Severity:    "low",
-					File:        v.file,
-					Line:        line,
-					Message:     "Empty block",
-					Remediation: "Remove the empty block or add a comment explaining why it is empty.",
-				})
+				v.addFinding(line, "Empty block", "Remove the empty block or add a comment explaining why it is empty.")
 			}
 		}
 	}
 
 	if isBlock {
-		v.depth++
-		// Since ast.Walk will call Visit on children and then we can't easily run code after children are done,
-		// returning a wrapper visitor is an elegant way to track depth correctly in a single pass.
 		return &slopWrapperVisitor{v}
 	}
-
 	return v
 }
 
-// slopWrapperVisitor decrements depth after block children are visited
 type slopWrapperVisitor struct {
 	v *slopVisitor
 }
@@ -234,14 +223,27 @@ func (w *slopWrapperVisitor) Visit(n ast.Node) ast.Visitor {
 func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
 	content, err := git.StagedFileContent(r.RepositoryRoot, file)
 	if err != nil {
-		// If git show fails (e.g., file deleted), skip AST checking
-		return nil
+		return []Finding{{
+			Rule:        "code-slop",
+			Severity:    "high",
+			File:        file,
+			Line:        0,
+			Message:     "Failed to read staged content: " + err.Error(),
+			Remediation: "Check git index or file permissions.",
+		}}
 	}
 
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, file, content, parser.ParseComments)
 	if err != nil {
-		return nil // Gracefully fail if parsing fails
+		return []Finding{{
+			Rule:        "code-slop",
+			Severity:    "high",
+			File:        file,
+			Line:        0,
+			Message:     "Failed to parse staged Go code: " + err.Error(),
+			Remediation: "Fix syntax errors.",
+		}}
 	}
 
 	lineMap := make(map[int]bool)
@@ -254,10 +256,10 @@ func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
 		fset:     fset,
 		lineMap:  lineMap,
 		findings: []Finding{},
+		seen:     make(map[string]bool),
 		depth:    0,
 	}
 
 	ast.Walk(v, f)
-
 	return v.findings
 }

@@ -303,3 +303,66 @@ func TestSlopRuleWorkingTreeDifference(t *testing.T) {
 		t.Fatalf("expected finding from staged content even if working tree is different")
 	}
 }
+
+func TestSlopRuleNestingDepthBoundaries(t *testing.T) {
+	source := `package main
+func main() {
+	if true { // 2 (func is 1)
+		if true { // 3 (Should NOT trigger)
+		}
+	}
+}`
+	repoDir := setupSlopTestRepo(t, source)
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -2,4 +2,5 @@
+	if true { // 2 (func is 1)
++		if true { // 3 (Should NOT trigger)
++		}
+	}
+ }`
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	for _, f := range findings {
+		if f.Message == "Excessive AST nesting depth (4+ levels)" {
+			t.Fatalf("expected NO excessive nesting finding for depth 3, got %+v", findings)
+		}
+	}
+}
+
+func TestSlopRuleNestingDepth5(t *testing.T) {
+	source := `package main
+func main() {
+	if true { // 1
+		if true { // 2
+			if true { // 3
+				if true { // 4
+					if true { // 5 (Should trigger)
+					}
+				}
+			}
+		}
+	}
+}`
+	repoDir := setupSlopTestRepo(t, source)
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -5,4 +5,5 @@
+			if true { // 3
+				if true { // 4
++					if true { // 5 (Should trigger)
++					}
+				}
+`
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	found := false
+	for _, f := range findings {
+		if f.Message == "Excessive AST nesting depth (4+ levels)" && f.Line == 7 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected excessive nesting finding for depth 5 at line 7, got %+v", findings)
+	}
+}
