@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -405,5 +406,60 @@ func TestStagedFilesHandlesNewlineInFilename(t *testing.T) {
 
 	if len(files) != 1 || files[0] != filename {
 		t.Fatalf("StagedFiles() = %q, want [%q]", files, filename)
+	}
+}
+
+func TestStagedDiff(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	filePath := filepath.Join(repoDir, "file.txt")
+	if err := os.WriteFile(filePath, []byte("original\n"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	add := exec.Command("git", "-C", repoDir, "add", "file.txt")
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("stage file: %v\n%s", err, output)
+	}
+
+	commit := exec.Command(
+		"git", "-C", repoDir,
+		"-c", "user.name=Test User",
+		"-c", "user.email=test@example.com",
+		"commit", "-m", "initial commit",
+	)
+	if output, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("commit file: %v\n%s", err, output)
+	}
+
+	if err := os.WriteFile(filePath, []byte("staged change\n"), 0644); err != nil {
+		t.Fatalf("modify file: %v", err)
+	}
+
+	addStaged := exec.Command("git", "-C", repoDir, "add", "file.txt")
+	if output, err := addStaged.CombinedOutput(); err != nil {
+		t.Fatalf("stage file modification: %v\n%s", err, output)
+	}
+
+	if err := os.WriteFile(filePath, []byte("unstaged change\n"), 0644); err != nil {
+		t.Fatalf("modify file again: %v", err)
+	}
+
+	diff, err := StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("StagedDiff() error: %v", err)
+	}
+
+	if !strings.Contains(diff, "staged change") {
+		t.Fatalf("expected staged change in diff:\n%s", diff)
+	}
+
+	if strings.Contains(diff, "unstaged change") {
+		t.Fatalf("diff included unstaged change:\n%s", diff)
 	}
 }
