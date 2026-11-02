@@ -503,3 +503,88 @@ func main(){println("hello")}
 		t.Error("history FindingCount = 0, want at least 1")
 	}
 }
+
+func TestReviewRecordsSecurityFindings(t *testing.T) {
+	repoDir := setupLintRepo(t, `package main
+
+func main() {
+	password := "supersecretpassword"
+	println(password)
+}
+`)
+
+	add := exec.Command("git", "-C", repoDir, "add", "go.mod", "main.go")
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("stage test files: %v\n%s", err, output)
+	}
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create output pipe: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	os.Stdout = writer
+	reviewErr := execute("review")
+	os.Stdout = originalStdout
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close output writer: %v", err)
+	}
+
+	var captured strings.Builder
+	buffer := make([]byte, 1024)
+	for {
+		n, readErr := reader.Read(buffer)
+		captured.Write(buffer[:n])
+		if readErr != nil {
+			break
+		}
+	}
+
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close output reader: %v", err)
+	}
+
+	outputText := captured.String()
+	if reviewErr == nil {
+		t.Fatalf("execute(review) expected security finding, got nil\n%s", outputText)
+	}
+
+	var runID string
+	for _, line := range strings.Split(outputText, "\n") {
+		if strings.HasPrefix(line, "Run ID:") {
+			runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
+			break
+		}
+	}
+	if runID == "" {
+		t.Fatalf("could not extract run ID:\n%s", outputText)
+	}
+
+	reportPath := filepath.Join(
+		repoDir,
+		".m3tal-review",
+		"reports",
+		runID+".json",
+	)
+
+	report, err := review.ReadReport(reportPath)
+	if err != nil {
+		t.Fatalf("read review report: %v", err)
+	}
+
+	found := false
+	for _, finding := range report.Findings {
+		if finding.Rule == "hardcoded-credential" &&
+			finding.File == "main.go" &&
+			finding.Line == 4 {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatalf("report missing expected security finding: %+v", report.Findings)
+	}
+}

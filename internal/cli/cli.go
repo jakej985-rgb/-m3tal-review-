@@ -213,6 +213,7 @@ func execute(command string) error {
 		engine := review.NewEngine(
 			review.TodoRule{},
 			review.DebugRule{},
+			review.SecurityRule{},
 		)
 
 		findings := engine.Run(diff)
