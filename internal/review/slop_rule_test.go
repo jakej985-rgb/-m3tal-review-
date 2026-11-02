@@ -2,6 +2,7 @@ package review
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -23,6 +24,18 @@ func setupSlopTestRepo(t *testing.T, source string) string {
 		[]byte(source),
 		0644,
 	); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd = exec.Command("git", "add", "main.go")
+	cmd.Dir = repoDir
+	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -244,5 +257,49 @@ func main() {
 	}
 	if !foundRedundant {
 		t.Fatalf("expected Redundant boolean comparison finding, got: %+v", findings)
+	}
+}
+
+func TestSlopRuleDeletedFile(t *testing.T) {
+	repoDir := setupSlopTestRepo(t, "package main")
+	diff := `diff --git a/deleted.go b/deleted.go
+--- a/deleted.go
++++ /dev/null
+@@ -1,2 +0,0 @@
+-package main
+-func empty() {}
+`
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for deleted file, got %d", len(findings))
+	}
+}
+
+func TestSlopRuleWorkingTreeDifference(t *testing.T) {
+	source := "package main\nfunc main() {\n\tif true == false {}\n}"
+	repoDir := setupSlopTestRepo(t, source)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\nfunc main() {}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -2,2 +2,3 @@
+ func main() {
++	if true == false {}
+ }`
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+
+	found := false
+	for _, f := range findings {
+		if f.Message == "Redundant boolean comparison" {
+			found = true
+		}
+	}
+
+	if !found {
+		t.Fatalf("expected finding from staged content even if working tree is different")
 	}
 }

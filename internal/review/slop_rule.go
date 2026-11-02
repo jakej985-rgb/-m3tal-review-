@@ -4,11 +4,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/git"
 )
 
 type SlopRule struct {
@@ -144,19 +144,104 @@ func isBoolLiteral(e ast.Expr) bool {
 	return ok && (ident.Name == "true" || ident.Name == "false")
 }
 
-func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
-	var findings []Finding
+type slopVisitor struct {
+	file     string
+	fset     *token.FileSet
+	lineMap  map[int]bool
+	findings []Finding
+	depth    int
+}
 
-	path := filepath.Join(r.RepositoryRoot, file)
-	content, err := os.ReadFile(path)
+func (v *slopVisitor) Visit(n ast.Node) ast.Visitor {
+	if n == nil {
+		return nil
+	}
+
+	pos := v.fset.Position(n.Pos())
+	line := pos.Line
+
+	// 3. Excessive nesting (AST depth)
+	isBlock := false
+	if _, ok := n.(*ast.BlockStmt); ok {
+		isBlock = true
+		if v.depth >= 4 && v.lineMap[line] {
+			v.findings = append(v.findings, Finding{
+				Rule:        "code-slop",
+				Severity:    "low",
+				File:        v.file,
+				Line:        line,
+				Message:     "Excessive AST nesting depth (4+ levels)",
+				Remediation: "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.",
+			})
+		}
+	}
+
+	if v.lineMap[line] {
+		// 1. Redundant boolean
+		if binExpr, ok := n.(*ast.BinaryExpr); ok {
+			if binExpr.Op == token.EQL || binExpr.Op == token.NEQ {
+				if isBoolLiteral(binExpr.X) || isBoolLiteral(binExpr.Y) {
+					v.findings = append(v.findings, Finding{
+						Rule:        "code-slop",
+						Severity:    "low",
+						File:        v.file,
+						Line:        line,
+						Message:     "Redundant boolean comparison",
+						Remediation: "Remove the explicit comparison to true/false. Use the boolean expression directly.",
+					})
+				}
+			}
+		}
+
+		// 2. Empty block
+		if block, ok := n.(*ast.BlockStmt); ok {
+			if len(block.List) == 0 {
+				v.findings = append(v.findings, Finding{
+					Rule:        "code-slop",
+					Severity:    "low",
+					File:        v.file,
+					Line:        line,
+					Message:     "Empty block",
+					Remediation: "Remove the empty block or add a comment explaining why it is empty.",
+				})
+			}
+		}
+	}
+
+	if isBlock {
+		v.depth++
+		// Since ast.Walk will call Visit on children and then we can't easily run code after children are done,
+		// returning a wrapper visitor is an elegant way to track depth correctly in a single pass.
+		return &slopWrapperVisitor{v}
+	}
+
+	return v
+}
+
+// slopWrapperVisitor decrements depth after block children are visited
+type slopWrapperVisitor struct {
+	v *slopVisitor
+}
+
+func (w *slopWrapperVisitor) Visit(n ast.Node) ast.Visitor {
+	if n == nil {
+		w.v.depth--
+		return nil
+	}
+	return w.v.Visit(n)
+}
+
+func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
+	content, err := git.StagedFileContent(r.RepositoryRoot, file)
 	if err != nil {
-		return findings // Cannot parse AST if file doesn't exist
+		// If git show fails (e.g., file deleted), skip AST checking
+		return nil
 	}
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, content, parser.ParseComments)
+	f, err := parser.ParseFile(fset, file, content, parser.ParseComments)
 	if err != nil {
-		return findings // Gracefully fail if parsing fails
+		return nil // Gracefully fail if parsing fails
 	}
 
 	lineMap := make(map[int]bool)
@@ -164,77 +249,15 @@ func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
 		lineMap[l] = true
 	}
 
-	var inspectNode func(n ast.Node, depth int)
-	inspectNode = func(n ast.Node, depth int) {
-		if n == nil {
-			return
-		}
-
-		pos := fset.Position(n.Pos())
-		line := pos.Line
-
-		// 3. Excessive nesting (AST depth)
-		// We only want to report this if the block starts on an added line
-		if _, ok := n.(*ast.BlockStmt); ok {
-			if depth >= 4 && lineMap[line] {
-				findings = append(findings, Finding{
-					Rule:        "code-slop",
-					Severity:    "low",
-					File:        file,
-					Line:        line,
-					Message:     "Excessive AST nesting depth (4+ levels)",
-					Remediation: "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.",
-				})
-			}
-		}
-
-		if lineMap[line] {
-			// 1. Redundant boolean
-			if binExpr, ok := n.(*ast.BinaryExpr); ok {
-				if binExpr.Op == token.EQL || binExpr.Op == token.NEQ {
-					if isBoolLiteral(binExpr.X) || isBoolLiteral(binExpr.Y) {
-						findings = append(findings, Finding{
-							Rule:        "code-slop",
-							Severity:    "low",
-							File:        file,
-							Line:        line,
-							Message:     "Redundant boolean comparison",
-							Remediation: "Remove the explicit comparison to true/false. Use the boolean expression directly.",
-						})
-					}
-				}
-			}
-
-			// 2. Empty block
-			if block, ok := n.(*ast.BlockStmt); ok {
-				if len(block.List) == 0 {
-					findings = append(findings, Finding{
-						Rule:        "code-slop",
-						Severity:    "low",
-						File:        file,
-						Line:        line,
-						Message:     "Empty block",
-						Remediation: "Remove the empty block or add a comment explaining why it is empty.",
-					})
-				}
-			}
-		}
-
-		nextDepth := depth
-		if _, ok := n.(*ast.BlockStmt); ok {
-			nextDepth++
-		}
-
-		ast.Inspect(n, func(child ast.Node) bool {
-			if child != n && child != nil {
-				inspectNode(child, nextDepth)
-				return false
-			}
-			return true
-		})
+	v := &slopVisitor{
+		file:     file,
+		fset:     fset,
+		lineMap:  lineMap,
+		findings: []Finding{},
+		depth:    0,
 	}
 
-	inspectNode(f, 0)
+	ast.Walk(v, f)
 
-	return findings
+	return v.findings
 }

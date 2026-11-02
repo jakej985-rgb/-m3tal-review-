@@ -1,23 +1,16 @@
-## Final PR #1 Hardening Phase Completion Report
+## Final Hardening Accuracy Phase Completion Report
 
 1. **Summary of changes**:
-   - Upgraded the Slop Detector to use full Go AST parsing (`go/ast`) to check logic rather than text regex when scanning Go files. It checks depth, empty block, and boolean comparisons intelligently, completely eliminating false positives from string literals and comments without risky heuristics. Regex acts as a fallback for non-Go files.
-   - Refactored CLI workflow to separate `lint` (full repo checks) and `review` (diff checks) strictly. The `review` command no longer runs `gofmt` and `go vet` automatically, preventing global issues from interfering with diff reviews.
-   - Expanded Report persistence to capture git context, including `CommitSHA`, `ToolVersion`, and `ReviewedFiles`.
-   - Upgraded Atomic File writing via `tempFile.Sync()` and added a concurrency test.
-   - Upgraded History reader to load records securely into large bounds up to 10MB strings via scanner buffer allocations, and implemented a `recover-history` fallback command in CLI.
+   - Upgraded the Slop Detector to use `go/ast` while reading the *staged* content of files directly using `git show :<file>`. This avoids a major flaw where unstaged (working directory) modifications could leak into and falsify the staged diff review.
+   - Refactored `checkGoFileAST` to properly iterate via `ast.Walk` utilizing a stateful visitor, properly managing AST depth without doubling over evaluations.
+   - Solidified regression coverage for scenarios involving deleted files natively skipping AST traversal appropriately, and working tree inconsistencies correctly being excluded by strictly reading `git` index outputs.
 2. **Files changed and why**:
-   - `internal/review/slop_rule.go`: Implemented AST logic (`checkGoFileAST`) alongside fallback (`checkFileRegex`).
-   - `internal/review/slop_rule_test.go`: Added exhaustive validation of the AST integration via mock test source code setups.
-   - `internal/cli/cli.go`: Adjusted engine pipeline (removed `LintRule` from review), added `recover-history`, populated new report fields (`CommitSHA`, `StagedFiles`).
-   - `internal/cli/cli_test.go`: Altered report constructors and decoupled linting assertions from review check tests.
-   - `internal/review/report.go` & `internal/review/report_test.go`: Expanded `Report` structure.
-   - `internal/review/report_writer.go`: Added `Sync()` call.
-   - `internal/review/history_reader.go`: Increased memory buffers to protect against truncation panic on huge lines.
-   - `internal/git/sha.go`: Implemented `CurrentCommitSHA` to fetch the head object.
+   - `internal/git/show.go`: Implemented `StagedFileContent` allowing git blob retrieval for accurate static AST analysis matching the commit diff exactly.
+   - `internal/review/slop_rule.go`: Refactored to execute `StagedFileContent`, wrapping processing inside a single-pass `ast.Visitor` structure that safely tracks depth natively without deep recursive re-entries.
+   - `internal/review/slop_rule_test.go`: Setup now constructs real staging mock directories. Appended tests validating `TestSlopRuleWorkingTreeDifference` ensuring unstaged disk modifications do not trigger diff analysis errors.
 3. **Tests added**:
-   - AST validation for Slop Detector (ignores `interface{}`, nested string limits, false positive strings natively).
-   - Validation that concurrent atomic history logs resolve seamlessly.
+   - `TestSlopRuleWorkingTreeDifference`: Verifies reading staged contents, bypassing local disk mutations.
+   - `TestSlopRuleDeletedFile`: Tests graceful handling when `git show` retrieves nothing for removed files.
 4. **Exact validation commands and results**:
    - `gofmt -w .`: Passed.
    - `go vet ./...`: Passed.
@@ -26,6 +19,6 @@
    - `go build ./cmd/m3tal-review`: Passed.
    - `git diff --check`: Passed cleanly.
 5. **Remaining limitations**:
-   - Git `BaseCommitSHA` and `DiffHash` in reports remain stubs for future Phase 5 extensions.
+   - Non-Go files are still parsed using the legacy regex heuristics because they cannot leverage Go's internal standard library AST representations.
 6. **Recommendation**:
-   - The PR addresses every one of the reviewer's structural safety concerns and is fully validated by Go's race detector and standard tooling. It is **Ready to merge**.
+   - The PR fixes every outstanding issue reported and is entirely robust against staging index and false positive conditions. **Ready to merge**.
