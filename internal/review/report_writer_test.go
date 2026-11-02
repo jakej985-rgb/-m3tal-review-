@@ -2,7 +2,6 @@ package review
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -100,7 +99,7 @@ func TestWriteReportConcurrency(t *testing.T) {
 
 	for i := 0; i < concurrency; i++ {
 		go func(id int) {
-			reportPath := filepath.Join(reportsDir, fmt.Sprintf("review-%d.json", id))
+			reportPath := filepath.Join(reportsDir, "review-shared.json")
 			report := NewReport("run-001", tempDir, "main", nil)
 			done <- WriteReport(reportPath, report)
 		}(i)

@@ -54,3 +54,32 @@ func TestReadHistoryMissingFile(t *testing.T) {
 		t.Fatalf("expected 0 entries, got %d", len(entries))
 	}
 }
+
+func TestReadHistorySkipsCorruptEntries(t *testing.T) {
+	historyPath := filepath.Join(t.TempDir(), "history.jsonl")
+
+	content := `{"run_id":"run-001","status":"passed","finding_count":0,"summary":"Review passed."}` + "\n" +
+		`{corrupt_json_here: missing_quotes}` + "\n" +
+		`{"run_id":"run-003","status":"passed","finding_count":0,"summary":"Review passed."}` + "\n"
+
+	if err := os.WriteFile(historyPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write history fixture: %v", err)
+	}
+
+	entries, err := ReadHistory(historyPath)
+	if err != nil {
+		t.Fatalf("ReadHistory() expected nil error despite corrupt lines, got: %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 valid entries, got %d", len(entries))
+	}
+
+	if entries[0].RunID != "run-001" {
+		t.Errorf("first RunID = %q, want run-001", entries[0].RunID)
+	}
+
+	if entries[1].RunID != "run-003" {
+		t.Errorf("second RunID = %q, want run-003", entries[1].RunID)
+	}
+}

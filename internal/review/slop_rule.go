@@ -66,11 +66,9 @@ func (SlopRule) Check(diff string) []Finding {
 					if slopPattern.message == "Empty block" && strings.Contains(addedLine, "interface{}") {
 						continue
 					}
-					// Ignore false positive string literals for empty blocks and boolean comparisons (heuristic)
-					if strings.Contains(addedLine, "\"") && (strings.Contains(addedLine, "==") || strings.Contains(addedLine, "{}")) {
-						// Note: this is a basic heuristic. A full AST parser would be better but breaks deterministic local text limits.
-						continue
-					}
+					// Note: Because this detector uses regex instead of AST parsing to remain lightweight and local,
+					// it may occasionally flag slop patterns inside multi-line string literals.
+					// We do not suppress lines containing quotes to avoid masking legitimate findings (e.g. `if x == true { log("x") }`).
 
 					findings = append(findings, Finding{
 						Rule:        "code-slop",

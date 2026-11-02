@@ -8,7 +8,7 @@ It provides actionable findings, records review trails (history), and supports a
 
 - **Review Engine**: Runs deterministic checks on staged Git changes.
 - **Remediation Guidance**: Every finding provides actionable steps to fix the issue.
-- **Slop Detector**: Automatically detects unidiomatic code, redundant boolean comparisons (`== true`), excessive nesting, and empty blocks to help keep your codebase clean and maintainable.
+- **Slop Detector**: Uses deterministic line-by-line regex (not AST parsing) to detect unidiomatic code. Flags redundant boolean comparisons (e.g., `== true`), empty blocks (ignoring `interface{}`), and excessive nesting (using an indentation-based heuristic of 4+ tabs/16+ spaces).
 - **Security Checks**: Detects hardcoded credentials, world-writable file permissions (0777), disabled TLS verification, and risky shell executions.
 - **Code Quality**: Identifies leftover `TODO` markers, debug print statements, and runs `gofmt` and `go vet` to enforce formatting and find subtle bugs.
 - **Review History**: Maintains a JSONL log of previous reviews.
