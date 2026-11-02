@@ -86,3 +86,47 @@ func TestCurrentBranch(t *testing.T) {
 		t.Errorf("CurrentBranch() = %q, want %q", branch, "review-test")
 	}
 }
+
+func TestCurrentBranchDetachedHEAD(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	configureName := exec.Command("git", "-C", repoDir, "config", "user.name", "Test User")
+	if output, err := configureName.CombinedOutput(); err != nil {
+		t.Fatalf("configure git user name: %v\n%s", err, output)
+	}
+
+	configureEmail := exec.Command("git", "-C", repoDir, "config", "user.email", "test@example.com")
+	if output, err := configureEmail.CombinedOutput(); err != nil {
+		t.Fatalf("configure git user email: %v\n%s", err, output)
+	}
+
+	filePath := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+
+	add := exec.Command("git", "-C", repoDir, "add", "README.md")
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("stage test file: %v\n%s", err, output)
+	}
+
+	commit := exec.Command("git", "-C", repoDir, "commit", "-m", "initial commit")
+	if output, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("create initial commit: %v\n%s", err, output)
+	}
+
+	detach := exec.Command("git", "-C", repoDir, "checkout", "--detach", "HEAD")
+	if output, err := detach.CombinedOutput(); err != nil {
+		t.Fatalf("detach HEAD: %v\n%s", err, output)
+	}
+
+	branch, err := CurrentBranch(repoDir)
+	if err == nil {
+		t.Fatalf("CurrentBranch() = %q, want error for detached HEAD", branch)
+	}
+}
