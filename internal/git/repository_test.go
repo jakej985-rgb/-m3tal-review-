@@ -527,3 +527,90 @@ func TestStagedFileStatuses(t *testing.T) {
 		t.Errorf("status of renamed file.txt = %q, want starting with 'R'", statuses["renamed file.txt"])
 	}
 }
+
+func TestParseStagedFileStatusesValid(t *testing.T) {
+	// Sample git diff -z stream containing A, M, D, R, C, and special characters (tab, space, symbols)
+	specialName := "dir with space/file with\ttab and #special.txt"
+	input := []byte(
+		"A\x00new.txt\x00" +
+			"M\x00" + specialName + "\x00" +
+			"D\x00deleted.txt\x00" +
+			"R100\x00old path.txt\x00renamed path.txt\x00" +
+			"C095\x00source.txt\x00copied path.txt\x00",
+	)
+
+	statuses, err := ParseStagedFileStatuses(input)
+	if err != nil {
+		t.Fatalf("ParseStagedFileStatuses() unexpected error: %v", err)
+	}
+
+	if statuses["new.txt"] != "A" {
+		t.Errorf("status for new.txt = %q, want 'A'", statuses["new.txt"])
+	}
+	if statuses[specialName] != "M" {
+		t.Errorf("status for %q = %q, want 'M'", specialName, statuses[specialName])
+	}
+	if statuses["deleted.txt"] != "D" {
+		t.Errorf("status for deleted.txt = %q, want 'D'", statuses["deleted.txt"])
+	}
+	if statuses["renamed path.txt"] != "R100" {
+		t.Errorf("status for renamed path.txt = %q, want 'R100'", statuses["renamed path.txt"])
+	}
+	if statuses["copied path.txt"] != "C095" {
+		t.Errorf("status for copied path.txt = %q, want 'C095'", statuses["copied path.txt"])
+	}
+
+	// Empty input
+	emptyStatuses, err := ParseStagedFileStatuses(nil)
+	if err != nil {
+		t.Fatalf("ParseStagedFileStatuses(nil) error: %v", err)
+	}
+	if len(emptyStatuses) != 0 {
+		t.Errorf("expected empty map for nil input, got %d entries", len(emptyStatuses))
+	}
+}
+
+func TestParseStagedFileStatusesMalformed(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []byte
+	}{
+		{
+			name:  "truncated single status",
+			input: []byte("M\x00"),
+		},
+		{
+			name:  "truncated rename without new path",
+			input: []byte("R100\x00old.txt\x00"),
+		},
+		{
+			name:  "truncated rename with only status",
+			input: []byte("R100\x00"),
+		},
+		{
+			name:  "truncated copy without new path",
+			input: []byte("C100\x00source.txt\x00"),
+		},
+		{
+			name:  "empty status token",
+			input: []byte("\x00file.txt\x00"),
+		},
+		{
+			name:  "empty file path",
+			input: []byte("M\x00\x00"),
+		},
+		{
+			name:  "empty new path in rename",
+			input: []byte("R100\x00old.txt\x00\x00"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseStagedFileStatuses(tc.input)
+			if err == nil {
+				t.Fatalf("expected error for malformed input %q, got nil", tc.input)
+			}
+		})
+	}
+}

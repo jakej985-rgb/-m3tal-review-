@@ -1,36 +1,48 @@
-## M3TAL Review — Release Readiness Audit & Final Hardening Report
+## M3TAL Review — Final Verification & Release Gate Report
 
 ### 1. Executive Release Recommendation
 
 **Recommendation**: **Ready to merge.**
 
-All requirements of the Release Readiness Plan across Phases 1 through 6 have been audited, implemented, and validated. No detection rules were added, no automated repair logic was introduced, working components were preserved, and all documented commands, atomic storage mechanisms, and regression scenarios are backed by automated tests running under Go's race detector.
+All requirements of the Final Verification and Release Gate across Phases 1 through 6 have been audited, implemented, and validated. No new detection rules or automated repair logic were introduced, working components were preserved, and all documented commands, atomic storage mechanisms, and regression scenarios are backed by automated tests running under Go's race detector and confirmed via live GitHub Actions CI runs.
 
 ---
 
 ### 2. Bugs Found and Fixed
 
-1. **`AppendHistory` Flushed Write Durability**:
-   - `AppendHistory` in `internal/review/history_writer.go` lacked an explicit `file.Sync()` before close, risking unflushed OS file buffers on abrupt termination. Added `file.Sync()`, explicit error checking on `file.Close()`, and documented the durability guarantee.
-2. **Duplicate RunID Handling in `RecoverHistory`**:
-   - `RecoverHistory` in `internal/review/history_recovery.go` previously did not deduplicate reports sharing the same RunID, potentially producing duplicate entries in `history.jsonl`. Implemented deterministic duplicate resolution: prefers canonical `<RunID>.json` files, newer timestamps, and lexicographical filename order, while emitting an explicit warning on `os.Stderr`.
-3. **Missing CI Workflow**:
-   - Added `.github/workflows/ci.yml` to automatically run `gofmt -l .`, `go vet ./...`, `go test -v -race ./...`, and `go build ./cmd/m3tal-review` on all branches and pull requests.
+1. **Git Status Parser Truncation/Malformed Output Handling**:
+   - `StagedFileStatuses` in `internal/git/repository.go` previously used a silent `break` when token slices were incomplete. Extracted `ParseStagedFileStatuses(output []byte)` and added strict validation that detects truncated records, missing paths, empty status tokens, or incomplete rename/copy tuples, returning explicit errors instead of silently truncating results.
+   - Fully supports additions (`A`), modifications (`M`), deletions (`D`), renames (`R`), and copies (`C`), preserving filenames containing spaces, tabs, and special characters.
+2. **Storage Durability & Injected Failure Handling**:
+   - Replaced fragile permission-only tests with injected filesystem hooks (`syncFileHook`, `closeFileHook`, `renameFileHook`, and `syncDirHook`) in `internal/review/fs_ops.go`.
+   - Verified that `WriteReport`, `AppendHistory`, and `RecoverHistory` reliably clean up temporary files on sync, close, or rename failures, preserve original history files on recovery failure, and surface genuine directory sync failures.
+3. **Recovery Determinism with Multi-Backup Precedence**:
+   - Formalized duplicate RunID precedence in `internal/review/history_recovery.go` via `isBetterCandidate`:
+     1. Canonical filename (`<RunID>.json`) wins over non-canonical backup files.
+     2. Otherwise, the newest `Timestamp` wins.
+     3. On equal timestamps, lexicographically smaller filenames win.
+   - Emits informative warnings to `os.Stderr` and produces 100% byte-identical, deterministic history across repeated executions.
+4. **Typo in README.md**:
+   - Fixed typographical error (`determinisic` -> `deterministic`) in `README.md` and added a dedicated "Storage & Durability" section accurately documenting file-level fsync and directory sync behavior.
 
 ---
 
 ### 3. Tests Added
 
+- `internal/git/repository_test.go`:
+  - `TestParseStagedFileStatusesValid`: Verifies parsing of `A`, `M`, `D`, `R100`, `C095`, and paths with spaces, tabs, and `#` symbols.
+  - `TestParseStagedFileStatusesMalformed`: Verifies explicit error detection for truncated status, truncated rename, truncated copy, empty status tokens, empty file paths, and empty rename target paths.
+- `internal/review/report_writer_test.go`:
+  - `TestWriteReportInjectedFailures`: Verifies `WriteReport` error reporting and temporary file cleanup under injected `syncFile`, `closeFile`, `renameFile`, and `syncDir` failures.
+- `internal/review/history_writer_test.go`:
+  - `TestAppendHistoryInjectedFailures`: Verifies `AppendHistory` error reporting under injected `syncFile` and `closeFile` failures.
 - `internal/review/history_recovery_test.go`:
-  - `TestRecoverHistoryDuplicateRunIDs`: Verifies that duplicate RunIDs across report files are detected and deterministically resolved to the canonical report without creating duplicate history entries.
-- `internal/review/slop_rule_test.go`:
-  - `TestSlopRuleUnstagedSlopIgnored`: Verifies that unstaged changes in the working tree are completely ignored during staged diff review.
-- `internal/cli/cli_test.go`:
-  - `TestCLIHelpCommand`: Verifies exit code 0 and command listing for both `help` and empty argument invocations.
-  - `TestCLIVersionCommand`: Verifies exit code 0 and version/runtime output.
-  - `TestCLIHistoryCommandEmptyAndPopulated`: Verifies `history` output when no history exists ("No review history found.") and when populated.
-  - `TestCLIRecoverHistoryCommand`: Verifies CLI recovery behavior when no reports exist vs when valid reports are recovered.
-  - `TestCLIUnknownCommand`: Verifies non-zero exit code, error message, and help output for invalid subcommands.
+  - `TestRecoverHistoryInjectedFailures`: Verifies `RecoverHistory` error reporting, temporary file cleanup, and original history preservation under injected `syncFile`, `closeFile`, `renameFile`, and `syncDir` failures.
+  - `TestRecoverHistoryPrecedenceCanonicalOlderWins`: Verifies canonical report wins over newer backup.
+  - `TestRecoverHistoryPrecedenceCanonicalNewerWins`: Verifies canonical report wins over older backup.
+  - `TestRecoverHistoryPrecedenceEqualTimestampBackups`: Verifies lexicographical tie-breaking for non-canonical backups with equal timestamps.
+  - `TestRecoverHistoryPrecedenceMultipleBackupsNewerWins`: Verifies newest timestamp wins across multiple non-canonical backup files.
+  - `TestRecoverHistoryDeterminismRepeated`: Verifies that repeating recovery 10 consecutive times produces identical, deterministic output.
 
 ---
 
@@ -38,15 +50,15 @@ All requirements of the Release Readiness Plan across Phases 1 through 6 have be
 
 | Command | Status | Result / Output Summary |
 |---------|--------|-------------------------|
-| `gofmt -w .` | **PASS** | Clean, no unformatted files |
+| `gofmt -w .` | **PASS** | Clean, 0 unformatted files |
 | `go test ./...` | **PASS** | All packages passed (`internal/cli`, `internal/git`, `internal/review`) |
 | `go test -race ./...` | **PASS** | Passed with race detector enabled across all packages, 0 data races |
-| `go vet ./...` | **PASS** | Clean, 0 warnings |
+| `go vet ./...` | **PASS** | Clean, 0 warnings/errors |
 | `git diff --check` | **PASS** | Clean, 0 whitespace errors |
 | `go build ./cmd/m3tal-review` | **PASS** | Clean compilation, produced binary |
 
 #### End-to-End Command Verification
-All 8 documented CLI commands were verified end-to-end:
+All 8 documented CLI commands verified end-to-end:
 - `m3tal-review help`: Exit 0, displays all available commands.
 - `m3tal-review version`: Exit 0, displays version and Go runtime.
 - `m3tal-review check`: Exit 0, accurately reports branch, working tree state, staged, changed, and untracked files.
@@ -66,6 +78,7 @@ All 8 documented CLI commands were verified end-to-end:
 
 ---
 
-### 6. Final Commit SHA
+### 6. Final Commit SHA and CI Status
 
-- `f8445f0` (pushed to `origin/jules-1396316513410934157-e93d59f9`)
+- Pushed to `origin/jules-1396316513410934157-e93d59f9`.
+- Verified live GitHub Actions CI run on PR head: **PASS** (`✓`).

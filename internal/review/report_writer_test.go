@@ -2,8 +2,10 @@ package review
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -115,4 +117,81 @@ func TestWriteReportConcurrency(t *testing.T) {
 			t.Errorf("concurrent WriteReport failed: %v", err)
 		}
 	}
+}
+
+func TestWriteReportInjectedFailures(t *testing.T) {
+	tempDir := t.TempDir()
+	reportsDir := filepath.Join(tempDir, "reports")
+	reportPath := filepath.Join(reportsDir, "test-report.json")
+	report := NewReport("0123456789abcdef", tempDir, "main", "sha", "", "", "1.0.0", nil, nil)
+
+	// Helper to check no temp files remain
+	assertNoTempFiles := func(label string) {
+		entries, _ := os.ReadDir(reportsDir)
+		for _, e := range entries {
+			if e.Name() != "test-report.json" {
+				t.Errorf("[%s] temporary file was not cleaned up: %s", label, e.Name())
+			}
+		}
+	}
+
+	// 1. Injected syncFile failure
+	t.Run("syncFile failure", func(t *testing.T) {
+		orig := syncFileHook
+		defer func() { syncFileHook = orig }()
+		syncFileHook = func(f *os.File) error {
+			return fmt.Errorf("injected sync failure")
+		}
+
+		err := WriteReport(reportPath, report)
+		if err == nil || !strings.Contains(err.Error(), "injected sync failure") {
+			t.Fatalf("expected injected sync error, got: %v", err)
+		}
+		assertNoTempFiles("syncFile failure")
+	})
+
+	// 2. Injected closeFile failure
+	t.Run("closeFile failure", func(t *testing.T) {
+		orig := closeFileHook
+		defer func() { closeFileHook = orig }()
+		closeFileHook = func(f *os.File) error {
+			_ = f.Close()
+			return fmt.Errorf("injected close failure")
+		}
+
+		err := WriteReport(reportPath, report)
+		if err == nil || !strings.Contains(err.Error(), "injected close failure") {
+			t.Fatalf("expected injected close error, got: %v", err)
+		}
+		assertNoTempFiles("closeFile failure")
+	})
+
+	// 3. Injected renameFile failure
+	t.Run("renameFile failure", func(t *testing.T) {
+		orig := renameFileHook
+		defer func() { renameFileHook = orig }()
+		renameFileHook = func(oldpath, newpath string) error {
+			return fmt.Errorf("injected rename failure")
+		}
+
+		err := WriteReport(reportPath, report)
+		if err == nil || !strings.Contains(err.Error(), "injected rename failure") {
+			t.Fatalf("expected injected rename error, got: %v", err)
+		}
+		assertNoTempFiles("renameFile failure")
+	})
+
+	// 4. Injected syncDir failure
+	t.Run("syncDir failure", func(t *testing.T) {
+		orig := syncDirHook
+		defer func() { syncDirHook = orig }()
+		syncDirHook = func(dir string) error {
+			return fmt.Errorf("injected dir sync failure")
+		}
+
+		err := WriteReport(reportPath, report)
+		if err == nil || !strings.Contains(err.Error(), "injected dir sync failure") {
+			t.Fatalf("expected injected dir sync error, got: %v", err)
+		}
+	})
 }

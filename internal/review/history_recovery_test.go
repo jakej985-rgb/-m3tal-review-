@@ -1,9 +1,12 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -295,5 +298,302 @@ func TestRecoverHistoryDuplicateRunIDs(t *testing.T) {
 	}
 	if entries[0].Summary != "canonical report" {
 		t.Errorf("expected canonical report to win, got summary: %q", entries[0].Summary)
+	}
+}
+
+func TestRecoverHistoryInjectedFailures(t *testing.T) {
+	tempDir := t.TempDir()
+	reportsDir := filepath.Join(tempDir, "reports")
+	historyPath := filepath.Join(tempDir, "history.jsonl")
+
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	validReport := Report{
+		RunID:     "0123456789abcdef",
+		Timestamp: time.Now().UTC(),
+		Passed:    true,
+	}
+	validData, _ := json.Marshal(validReport)
+	if err := os.WriteFile(filepath.Join(reportsDir, "0123456789abcdef.json"), validData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	origHistory := []byte("original history content\n")
+
+	assertNoTempFilesAndHistoryPreserved := func(label string) {
+		matches, _ := filepath.Glob(filepath.Join(tempDir, "history-recovery-*.tmp"))
+		if len(matches) > 0 {
+			t.Errorf("[%s] temporary file was not cleaned up: %v", label, matches)
+		}
+		data, err := os.ReadFile(historyPath)
+		if err != nil {
+			t.Fatalf("[%s] failed to read history file: %v", label, err)
+		}
+		if !bytes.Equal(data, origHistory) {
+			t.Errorf("[%s] original history was not preserved! got: %s", label, string(data))
+		}
+	}
+
+	// 1. Injected syncFile failure
+	t.Run("syncFile failure preserves history and cleans up", func(t *testing.T) {
+		if err := os.WriteFile(historyPath, origHistory, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		orig := syncFileHook
+		defer func() { syncFileHook = orig }()
+		syncFileHook = func(f *os.File) error {
+			return fmt.Errorf("injected sync failure")
+		}
+
+		_, err := RecoverHistory(reportsDir, historyPath)
+		if err == nil || !strings.Contains(err.Error(), "injected sync failure") {
+			t.Fatalf("expected injected sync failure, got: %v", err)
+		}
+		assertNoTempFilesAndHistoryPreserved("syncFile failure")
+	})
+
+	// 2. Injected closeFile failure
+	t.Run("closeFile failure preserves history and cleans up", func(t *testing.T) {
+		if err := os.WriteFile(historyPath, origHistory, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		orig := closeFileHook
+		defer func() { closeFileHook = orig }()
+		closeFileHook = func(f *os.File) error {
+			_ = f.Close()
+			return fmt.Errorf("injected close failure")
+		}
+
+		_, err := RecoverHistory(reportsDir, historyPath)
+		if err == nil || !strings.Contains(err.Error(), "injected close failure") {
+			t.Fatalf("expected injected close failure, got: %v", err)
+		}
+		assertNoTempFilesAndHistoryPreserved("closeFile failure")
+	})
+
+	// 3. Injected renameFile failure
+	t.Run("renameFile failure preserves history and cleans up", func(t *testing.T) {
+		if err := os.WriteFile(historyPath, origHistory, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		orig := renameFileHook
+		defer func() { renameFileHook = orig }()
+		renameFileHook = func(oldpath, newpath string) error {
+			return fmt.Errorf("injected rename failure")
+		}
+
+		_, err := RecoverHistory(reportsDir, historyPath)
+		if err == nil || !strings.Contains(err.Error(), "injected rename failure") {
+			t.Fatalf("expected injected rename failure, got: %v", err)
+		}
+		assertNoTempFilesAndHistoryPreserved("renameFile failure")
+	})
+
+	// 4. Injected syncDir failure
+	t.Run("syncDir failure returns error", func(t *testing.T) {
+		orig := syncDirHook
+		defer func() { syncDirHook = orig }()
+		syncDirHook = func(dir string) error {
+			return fmt.Errorf("injected sync dir failure")
+		}
+
+		_, err := RecoverHistory(reportsDir, historyPath)
+		if err == nil || !strings.Contains(err.Error(), "injected sync dir failure") {
+			t.Fatalf("expected injected sync dir failure, got: %v", err)
+		}
+	})
+}
+
+func TestRecoverHistoryPrecedenceCanonicalOlderWins(t *testing.T) {
+	tempDir := t.TempDir()
+	reportsDir := filepath.Join(tempDir, "reports")
+	historyPath := filepath.Join(tempDir, "history.jsonl")
+	_ = os.MkdirAll(reportsDir, 0755)
+
+	runID := "aabbccddeeff0011"
+	tOlder := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	tNewer := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+
+	// Canonical report has older timestamp
+	canonicalRep := Report{RunID: runID, Timestamp: tOlder, Passed: true, Summary: "canonical older"}
+	canonicalData, _ := json.Marshal(canonicalRep)
+	_ = os.WriteFile(filepath.Join(reportsDir, runID+".json"), canonicalData, 0644)
+
+	// Backup report has newer timestamp
+	backupRep := Report{RunID: runID, Timestamp: tNewer, Passed: false, Summary: "backup newer"}
+	backupData, _ := json.Marshal(backupRep)
+	_ = os.WriteFile(filepath.Join(reportsDir, "backup.json"), backupData, 0644)
+
+	count, err := RecoverHistory(reportsDir, historyPath)
+	if err != nil {
+		t.Fatalf("RecoverHistory error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 entry, got %d", count)
+	}
+	entries, _ := ReadHistory(historyPath)
+	if entries[0].Summary != "canonical older" {
+		t.Errorf("canonical older report should win over newer backup, got: %q", entries[0].Summary)
+	}
+}
+
+func TestRecoverHistoryPrecedenceCanonicalNewerWins(t *testing.T) {
+	tempDir := t.TempDir()
+	reportsDir := filepath.Join(tempDir, "reports")
+	historyPath := filepath.Join(tempDir, "history.jsonl")
+	_ = os.MkdirAll(reportsDir, 0755)
+
+	runID := "aabbccddeeff0022"
+	tOlder := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	tNewer := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+
+	// Canonical report has newer timestamp
+	canonicalRep := Report{RunID: runID, Timestamp: tNewer, Passed: true, Summary: "canonical newer"}
+	canonicalData, _ := json.Marshal(canonicalRep)
+	_ = os.WriteFile(filepath.Join(reportsDir, runID+".json"), canonicalData, 0644)
+
+	// Backup report has older timestamp
+	backupRep := Report{RunID: runID, Timestamp: tOlder, Passed: false, Summary: "backup older"}
+	backupData, _ := json.Marshal(backupRep)
+	_ = os.WriteFile(filepath.Join(reportsDir, "backup.json"), backupData, 0644)
+
+	count, err := RecoverHistory(reportsDir, historyPath)
+	if err != nil {
+		t.Fatalf("RecoverHistory error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 entry, got %d", count)
+	}
+	entries, _ := ReadHistory(historyPath)
+	if entries[0].Summary != "canonical newer" {
+		t.Errorf("canonical newer report should win over older backup, got: %q", entries[0].Summary)
+	}
+}
+
+func TestRecoverHistoryPrecedenceEqualTimestampBackups(t *testing.T) {
+	tempDir := t.TempDir()
+	reportsDir := filepath.Join(tempDir, "reports")
+	historyPath := filepath.Join(tempDir, "history.jsonl")
+	_ = os.MkdirAll(reportsDir, 0755)
+
+	runID := "aabbccddeeff0033"
+	tSame := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+
+	// Two backup files with identical timestamp
+	repA := Report{RunID: runID, Timestamp: tSame, Passed: true, Summary: "from backup_a"}
+	dataA, _ := json.Marshal(repA)
+	_ = os.WriteFile(filepath.Join(reportsDir, "backup_a.json"), dataA, 0644)
+
+	repB := Report{RunID: runID, Timestamp: tSame, Passed: false, Summary: "from backup_b"}
+	dataB, _ := json.Marshal(repB)
+	_ = os.WriteFile(filepath.Join(reportsDir, "backup_b.json"), dataB, 0644)
+
+	count, err := RecoverHistory(reportsDir, historyPath)
+	if err != nil {
+		t.Fatalf("RecoverHistory error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 entry, got %d", count)
+	}
+	entries, _ := ReadHistory(historyPath)
+	if entries[0].Summary != "from backup_a" {
+		t.Errorf("lexicographically smaller filename backup_a should win, got: %q", entries[0].Summary)
+	}
+}
+
+func TestRecoverHistoryPrecedenceMultipleBackupsNewerWins(t *testing.T) {
+	tempDir := t.TempDir()
+	reportsDir := filepath.Join(tempDir, "reports")
+	historyPath := filepath.Join(tempDir, "history.jsonl")
+	_ = os.MkdirAll(reportsDir, 0755)
+
+	runID := "aabbccddeeff0044"
+	t1 := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
+
+	rep1 := Report{RunID: runID, Timestamp: t1, Passed: false, Summary: "backup 1"}
+	data1, _ := json.Marshal(rep1)
+	_ = os.WriteFile(filepath.Join(reportsDir, "backup_1.json"), data1, 0644)
+
+	rep2 := Report{RunID: runID, Timestamp: t3, Passed: true, Summary: "backup 2 newest"}
+	data2, _ := json.Marshal(rep2)
+	_ = os.WriteFile(filepath.Join(reportsDir, "backup_2.json"), data2, 0644)
+
+	rep3 := Report{RunID: runID, Timestamp: t2, Passed: false, Summary: "backup 3 middle"}
+	data3, _ := json.Marshal(rep3)
+	_ = os.WriteFile(filepath.Join(reportsDir, "backup_3.json"), data3, 0644)
+
+	count, err := RecoverHistory(reportsDir, historyPath)
+	if err != nil {
+		t.Fatalf("RecoverHistory error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 entry, got %d", count)
+	}
+	entries, _ := ReadHistory(historyPath)
+	if entries[0].Summary != "backup 2 newest" {
+		t.Errorf("newest timestamp backup should win, got: %q", entries[0].Summary)
+	}
+}
+
+func TestRecoverHistoryDeterminismRepeated(t *testing.T) {
+	tempDir := t.TempDir()
+	reportsDir := filepath.Join(tempDir, "reports")
+	historyPath := filepath.Join(tempDir, "history.jsonl")
+	_ = os.MkdirAll(reportsDir, 0755)
+
+	// Create 10 distinct reports with various timestamps
+	for i := 0; i < 10; i++ {
+		runID := fmt.Sprintf("%016x", i+1)
+		ts := time.Date(2026, 11, 1, (i*3)%24, 0, 0, 0, time.UTC)
+		rep := Report{
+			RunID:     runID,
+			Timestamp: ts,
+			Passed:    i%2 == 0,
+			Summary:   fmt.Sprintf("report %d", i),
+		}
+		data, _ := json.Marshal(rep)
+		_ = os.WriteFile(filepath.Join(reportsDir, runID+".json"), data, 0644)
+
+		// Add an older backup duplicate for each to test resolution under repetition
+		olderTS := ts.Add(-1 * time.Hour)
+		backupRep := Report{
+			RunID:     runID,
+			Timestamp: olderTS,
+			Passed:    false,
+			Summary:   fmt.Sprintf("backup report %d", i),
+		}
+		bdata, _ := json.Marshal(backupRep)
+		_ = os.WriteFile(filepath.Join(reportsDir, "backup_"+runID+".json"), bdata, 0644)
+	}
+
+	var firstRunContent []byte
+	for iteration := 0; iteration < 10; iteration++ {
+		count, err := RecoverHistory(reportsDir, historyPath)
+		if err != nil {
+			t.Fatalf("run %d failed: %v", iteration, err)
+		}
+		if count != 10 {
+			t.Fatalf("run %d: expected 10 entries, got %d", iteration, count)
+		}
+
+		content, err := os.ReadFile(historyPath)
+		if err != nil {
+			t.Fatalf("run %d read failed: %v", iteration, err)
+		}
+
+		if iteration == 0 {
+			firstRunContent = content
+		} else {
+			if !bytes.Equal(content, firstRunContent) {
+				t.Fatalf("run %d output differs from first run!\nExpected:\n%s\nGot:\n%s", iteration, string(firstRunContent), string(content))
+			}
+		}
 	}
 }

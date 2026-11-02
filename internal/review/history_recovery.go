@@ -9,13 +9,41 @@ import (
 	"strings"
 )
 
+// isBetterCandidate returns true if candidate (nameA, repA) should be preferred over (nameB, repB).
+// Deterministic precedence:
+// 1. Canonical filename (<RunID>.json) wins over non-canonical filename.
+// 2. If neither is canonical (or both), newer Timestamp wins.
+// 3. If timestamps are equal, lexicographical filename order wins (smaller filename wins).
+func isBetterCandidate(nameA string, repA Report, nameB string, repB Report) bool {
+	canonicalName := repA.RunID + ".json"
+	aIsCanonical := (nameA == canonicalName)
+	bIsCanonical := (nameB == canonicalName)
+
+	if aIsCanonical != bIsCanonical {
+		return aIsCanonical
+	}
+
+	if repA.Timestamp.After(repB.Timestamp) {
+		return true
+	}
+	if repB.Timestamp.After(repA.Timestamp) {
+		return false
+	}
+
+	return nameA < nameB
+}
+
 // RecoverHistory rebuilds the history log non-destructively from valid report files.
 // It writes to a temporary file, validates all entries, eliminates duplicate RunIDs deterministically,
 // and atomically replaces history.jsonl only after success. If no valid reports exist or an error
 // occurs, the original history is preserved.
 //
-// Durability: File data is guaranteed via tempFile.Sync() prior to atomic rename. Parent directory sync
-// is best-effort across platforms.
+// Durability & Atomicity Guarantees:
+//  1. File payload durability is guaranteed via fsync (syncFileHook) prior to rename.
+//  2. Atomicity is achieved by writing to a temporary file in the history directory and atomically
+//     replacing history.jsonl via rename.
+//  3. Parent directory durability is ensured via syncDirHook following rename.
+//  4. Cleanup: If any step fails, the temporary file is unlinked, leaving any existing history intact.
 func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 	if reportsDir == "" {
 		return 0, fmt.Errorf("reports directory cannot be empty")
@@ -34,6 +62,7 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 
 	type reportCandidate struct {
 		entry    HistoryEntry
+		report   Report
 		fileName string
 	}
 	candidates := make(map[string]reportCandidate)
@@ -58,32 +87,16 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 		newEntry := NewHistoryEntry(report)
 		existing, found := candidates[report.RunID]
 		if found {
-			// Deterministic duplicate resolution:
-			// 1. Prefer canonical filename matching <RunID>.json
-			// 2. Prefer newer timestamp
-			// 3. Prefer lexicographically smaller filename
-			canonicalName := report.RunID + ".json"
-			replace := false
-			if entry.Name() == canonicalName && existing.fileName != canonicalName {
-				replace = true
-			} else if existing.fileName != canonicalName {
-				if newEntry.Timestamp.After(existing.entry.Timestamp) {
-					replace = true
-				} else if newEntry.Timestamp.Equal(existing.entry.Timestamp) && entry.Name() < existing.fileName {
-					replace = true
-				}
-			}
-
-			if replace {
+			if isBetterCandidate(entry.Name(), report, existing.fileName, existing.report) {
 				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s found in %s; replacing entry from %s\n", report.RunID, entry.Name(), existing.fileName)
-				candidates[report.RunID] = reportCandidate{entry: newEntry, fileName: entry.Name()}
+				candidates[report.RunID] = reportCandidate{entry: newEntry, report: report, fileName: entry.Name()}
 			} else {
 				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s found in %s; keeping preferred entry from %s\n", report.RunID, entry.Name(), existing.fileName)
 			}
 			continue
 		}
 
-		candidates[report.RunID] = reportCandidate{entry: newEntry, fileName: entry.Name()}
+		candidates[report.RunID] = reportCandidate{entry: newEntry, report: report, fileName: entry.Name()}
 	}
 
 	if len(candidates) == 0 {
@@ -117,8 +130,8 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 	cleanup := true
 	defer func() {
 		if cleanup {
-			tempFile.Close()
-			os.Remove(tempPath)
+			_ = closeFileHook(tempFile)
+			_ = os.Remove(tempPath)
 		}
 	}()
 
@@ -136,23 +149,22 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 		}
 	}
 
-	if err := tempFile.Sync(); err != nil {
+	if err := syncFileHook(tempFile); err != nil {
 		return 0, fmt.Errorf("sync temporary history file: %w", err)
 	}
 
-	if err := tempFile.Close(); err != nil {
+	if err := closeFileHook(tempFile); err != nil {
 		return 0, fmt.Errorf("close temporary history file: %w", err)
 	}
 
-	if err := os.Rename(tempPath, historyPath); err != nil {
+	if err := renameFileHook(tempPath, historyPath); err != nil {
 		return 0, fmt.Errorf("atomically replace history file: %w", err)
 	}
 
 	cleanup = false
 
-	if parentDir, err := os.Open(historyDir); err == nil {
-		_ = parentDir.Sync()
-		_ = parentDir.Close()
+	if err := syncDirHook(historyDir); err != nil {
+		return 0, fmt.Errorf("sync history directory: %w", err)
 	}
 
 	return len(recoveredEntries), nil

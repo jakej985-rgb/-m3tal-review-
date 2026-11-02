@@ -1,6 +1,6 @@
 # m3tal-review
 
-`m3tal-review` is a determinisic, local code-review CLI tool for the m3tal app ecosystem. It helps review code for maintainability (slop) and security issues.
+`m3tal-review` is a deterministic, local code-review CLI tool for the m3tal app ecosystem. It helps review code for maintainability (slop) and security issues.
 
 It provides actionable findings, records review trails (history), and supports a manual fix-and-re-review workflow (automated repair tracking is not currently supported).
 
@@ -85,6 +85,15 @@ Rebuild the review history log (`history.jsonl`) non-destructively from valid re
 ```bash
 m3tal-review recover-history
 ```
+
+If multiple report files contain the same Run ID (e.g., from manual copies or backups), recovery deterministically selects the canonical `<run-id>.json` report (or newest timestamp if non-canonical), ensuring no duplicate entries are introduced.
+
+## Storage & Durability
+
+Review reports (`.m3tal-review/reports/<run-id>.json`) and review history (`.m3tal-review/history.jsonl`) use atomic and durable storage patterns:
+- **Reports**: Reports are written to a temporary file (`0644`), synced via `fsync` (`file.Sync()`), and atomically moved into place using `os.Rename`. Parent directory updates are synced following rename where supported by the filesystem. On any write or sync failure, temporary files are cleanly unlinked.
+- **History Log**: Appends to `history.jsonl` are flushed and synced via `fsync` before closing.
+- **Recovery Non-Destructiveness**: The `recover-history` command builds recovered history in a temporary file and atomically replaces `history.jsonl` only after all reports are validated and sorted. If no valid reports exist or an error occurs, the existing history file is completely preserved.
 
 ## Interpreting Findings
 

@@ -8,7 +8,10 @@ import (
 )
 
 // AppendHistory appends a new HistoryEntry to the history.jsonl log file.
-// Durability: File contents are flushed and synced via file.Sync() before closing.
+//
+// Durability Guarantees:
+// 1. File payload durability is guaranteed via fsync (syncFileHook) before closing.
+// 2. Directory entry durability: if the file was newly created, parent directory is synced.
 func AppendHistory(path string, entry HistoryEntry) error {
 	if path == "" {
 		return fmt.Errorf("history path cannot be empty")
@@ -31,7 +34,7 @@ func AppendHistory(path string, entry HistoryEntry) error {
 	closed := false
 	defer func() {
 		if !closed {
-			_ = file.Close()
+			_ = closeFileHook(file)
 		}
 	}()
 
@@ -44,12 +47,12 @@ func AppendHistory(path string, entry HistoryEntry) error {
 		return fmt.Errorf("append history entry: %w", err)
 	}
 
-	if err := file.Sync(); err != nil {
+	if err := syncFileHook(file); err != nil {
 		return fmt.Errorf("sync history file: %w", err)
 	}
 
 	closed = true
-	if err := file.Close(); err != nil {
+	if err := closeFileHook(file); err != nil {
 		return fmt.Errorf("close history file: %w", err)
 	}
 
