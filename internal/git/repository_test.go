@@ -204,3 +204,26 @@ func TestChangedFiles(t *testing.T) {
 		t.Fatalf("ChangedFiles() = %v, want [tracked.txt]", files)
 	}
 }
+
+func TestUntrackedFiles(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	filePath := filepath.Join(repoDir, "new-file.txt")
+	if err := os.WriteFile(filePath, []byte("new"), 0644); err != nil {
+		t.Fatalf("write untracked file: %v", err)
+	}
+
+	files, err := UntrackedFiles(repoDir)
+	if err != nil {
+		t.Fatalf("UntrackedFiles() error: %v", err)
+	}
+
+	if len(files) != 1 || files[0] != "new-file.txt" {
+		t.Fatalf("UntrackedFiles() = %v, want [new-file.txt]", files)
+	}
+}

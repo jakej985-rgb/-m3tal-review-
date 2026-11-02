@@ -86,3 +86,26 @@ func ChangedFiles(path string) ([]string, error) {
 
 	return files, nil
 }
+
+func UntrackedFiles(path string) ([]string, error) {
+	command := exec.Command(
+		"git", "-C", path,
+		"ls-files", "--others", "--exclude-standard",
+	)
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get untracked files: %s: %w",
+			strings.TrimSpace(string(output)),
+			err,
+		)
+	}
+
+	files := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(files) == 1 && files[0] == "" {
+		return []string{}, nil
+	}
+
+	return files, nil
+}
