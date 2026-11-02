@@ -227,3 +227,40 @@ func TestUntrackedFiles(t *testing.T) {
 		t.Fatalf("UntrackedFiles() = %v, want [new-file.txt]", files)
 	}
 }
+
+func TestUntrackedFilesIgnoresGitIgnoredFiles(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	ignorePath := filepath.Join(repoDir, ".gitignore")
+	if err := os.WriteFile(ignorePath, []byte("ignored.txt\n"), 0644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+
+	visiblePath := filepath.Join(repoDir, "visible.txt")
+	if err := os.WriteFile(visiblePath, []byte("visible"), 0644); err != nil {
+		t.Fatalf("write visible file: %v", err)
+	}
+
+	ignoredPath := filepath.Join(repoDir, "ignored.txt")
+	if err := os.WriteFile(ignoredPath, []byte("ignored"), 0644); err != nil {
+		t.Fatalf("write ignored file: %v", err)
+	}
+
+	files, err := UntrackedFiles(repoDir)
+	if err != nil {
+		t.Fatalf("UntrackedFiles() error: %v", err)
+	}
+
+	if len(files) != 2 {
+		t.Fatalf("UntrackedFiles() = %v, want [.gitignore visible.txt]", files)
+	}
+
+	if files[0] != ".gitignore" || files[1] != "visible.txt" {
+		t.Fatalf("UntrackedFiles() = %v, want [.gitignore visible.txt]", files)
+	}
+}
