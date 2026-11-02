@@ -105,6 +105,54 @@ func execute(command string) error {
 
 		return nil
 
+case "review":
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+
+	if err := git.Available(); err != nil {
+		return err
+	}
+
+	repositoryRoot, err := git.RepositoryRoot(workingDir)
+	if err != nil {
+		return err
+	}
+
+	diff, err := git.StagedDiff(repositoryRoot)
+	if err != nil {
+		return err
+	}
+
+	if diff == "" {
+		fmt.Println("No staged changes to review.")
+		return nil
+	}
+
+	engine := review.NewEngine(review.TodoRule{})
+	findings := engine.Run(diff)
+
+	if len(findings) == 0 {
+		fmt.Println("Review passed. No findings.")
+		return nil
+	}
+
+	fmt.Printf("Review found %d issue(s):\n", len(findings))
+
+	for _, finding := range findings {
+		fmt.Printf(
+			"[%s] %s:%d: %s (%s)\n",
+			finding.Severity,
+			finding.File,
+			finding.Line,
+			finding.Message,
+			finding.Rule,
+		)
+	}
+
+	return fmt.Errorf("review found %d issue(s)", len(findings))
+
 	case "help":
 		printHelp()
 		return nil
