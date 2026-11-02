@@ -237,3 +237,63 @@ func TestRecoverHistoryReplacementFailure(t *testing.T) {
 		t.Fatalf("expected temp file to be cleaned up on failure, found: %v", matches)
 	}
 }
+
+func TestRecoverHistoryDuplicateRunIDs(t *testing.T) {
+	tempDir := t.TempDir()
+	reportsDir := filepath.Join(tempDir, "reports")
+	historyPath := filepath.Join(tempDir, "history.jsonl")
+
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		t.Fatalf("failed to create reportsDir: %v", err)
+	}
+
+	runID := "0123456789abcdef"
+	t1 := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 11, 2, 11, 0, 0, 0, time.UTC)
+
+	// Canonical report named <runID>.json with newer timestamp
+	canonicalRep := Report{
+		RunID:     runID,
+		Timestamp: t2,
+		Passed:    true,
+		Summary:   "canonical report",
+	}
+	canonicalData, _ := json.Marshal(canonicalRep)
+	if err := os.WriteFile(filepath.Join(reportsDir, runID+".json"), canonicalData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Duplicate report with different filename and older timestamp
+	dupRep := Report{
+		RunID:     runID,
+		Timestamp: t1,
+		Passed:    false,
+		Summary:   "duplicate report",
+	}
+	dupData, _ := json.Marshal(dupRep)
+	if err := os.WriteFile(filepath.Join(reportsDir, "backup_"+runID+".json"), dupData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := RecoverHistory(reportsDir, historyPath)
+	if err != nil {
+		t.Fatalf("RecoverHistory error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 recovered entry (duplicates resolved), got %d", count)
+	}
+
+	entries, err := ReadHistory(historyPath)
+	if err != nil {
+		t.Fatalf("ReadHistory error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 history entry, got %d", len(entries))
+	}
+	if entries[0].RunID != runID {
+		t.Errorf("expected RunID = %s, got %s", runID, entries[0].RunID)
+	}
+	if entries[0].Summary != "canonical report" {
+		t.Errorf("expected canonical report to win, got summary: %q", entries[0].Summary)
+	}
+}

@@ -10,8 +10,12 @@ import (
 )
 
 // RecoverHistory rebuilds the history log non-destructively from valid report files.
-// It writes to a temporary file, validates all entries, and atomically replaces history.jsonl
-// only after success. If no valid reports exist or an error occurs, the original history is preserved.
+// It writes to a temporary file, validates all entries, eliminates duplicate RunIDs deterministically,
+// and atomically replaces history.jsonl only after success. If no valid reports exist or an error
+// occurs, the original history is preserved.
+//
+// Durability: File data is guaranteed via tempFile.Sync() prior to atomic rename. Parent directory sync
+// is best-effort across platforms.
 func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 	if reportsDir == "" {
 		return 0, fmt.Errorf("reports directory cannot be empty")
@@ -28,7 +32,12 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 		return 0, fmt.Errorf("read reports directory: %w", err)
 	}
 
-	var recoveredEntries []HistoryEntry
+	type reportCandidate struct {
+		entry    HistoryEntry
+		fileName string
+	}
+	candidates := make(map[string]reportCandidate)
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -46,15 +55,51 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 			continue
 		}
 
-		recoveredEntries = append(recoveredEntries, NewHistoryEntry(report))
+		newEntry := NewHistoryEntry(report)
+		existing, found := candidates[report.RunID]
+		if found {
+			// Deterministic duplicate resolution:
+			// 1. Prefer canonical filename matching <RunID>.json
+			// 2. Prefer newer timestamp
+			// 3. Prefer lexicographically smaller filename
+			canonicalName := report.RunID + ".json"
+			replace := false
+			if entry.Name() == canonicalName && existing.fileName != canonicalName {
+				replace = true
+			} else if existing.fileName != canonicalName {
+				if newEntry.Timestamp.After(existing.entry.Timestamp) {
+					replace = true
+				} else if newEntry.Timestamp.Equal(existing.entry.Timestamp) && entry.Name() < existing.fileName {
+					replace = true
+				}
+			}
+
+			if replace {
+				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s found in %s; replacing entry from %s\n", report.RunID, entry.Name(), existing.fileName)
+				candidates[report.RunID] = reportCandidate{entry: newEntry, fileName: entry.Name()}
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s found in %s; keeping preferred entry from %s\n", report.RunID, entry.Name(), existing.fileName)
+			}
+			continue
+		}
+
+		candidates[report.RunID] = reportCandidate{entry: newEntry, fileName: entry.Name()}
 	}
 
-	if len(recoveredEntries) == 0 {
+	if len(candidates) == 0 {
 		return 0, nil
 	}
 
-	// Sort entries chronologically by timestamp
+	var recoveredEntries []HistoryEntry
+	for _, c := range candidates {
+		recoveredEntries = append(recoveredEntries, c.entry)
+	}
+
+	// Sort entries chronologically by timestamp, then by RunID for strict determinism
 	sort.Slice(recoveredEntries, func(i, j int) bool {
+		if recoveredEntries[i].Timestamp.Equal(recoveredEntries[j].Timestamp) {
+			return recoveredEntries[i].RunID < recoveredEntries[j].RunID
+		}
 		return recoveredEntries[i].Timestamp.Before(recoveredEntries[j].Timestamp)
 	})
 
@@ -112,4 +157,3 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 
 	return len(recoveredEntries), nil
 }
-

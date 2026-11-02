@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 )
 
+// AppendHistory appends a new HistoryEntry to the history.jsonl log file.
+// Durability: File contents are flushed and synced via file.Sync() before closing.
 func AppendHistory(path string, entry HistoryEntry) error {
 	if path == "" {
 		return fmt.Errorf("history path cannot be empty")
@@ -25,7 +27,13 @@ func AppendHistory(path string, entry HistoryEntry) error {
 	if err != nil {
 		return fmt.Errorf("open history file: %w", err)
 	}
-	defer file.Close()
+
+	closed := false
+	defer func() {
+		if !closed {
+			_ = file.Close()
+		}
+	}()
 
 	data, err := json.Marshal(entry)
 	if err != nil {
@@ -34,6 +42,15 @@ func AppendHistory(path string, entry HistoryEntry) error {
 
 	if _, err := file.Write(append(data, '\n')); err != nil {
 		return fmt.Errorf("append history entry: %w", err)
+	}
+
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync history file: %w", err)
+	}
+
+	closed = true
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close history file: %w", err)
 	}
 
 	return nil

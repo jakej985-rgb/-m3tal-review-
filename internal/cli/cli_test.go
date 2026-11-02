@@ -829,3 +829,183 @@ func TestReviewHandlesMissingCommitMetadataUnbornBranch(t *testing.T) {
 		t.Errorf("expected CommitSHA == 'unavailable', got %q", report.CommitSHA)
 	}
 }
+
+func captureOutput(f func() error) (string, error) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", err
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+
+	execErr := f()
+
+	os.Stdout = origStdout
+	_ = w.Close()
+
+	var buf strings.Builder
+	b := make([]byte, 1024)
+	for {
+		n, rerr := r.Read(b)
+		buf.Write(b[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	_ = r.Close()
+	return buf.String(), execErr
+}
+
+func TestCLIHelpCommand(t *testing.T) {
+	out, err := captureOutput(func() error {
+		return Run([]string{"help"})
+	})
+	if err != nil {
+		t.Fatalf("Run(help) unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Available commands:") || !strings.Contains(out, "recover-history") {
+		t.Errorf("unexpected help output:\n%s", out)
+	}
+
+	// Also verify default with nil args
+	outNil, errNil := captureOutput(func() error {
+		return Run(nil)
+	})
+	if errNil != nil {
+		t.Fatalf("Run(nil) unexpected error: %v", errNil)
+	}
+	if !strings.Contains(outNil, "Available commands:") {
+		t.Errorf("unexpected help output for nil args:\n%s", outNil)
+	}
+}
+
+func TestCLIVersionCommand(t *testing.T) {
+	out, err := captureOutput(func() error {
+		return Run([]string{"version"})
+	})
+	if err != nil {
+		t.Fatalf("Run(version) unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Version:") || !strings.Contains(out, "Go:") {
+		t.Errorf("unexpected version output:\n%s", out)
+	}
+}
+
+func TestCLIHistoryCommandEmptyAndPopulated(t *testing.T) {
+	repoDir := t.TempDir()
+	cmd := exec.Command("git", "init", repoDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+	})
+
+	// 1. Empty history
+	out, err := captureOutput(func() error {
+		return Run([]string{"history"})
+	})
+	if err != nil {
+		t.Fatalf("Run(history) unexpected error on empty history: %v", err)
+	}
+	if !strings.Contains(out, "No review history found.") {
+		t.Errorf("expected 'No review history found.', got:\n%s", out)
+	}
+
+	// 2. Populated history
+	historyPath := filepath.Join(repoDir, ".m3tal-review", "history.jsonl")
+	entry := review.HistoryEntry{
+		RunID:        "0123456789abcdef",
+		Status:       "passed",
+		FindingCount: 0,
+		Summary:      "Review passed. No findings.",
+	}
+	if err := review.AppendHistory(historyPath, entry); err != nil {
+		t.Fatalf("AppendHistory failed: %v", err)
+	}
+
+	outPop, errPop := captureOutput(func() error {
+		return Run([]string{"history"})
+	})
+	if errPop != nil {
+		t.Fatalf("Run(history) unexpected error on populated history: %v", errPop)
+	}
+	if !strings.Contains(outPop, "0123456789abcdef") || !strings.Contains(outPop, "findings: 0") {
+		t.Errorf("expected history entry in output, got:\n%s", outPop)
+	}
+}
+
+func TestCLIRecoverHistoryCommand(t *testing.T) {
+	repoDir := t.TempDir()
+	cmd := exec.Command("git", "init", repoDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+	})
+
+	// 1. Recover when no reports directory
+	outNoReports, errNoReports := captureOutput(func() error {
+		return Run([]string{"recover-history"})
+	})
+	if errNoReports != nil {
+		t.Fatalf("Run(recover-history) unexpected error when no reports: %v", errNoReports)
+	}
+	if !strings.Contains(outNoReports, "No reports found to recover.") {
+		t.Errorf("expected 'No reports found to recover.', got:\n%s", outNoReports)
+	}
+
+	// 2. Recover with valid report
+	reportsDir := filepath.Join(repoDir, ".m3tal-review", "reports")
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	rep := review.NewReport("0123456789abcdef", repoDir, "main", "sha", "", "", "1.0.0", nil, nil)
+	reportPath := filepath.Join(reportsDir, "0123456789abcdef.json")
+	if err := review.WriteReport(reportPath, rep); err != nil {
+		t.Fatal(err)
+	}
+
+	outRecover, errRecover := captureOutput(func() error {
+		return Run([]string{"recover-history"})
+	})
+	if errRecover != nil {
+		t.Fatalf("Run(recover-history) unexpected error: %v", errRecover)
+	}
+	if !strings.Contains(outRecover, "Successfully recovered 1 review entries to history.") {
+		t.Errorf("expected recovery success output, got:\n%s", outRecover)
+	}
+}
+
+func TestCLIUnknownCommand(t *testing.T) {
+	out, err := captureOutput(func() error {
+		return Run([]string{"unknown-cmd"})
+	})
+	if err == nil {
+		t.Fatalf("expected error for unknown command, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("expected error message to mention unknown command, got: %v", err)
+	}
+	if !strings.Contains(out, "Available commands:") {
+		t.Errorf("expected help output printed for unknown command, got:\n%s", out)
+	}
+}

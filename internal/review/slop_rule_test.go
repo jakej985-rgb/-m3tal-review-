@@ -974,3 +974,24 @@ func test() {
 		t.Fatalf("expected Redundant boolean comparison finding, got: %+v", findings)
 	}
 }
+
+func TestSlopRuleUnstagedSlopIgnored(t *testing.T) {
+	cleanSource := "package main\n\nfunc main() {\n\tprintln(\"clean\")\n}\n"
+	repoDir := setupSlopTestRepo(t, cleanSource)
+
+	// Now modify the working tree to introduce slop, but do NOT stage it with git add
+	slopSource := "package main\n\nfunc main() {\n\tif true == true {\n\t\tprintln(\"slop\")\n\t}\n}\n"
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte(slopSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := git.StagedDiff(repoDir)
+	if err != nil {
+		t.Fatalf("git.StagedDiff failed: %v", err)
+	}
+
+	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings because slop is unstaged, got: %+v", findings)
+	}
+}
