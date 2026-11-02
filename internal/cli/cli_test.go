@@ -261,3 +261,122 @@ func TestRunShowRejectsInvalidRunID(t *testing.T) {
 		})
 	}
 }
+
+func setupLintRepo(t *testing.T, source string) string {
+	t.Helper()
+
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	if err := os.WriteFile(
+		filepath.Join(repoDir, "go.mod"),
+		[]byte("module lint-test\n\ngo 1.23\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	if err := os.WriteFile(
+		filepath.Join(repoDir, "main.go"),
+		[]byte(source),
+		0644,
+	); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+
+	t.Cleanup(func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+
+	return repoDir
+}
+
+func captureLintOutput(t *testing.T) (string, error) {
+	t.Helper()
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create output pipe: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	os.Stdout = writer
+
+	runErr := execute("lint")
+
+	os.Stdout = originalStdout
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close output writer: %v", err)
+	}
+
+	var captured strings.Builder
+	buffer := make([]byte, 1024)
+
+	for {
+		n, readErr := reader.Read(buffer)
+		captured.Write(buffer[:n])
+
+		if readErr != nil {
+			break
+		}
+	}
+
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close output reader: %v", err)
+	}
+
+	return captured.String(), runErr
+}
+
+func TestLintPassesCleanGoProject(t *testing.T) {
+	setupLintRepo(t, `package main
+
+func main() {
+	println("hello")
+}
+`)
+
+	output, err := captureLintOutput(t)
+	if err != nil {
+		t.Fatalf("execute(lint) error: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "Formatting passed.") {
+		t.Errorf("output missing formatting success:\n%s", output)
+	}
+
+	if !strings.Contains(output, "go vet passed.") {
+		t.Errorf("output missing go vet success:\n%s", output)
+	}
+}
+
+func TestLintFailsOnUnformattedGoFile(t *testing.T) {
+	setupLintRepo(t, `package main
+func main(){println("hello")}
+`)
+
+	output, err := captureLintOutput(t)
+	if err == nil {
+		t.Fatalf("execute(lint) expected an error for unformatted source:\n%s", output)
+	}
+
+	if !strings.Contains(output, "Files need formatting:") {
+		t.Errorf("output missing formatting failure:\n%s", output)
+	}
+}
