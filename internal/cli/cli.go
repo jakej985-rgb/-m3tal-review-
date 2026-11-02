@@ -57,11 +57,24 @@ func execute(command string) error {
 			return err
 		}
 
+		changedFiles, err := git.ChangedFiles(repositoryRoot)
+		if err != nil {
+			return err
+		}
+
 		fmt.Println("M3TAL Review")
 		fmt.Println("Working directory:", workingDir)
 		fmt.Println("Repository root:", repositoryRoot)
 		fmt.Println("Current branch:", branch)
 		fmt.Println("Working tree clean:", clean)
+		fmt.Println("Changed tracked files:")
+		if len(changedFiles) == 0 {
+			fmt.Println("  (none)")
+		} else {
+			for _, file := range changedFiles {
+				fmt.Println("  ", file)
+			}
+		}
 
 		return nil
 
