@@ -47,9 +47,21 @@ func execute(command string) error {
 			return err
 		}
 
+		branch, err := git.CurrentBranch(repositoryRoot)
+		if err != nil {
+			return err
+		}
+
+		clean, err := git.IsClean(repositoryRoot)
+		if err != nil {
+			return err
+		}
+
 		fmt.Println("M3TAL Review")
 		fmt.Println("Working directory:", workingDir)
 		fmt.Println("Repository root:", repositoryRoot)
+		fmt.Println("Current branch:", branch)
+		fmt.Println("Working tree clean:", clean)
 
 		return nil
 
