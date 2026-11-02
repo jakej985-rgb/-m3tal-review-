@@ -205,6 +205,49 @@ func TestChangedFiles(t *testing.T) {
 	}
 }
 
+func TestChangedFilesHandlesNewlineInFilename(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	filename := "file\nwith-newline.txt"
+	filePath := filepath.Join(repoDir, filename)
+	if err := os.WriteFile(filePath, []byte("initial"), 0644); err != nil {
+		t.Fatalf("write file with newline: %v", err)
+	}
+
+	add := exec.Command("git", "-C", repoDir, "add", filename)
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("stage file with newline: %v\n%s", err, output)
+	}
+
+	commit := exec.Command(
+		"git", "-C", repoDir,
+		"-c", "user.name=Test User",
+		"-c", "user.email=test@example.com",
+		"commit", "-m", "initial commit",
+	)
+	if output, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("create initial commit: %v\n%s", err, output)
+	}
+
+	if err := os.WriteFile(filePath, []byte("modified"), 0644); err != nil {
+		t.Fatalf("modify file with newline: %v", err)
+	}
+
+	files, err := ChangedFiles(repoDir)
+	if err != nil {
+		t.Fatalf("ChangedFiles() error: %v", err)
+	}
+
+	if len(files) != 1 || files[0] != filename {
+		t.Fatalf("ChangedFiles() = %q, want [%q]", files, filename)
+	}
+}
+
 func TestUntrackedFiles(t *testing.T) {
 	repoDir := t.TempDir()
 

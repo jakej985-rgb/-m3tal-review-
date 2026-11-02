@@ -68,7 +68,7 @@ func CurrentBranch(path string) (string, error) {
 }
 
 func ChangedFiles(path string) ([]string, error) {
-	command := exec.Command("git", "-C", path, "diff", "--name-only", "HEAD")
+	command := exec.Command("git", "-C", path, "diff", "--name-only", "-z", "HEAD")
 
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -79,7 +79,7 @@ func ChangedFiles(path string) ([]string, error) {
 		)
 	}
 
-	files := strings.Split(strings.TrimSpace(string(output)), "\n")
+	files := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
 	if len(files) == 1 && files[0] == "" {
 		return []string{}, nil
 	}
