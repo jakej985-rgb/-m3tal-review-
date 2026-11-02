@@ -638,6 +638,10 @@ func main() {
 		t.Fatalf("execute(review) expected slop finding, got nil\n%s", outputText)
 	}
 
+	if !strings.Contains(outputText, "Remediation: Remove the explicit comparison") {
+		t.Errorf("expected remediation output, got: \n%s", outputText)
+	}
+
 	var runID string
 	for _, line := range strings.Split(outputText, "\n") {
 		if strings.HasPrefix(line, "Run ID:") {

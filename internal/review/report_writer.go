@@ -22,13 +22,27 @@ func WriteReport(path string, report Report) error {
 		return fmt.Errorf("create report directory: %w", err)
 	}
 
-	tempPath := path + ".tmp"
-	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+	tempFile, err := os.CreateTemp(dir, "report-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary report file: %w", err)
+	}
+
+	tempPath := tempFile.Name()
+
+	defer func() {
+		tempFile.Close()
+		os.Remove(tempPath) // Clean up if rename hasn't succeeded (or just cleanup in general)
+	}()
+
+	if _, err := tempFile.Write(data); err != nil {
 		return fmt.Errorf("write temporary report: %w", err)
 	}
 
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("close temporary report: %w", err)
+	}
+
 	if err := os.Rename(tempPath, path); err != nil {
-		os.Remove(tempPath) // Clean up the temporary file if rename fails
 		return fmt.Errorf("rename temporary report to final path: %w", err)
 	}
 

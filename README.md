@@ -2,7 +2,7 @@
 
 `m3tal-review` is a determinisic, local code-review CLI tool for the m3tal app ecosystem. It helps review code for maintainability (slop) and security issues.
 
-It provides actionable findings, records review trails (history), and supports developers through repair and re-review cycles.
+It provides actionable findings, records review trails (history), and supports a manual fix-and-re-review workflow (automated repair tracking is not currently supported).
 
 ## Features
 
@@ -45,6 +45,11 @@ m3tal-review review
 ```
 
 If issues are found, the command will exit with a non-zero status and print the findings with their line numbers and remediation guidance.
+
+To address findings:
+1. Manually fix the issues in your code based on the remediation guidance.
+2. Stage your changes (`git add`).
+3. Run `m3tal-review review` again to verify the fixes.
 
 ### View History
 

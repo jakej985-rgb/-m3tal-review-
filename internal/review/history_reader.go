@@ -25,7 +25,8 @@ func ReadHistory(path string) ([]HistoryEntry, error) {
 		var entry HistoryEntry
 
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			// Skip corrupt or unparseable lines gracefully to keep history usable
+			// Skip corrupt or unparseable lines gracefully to keep history usable, but make it observable
+			fmt.Fprintf(os.Stderr, "Warning: skipped corrupt history entry: %v\n", err)
 			continue
 		}
 

@@ -53,8 +53,8 @@ func TestSlopRuleFindsExcessiveNesting(t *testing.T) {
 	}
 
 	finding := findings[0]
-	if finding.Message != "Excessive nesting depth (4+ levels)" {
-		t.Errorf("finding.Message = %q, want %q", finding.Message, "Excessive nesting depth (4+ levels)")
+	if finding.Message != "Excessive indentation (indicates deep nesting)" {
+		t.Errorf("finding.Message = %q, want %q", finding.Message, "Excessive indentation (indicates deep nesting)")
 	}
 }
 
@@ -98,5 +98,61 @@ func TestSlopRuleIgnoresNormalCode(t *testing.T) {
 func TestSlopRuleName(t *testing.T) {
 	if got := (SlopRule{}).Name(); got != "code-slop" {
 		t.Errorf("Name() = %q, want %q", got, "code-slop")
+	}
+}
+
+func TestSlopRuleFindsValueEqualsTrue(t *testing.T) {
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -1,1 +1,2 @@
+ package main
++if value == true {
+`
+	findings := (SlopRule{}).Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("Check() returned %d findings, want 1", len(findings))
+	}
+}
+
+func TestSlopRuleIgnoresInterface(t *testing.T) {
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -1,1 +1,2 @@
+ package main
++var x interface{}
+`
+	findings := (SlopRule{}).Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("Check() returned %d findings, want 0", len(findings))
+	}
+}
+
+func TestSlopRuleIgnoresComments(t *testing.T) {
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -1,1 +1,2 @@
+ package main
++// if x == true {
+`
+	findings := (SlopRule{}).Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("Check() returned %d findings, want 0", len(findings))
+	}
+}
+
+func TestSlopRuleIgnoresStringLiterals(t *testing.T) {
+	diff := `diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -1,1 +1,2 @@
+ package main
++fmt.Println("is this == true {}")
+`
+	findings := (SlopRule{}).Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("Check() returned %d findings, want 0", len(findings))
 	}
 }
