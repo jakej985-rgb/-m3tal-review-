@@ -22,7 +22,70 @@ func Run(args []string) error {
 		command = args[0]
 	}
 
+	if command == "show" {
+		if len(args) < 2 {
+			return fmt.Errorf("usage: m3tal-review show <run-id>")
+		}
+
+		return showReport(args[1])
+	}
+
 	return execute(command)
+}
+
+func showReport(runID string) error {
+	if runID == "" {
+		return fmt.Errorf("run ID cannot be empty")
+	}
+
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+
+	repositoryRoot, err := git.RepositoryRoot(workingDir)
+	if err != nil {
+		return err
+	}
+
+	reportPath := filepath.Join(
+		repositoryRoot,
+		".m3tal-review",
+		"reports",
+		runID+".json",
+	)
+
+	report, err := review.ReadReport(reportPath)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("M3TAL Review Report")
+	fmt.Println("Run ID:", report.RunID)
+	fmt.Println("Repository:", report.Repository)
+	fmt.Println("Branch:", report.Branch)
+	fmt.Println("Summary:", report.Summary)
+	fmt.Println("Report:", reportPath)
+
+	if len(report.Findings) == 0 {
+		fmt.Println("Findings: (none)")
+		return nil
+	}
+
+	fmt.Println("Findings:")
+
+	for _, finding := range report.Findings {
+		fmt.Printf(
+			"[%s] %s:%d: %s (%s)\n",
+			finding.Severity,
+			finding.File,
+			finding.Line,
+			finding.Message,
+			finding.Rule,
+		)
+	}
+
+	return nil
 }
 
 func execute(command string) error {
@@ -162,6 +225,18 @@ func execute(command string) error {
 			return err
 		}
 
+		historyPath := filepath.Join(
+			repositoryRoot,
+			".m3tal-review",
+			"history.jsonl",
+		)
+
+		historyEntry := review.NewHistoryEntry(report)
+
+		if err := review.AppendHistory(historyPath, historyEntry); err != nil {
+			return err
+		}
+
 		fmt.Println(report.Summary)
 		fmt.Println("Run ID:", report.RunID)
 		fmt.Println("Report:", reportPath)
@@ -183,6 +258,48 @@ func execute(command string) error {
 
 		return nil
 
+	case "history":
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+
+		repositoryRoot, err := git.RepositoryRoot(workingDir)
+		if err != nil {
+			return err
+		}
+
+		historyPath := filepath.Join(
+			repositoryRoot,
+			".m3tal-review",
+			"history.jsonl",
+		)
+
+		entries, err := review.ReadHistory(historyPath)
+		if err != nil {
+			return err
+		}
+
+		if len(entries) == 0 {
+			fmt.Println("No review history found.")
+			return nil
+		}
+
+		fmt.Println("M3TAL Review History")
+
+		for _, entry := range entries {
+			fmt.Printf(
+				"[%s] %s | %s | findings: %d | %s\n",
+				entry.Status,
+				entry.Timestamp.Format("2006-01-02 15:04:05 UTC"),
+				entry.RunID,
+				entry.FindingCount,
+				entry.Summary,
+			)
+		}
+
+		return nil
+
 	case "help":
 		printHelp()
 		return nil
@@ -199,6 +316,7 @@ func printHelp() {
 	fmt.Println("  version")
 	fmt.Println("  check")
 	fmt.Println("  review")
+	fmt.Println("  history")
+	fmt.Println("  show <run-id>")
 	fmt.Println("  help")
 }
-
