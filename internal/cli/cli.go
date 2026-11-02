@@ -3,8 +3,10 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/git"
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
@@ -307,6 +309,63 @@ func execute(command string) error {
 
 		return nil
 
+	case "lint":
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+
+		if err := git.Available(); err != nil {
+			return err
+		}
+
+		repositoryRoot, err := git.RepositoryRoot(workingDir)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println("M3TAL Review Lint")
+		fmt.Println("Repository:", repositoryRoot)
+
+		fmt.Println("Checking Go formatting...")
+
+		formatCmd := exec.Command(
+			"gofmt",
+			"-l",
+			".",
+		)
+		formatCmd.Dir = repositoryRoot
+
+		formatOutput, err := formatCmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("run gofmt: %w\n%s", err, formatOutput)
+		}
+
+		if strings.TrimSpace(string(formatOutput)) != "" {
+			fmt.Println("Files need formatting:")
+			fmt.Print(string(formatOutput))
+			return fmt.Errorf("gofmt check failed")
+		}
+
+		fmt.Println("Formatting passed.")
+
+		fmt.Println("Running go vet...")
+		vetCmd := exec.Command("go", "vet", "./...")
+		vetCmd.Dir = repositoryRoot
+
+		vetOutput, err := vetCmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("go vet failed: %w\n%s", err, vetOutput)
+		}
+
+		if len(vetOutput) > 0 {
+			fmt.Print(string(vetOutput))
+		}
+
+		fmt.Println("go vet passed.")
+
+		return nil
+
 	case "help":
 		printHelp()
 		return nil
@@ -325,5 +384,6 @@ func printHelp() {
 	fmt.Println("  review")
 	fmt.Println("  history")
 	fmt.Println("  show <run-id>")
+	fmt.Println("  lint")
 	fmt.Println("  help")
 }
