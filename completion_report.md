@@ -80,5 +80,6 @@ All 8 documented CLI commands verified end-to-end:
 
 ### 6. Final Commit SHA and CI Status
 
-- Pushed to `origin/jules-1396316513410934157-e93d59f9` at commit `77a9267`.
-- Verified live GitHub Actions CI run on PR head: **PASS** (`✓`).
+- Pushed to `origin/jules-1396316513410934157-e93d59f9` at commit `bd4d676a860c6a1f1e099cdb3fea61c251171d7a`.
+- Verified live GitHub Actions CI run `41550510742`: **PASS** (`✓`).
+  - Run URL: https://github.com/jakej985-rgb/-m3tal-review-/actions/runs/41550510742
