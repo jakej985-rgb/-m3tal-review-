@@ -1,10 +1,16 @@
-## M3TAL Review — Final Data Integrity & Release Gate Report
+## M3TAL Review — Final Storage Hardening & Release Gate Report
 
 ### 1. Executive Release Recommendation
 
 **Recommendation**: **Ready to merge.**
 
-All requirements of the Final Data Integrity Pass and Release Gate across all phases have been audited, implemented, and validated. Production code dependence on package-level mutable hooks has been completely eliminated in favor of explicit `fsOps` injection with `defaultFSOps()`. History rollback error capture now handles `Truncate`, rollback `Sync`, `Close`, and `removeFile` with `errors.Join`, preserving error causality. Storage regression guarantees (durability, non-destructiveness, atomic replacement, and cleanup) are thoroughly verified by automated tests running under Go's race detector and confirmed via live GitHub Actions CI runs on the PR branch.
+All requirements of the Final Storage Hardening Pass across all phases have been audited, implemented, and validated:
+- History file existence detection strictly differentiates between existing files (`nil`), new files (`os.IsNotExist(err)`), and aborts immediately on permission/filesystem errors, preventing accidental deletion or replacement.
+- Rollback failures (`Truncate`, rollback `Sync`, rollback `Close`, descriptor `Reopen`, and `Remove`) are aggregated with the original append failure via `errors.Join`, ensuring full error causality and discoverability via `errors.Is` and `errors.As`.
+- Production filesystem operations are explicitly injected (`defaultFSOps()`) without shared mutable hooks or locks.
+- Storage regression guarantees (durability, non-destructiveness, atomic replacement, and cleanup) are verified under Go's race detector.
+- GitHub Actions CI ran on the exact PR commit and completed successfully.
+- All review threads on PR #1 are resolved, and the PR is confirmed mergeable.
 
 No detection rules, automated repair, or new features were added. Do not merge automatically.
 
@@ -12,58 +18,76 @@ No detection rules, automated repair, or new features were added. Do not merge a
 
 ### 2. Bugs and Data-Integrity Fixes Addressed
 
-1. **History Rollback Integrity (`appendHistoryWithFS`)**:
-   - Preserves the original append failure error (write, sync, or close).
-   - Captures all rollback errors:
+1. **History File Existence Detection (`appendHistoryWithFS`)**:
+   - Replaced previous binary error check with strict tripartite existence handling:
+     - `nil` err: classifies as an existing file (`fileExisted = true`).
+     - `os.IsNotExist(err)`: classifies as a new file (`fileExisted = false`).
+     - Any other filesystem error: returns `stat history file: %w` immediately, halting execution before any file open, write, or rollback classification occurs.
+   - Prevents existing history from being erroneously classified as a new file on permission/access failures, completely eliminating the risk of accidental file removal during rollback.
+
+2. **History Rollback Integrity & Reopening Descriptors**:
+   - Preserves original append failures (write, fsync, or close).
+   - If the file descriptor was already closed when an append failure occurred (e.g. `ops.closeFile` failed), rollback reopens the history file handle (`ops.openFile(path, os.O_WRONLY, 0644)`) to truncate newly added bytes and flush the state.
+   - Captures all rollback failures:
      - `ops.truncateFile` failure
      - Rollback `ops.syncFile` failure
      - Rollback `ops.closeFile` failure
+     - Reopening handle failure (`rollback open: %w`)
      - Rollback `ops.removeFile` failure (for failed newly created history files)
-     - Reopening handle errors (`rollback open`) if the file was closed prior to rollback
-   - Combines original failure and rollback errors using `errors.Join`, guaranteeing that underlying error causes are preserved and accessible via `errors.Is` and `errors.As`.
-   - Guarantees that a failed rollback cannot be reported as a successful restoration.
-   - Preserves existing history entries intact on any failure without partial or corrupted records.
+   - Aggregates original and rollback errors using `errors.Join`, ensuring the root append cause and any rollback failure remain discoverable via `errors.Is` and `errors.As`.
+   - Never reports a failed rollback as a successful restoration.
 
-2. **Filesystem Operation Injection & Elimination of Shared Mutable Hooks**:
-   - Completely eliminated package-level mutable hook variables (`syncFileHook`, `closeFileHook`, `renameFileHook`, `syncDirHook`, `currentFSOps()`, and `testHookMu`).
-   - `defaultFSOps()` is the canonical production implementation.
+3. **Filesystem Operation Injection & Elimination of Shared Mutable Hooks**:
+   - Eliminated all package-level mutable hooks (`syncFileHook`, `closeFileHook`, `renameFileHook`, `syncDirHook`, `currentFSOps()`, and `testHookMu`).
+   - `defaultFSOps()` provides canonical production filesystem operations (`openFile`, `statFile`, `writeFile`, `syncFile`, `closeFile`, `truncateFile`, `removeFile`, `renameFile`, `syncDir`).
    - Public entrypoints (`AppendHistory`, `WriteReport`, `RecoverHistory`) invoke internal storage functions with `defaultFSOps()`.
-   - Internal storage functions (`appendHistoryWithFS`, `writeReportWithFS`, `recoverHistoryWithFS`) accept explicit `fsOps` instances and normalize unset operations using `withDefaults()`.
+   - Internal storage functions accept explicit `fsOps` instances and normalize unset operations using `withDefaults()`.
    - Tests execute concurrently in parallel (`t.Parallel()`) using isolated `fsOps` without shared global state, race conditions, or mutex contention.
 
-3. **Multi-Backup Recovery Precedence & Determinism**:
-   - Precedence for duplicate RunIDs evaluated deterministically via `compareCandidates`:
-     1. Canonical filename (`<RunID>.json`) wins over non-canonical backup files.
-     2. Otherwise, the newest `Timestamp` wins.
-     3. On equal timestamps, lexicographically smaller filenames win.
-   - Emits informative warnings to `os.Stderr` explaining the rationale for report selection.
-   - Preserves original history file intact on any pre-rename failure.
+4. **Multi-Backup Recovery Determinism & Precedence**:
+   - Duplicate RunIDs resolved deterministically via `compareCandidates` (canonical filename wins over backups, newer timestamp wins, lexicographical tie-break).
+   - Emits explanatory warnings to `os.Stderr` and preserves the original history file on pre-rename errors.
 
-4. **Git Status Parser Strict Validation**:
-   - `ParseStagedFileStatuses` in `internal/git/repository.go` strictly validates NUL-delimited status streams and rejects truncated records, empty status tokens, or incomplete rename/copy tuples with explicit errors.
+5. **Strict Git Status Parsing**:
+   - `ParseStagedFileStatuses` in `internal/git/repository.go` strictly validates NUL-delimited status streams, rejecting truncated or malformed records with explicit errors.
 
 ---
 
 ### 3. Comprehensive Tests Added
 
 - `internal/review/history_writer_test.go`:
-  - `TestAppendHistoryWriteFailureWithRollback`: Verifies append write failure preserves existing history and wraps the original error.
-  - `TestAppendHistoryFileSyncFailureWithRollback`: Verifies file fsync failure preserves existing history and wraps the original error.
+  - `TestAppendHistoryStatFileDetection`:
+    - Existing file detection and append.
+    - Missing file detection, creation, and parent directory sync.
+    - Stat permission/filesystem failure: aborts immediately without opening file, writing, or modifying history.
+  - `TestAppendHistoryWriteFailureWithRollback`: Verifies write failure preserves existing history and wraps original error.
+  - `TestAppendHistoryFileSyncFailureWithRollback`: Verifies fsync failure preserves existing history and wraps original error.
   - `TestAppendHistoryCloseFailureWithRollback`:
     - Existing file: close failure reopens handle, rolls back new bytes, and preserves original entries.
     - New file: close failure cleanly removes the newly created file.
-  - `TestAppendHistoryTruncateFailure`: Verifies truncate rollback failure joins the original write failure and truncate error.
+  - `TestAppendHistoryTruncateFailure`: Verifies truncate rollback failure joins original error and truncate error.
   - `TestAppendHistoryRollbackSyncFailure`: Verifies rollback sync failure joins original error and sync error.
+  - `TestAppendHistoryRollbackCloseFailure`: Verifies rollback close failure joins original error and close error for both existing and new files.
+  - `TestAppendHistoryReopenFailureOnRollback`: Verifies descriptor reopen failure on rollback joins original close error and reopen error.
   - `TestAppendHistoryRemoveFailureAfterFailedCreation`: Verifies remove failure on new file joins original error and remove error.
   - `TestAppendHistoryErrorCausality`: Verifies `errors.Is` and `errors.As` extract root cause errors across `errors.Join`.
   - `TestAppendHistoryNewFileCreation`: Verifies parent directory sync on new file creation.
-  - `TestAppendHistoryDirectorySyncWarning`: Verifies directory sync failure emits a warning without failing the append.
+  - `TestAppendHistoryDirectorySyncWarning`: Verifies directory sync failure emits a warning without failing append.
   - `TestAppendHistoryConcurrency`: Verifies concurrent appends write valid entries.
+- `internal/review/storage_regression_test.go`:
+  - `TestStorageRegressionExistingHistorySurvivesFailedAppends`: Verifies existing history survives write, sync, and close failures.
+  - `TestStorageRegressionNewHistoryRemovedAfterFailedCreation`: Verifies new history files are removed on failed creation.
+  - `TestStorageRegressionSuccessfulAppendsValidJSONL`: Verifies sequential appends produce strictly valid line-delimited JSONL.
+  - `TestStorageRegressionRecoveryPreservesOldFileOnPreRenameErrors`: Verifies old history file is preserved byte-for-byte on pre-rename errors.
+  - `TestStorageRegressionAtomicReportReplacement`: Verifies concurrent reader/writer atomicity with zero torn reads.
+  - `TestStorageRegressionTempFileCleanup`: Verifies zero temporary files (`*.tmp`) remain on any failure.
+  - `TestStorageRegressionRollbackFailureDiscovery`: Verifies that truncate, rollback sync, rollback close, rollback reopen, and rollback remove errors are discoverable alongside the original append error via `errors.Is`.
+  - `TestStorageRegressionStatErrorPreventsHistoryModification`: Verifies stat failure aborts immediately and preserves existing history unmodified.
 - `internal/review/fs_ops_test.go`:
   - `TestParallelReportWrites`: Verifies parallel workers calling `WriteReport` run with zero races.
   - `TestParallelIsolatedFSOps`: Verifies concurrent operations with isolated `fsOps` have no shared state.
   - `TestFSOpsInjectedFailures`: Tests sync, close, rename, and directory sync failures in parallel.
-  - `TestFSOpsWithDefaults`: Verifies all operations are populated by `withDefaults()`.
+  - `TestFSOpsWithDefaults`: Verifies all operations (including `openFile` and `statFile`) are populated by `withDefaults()`.
 - `internal/review/report_writer_test.go`:
   - `TestWriteReport`: Verifies atomic write and JSON formatting.
   - `TestWriteReportConcurrency`: Verifies concurrent writes to target report paths.
@@ -73,13 +97,6 @@ No detection rules, automated repair, or new features were added. Do not merge a
   - `TestRecoverHistoryInjectedFailures`: Verifies original history preservation and temp file cleanup under injected sync, close, rename, and dir sync failures.
   - `TestRecoverHistoryPrecedenceCanonicalOlderWins`, `TestRecoverHistoryPrecedenceCanonicalNewerWins`, `TestRecoverHistoryPrecedenceEqualTimestampBackups`, `TestRecoverHistoryPrecedenceMultipleBackupsNewerWins`: Verifies all duplicate resolution precedence rules.
   - `TestRecoverHistoryDeterminismRepeated`: Verifies recovery produces 100% byte-identical history across repeated runs.
-- `internal/review/storage_regression_test.go`:
-  - `TestStorageRegressionExistingHistorySurvivesFailedAppends`: Verifies existing history survives write, sync, and close failures.
-  - `TestStorageRegressionNewHistoryRemovedAfterFailedCreation`: Verifies new history files are removed on failed creation.
-  - `TestStorageRegressionSuccessfulAppendsValidJSONL`: Verifies sequential appends produce strictly valid line-delimited JSONL.
-  - `TestStorageRegressionRecoveryPreservesOldFileOnPreRenameErrors`: Verifies old history file is preserved byte-for-byte on pre-rename errors.
-  - `TestStorageRegressionAtomicReportReplacement`: Verifies concurrent reader/writer atomicity with zero torn reads.
-  - `TestStorageRegressionTempFileCleanup`: Verifies zero temporary files (`*.tmp`) remain on any failure.
 
 ---
 
@@ -92,7 +109,7 @@ No detection rules, automated repair, or new features were added. Do not merge a
 | `go test -race ./...` | **PASS** | Clean execution with race detector enabled across all packages, 0 data races |
 | `go vet ./...` | **PASS** | Clean, 0 warnings/errors |
 | `git diff --check` | **PASS** | Clean, 0 whitespace errors |
-| `go build ./cmd/m3tal-review` | **PASS** | Clean compilation, produced binary |
+| `go build -o /tmp/m3tal-review ./cmd/m3tal-review` | **PASS** | Clean compilation, produced binary `/tmp/m3tal-review` |
 
 #### End-to-End Command Verification
 All 8 documented CLI commands verified end-to-end:
@@ -117,9 +134,12 @@ All 8 documented CLI commands verified end-to-end:
 
 ### 6. Final Commit SHA and CI Status
 
-- Commit SHA: `d45a8061a0343833c387c38546c2593d69149075`
+- Hardening Commit SHA: `db55d78f93f0f794c7b98503fb694061640536a2`
 - Branch: `jules-1396316513410934157-e93d59f9`
 - Pull Request: [#1 Complete M3tal Review MVP](https://github.com/jakej985-rgb/-m3tal-review-/pull/1)
 - Verified GitHub Actions CI Run: **PASS** (`✓`)
-  - Run ID: `41557271480`
-  - Run URL: https://github.com/jakej985-rgb/-m3tal-review-/actions/runs/41557271480
+  - Run ID: `41558301057`
+  - Run URL: https://github.com/jakej985-rgb/-m3tal-review-/actions/runs/41558301057
+  - Conclusion: `SUCCESS` across all job steps (`Verify formatting`, `Go vet`, `Run tests with race detector`, `Build binary`)
+- PR Review Threads: 100% resolved (`isResolved: true`)
+- PR Mergeable Status: Confirmed mergeable
