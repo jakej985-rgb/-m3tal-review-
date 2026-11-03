@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -555,5 +556,251 @@ func TestAppendHistoryErrorCausality(t *testing.T) {
 	var target *customTestError
 	if !errors.As(err, &target) {
 		t.Errorf("errors.As failed to extract *customTestError from: %v", err)
+	}
+}
+
+// Phase 1: File Existence Detection Tests
+
+func TestAppendHistoryStatFileDetection(t *testing.T) {
+	t.Run("existing history file detected", func(t *testing.T) {
+		tempDir := t.TempDir()
+		historyPath := filepath.Join(tempDir, "history.jsonl")
+
+		entry1 := HistoryEntry{RunID: "run-exist-1", Status: "passed"}
+		if err := AppendHistory(historyPath, entry1); err != nil {
+			t.Fatalf("setup AppendHistory failed: %v", err)
+		}
+
+		statCalled := false
+		ops := fsOps{
+			statFile: func(name string) (os.FileInfo, error) {
+				statCalled = true
+				return os.Stat(name)
+			},
+		}
+
+		entry2 := HistoryEntry{RunID: "run-exist-2", Status: "passed"}
+		if err := appendHistoryWithFS(historyPath, entry2, ops); err != nil {
+			t.Fatalf("expected append to succeed on existing file, got: %v", err)
+		}
+
+		if !statCalled {
+			t.Fatal("expected statFile to be called")
+		}
+
+		entries, err := ReadHistory(historyPath)
+		if err != nil {
+			t.Fatalf("ReadHistory failed: %v", err)
+		}
+		if len(entries) != 2 {
+			t.Fatalf("expected 2 entries, got %d", len(entries))
+		}
+	})
+
+	t.Run("missing history file detected and created", func(t *testing.T) {
+		tempDir := t.TempDir()
+		historyPath := filepath.Join(tempDir, "history.jsonl")
+
+		statCalled := false
+		syncedDir := ""
+		ops := fsOps{
+			statFile: func(name string) (os.FileInfo, error) {
+				statCalled = true
+				return os.Stat(name)
+			},
+			syncDir: func(dir string) error {
+				syncedDir = dir
+				return nil
+			},
+		}
+
+		entry := HistoryEntry{RunID: "run-new-file", Status: "passed"}
+		if err := appendHistoryWithFS(historyPath, entry, ops); err != nil {
+			t.Fatalf("expected append to create new file, got: %v", err)
+		}
+
+		if !statCalled {
+			t.Fatal("expected statFile to be called")
+		}
+		if syncedDir != tempDir {
+			t.Errorf("expected parent directory %s to be synced, got %s", tempDir, syncedDir)
+		}
+
+		entries, err := ReadHistory(historyPath)
+		if err != nil {
+			t.Fatalf("ReadHistory failed: %v", err)
+		}
+		if len(entries) != 1 || entries[0].RunID != entry.RunID {
+			t.Fatalf("unexpected entries: %+v", entries)
+		}
+	})
+
+	t.Run("stat permission or filesystem failure aborts immediately without modifying history", func(t *testing.T) {
+		tempDir := t.TempDir()
+		historyPath := filepath.Join(tempDir, "history.jsonl")
+
+		origEntry := HistoryEntry{RunID: "run-preserve", Status: "passed", FindingCount: 0, Summary: "Original"}
+		if err := AppendHistory(historyPath, origEntry); err != nil {
+			t.Fatalf("setup AppendHistory failed: %v", err)
+		}
+		origBytes, _ := os.ReadFile(historyPath)
+
+		errStatPermission := &customTestError{tag: "stat permission denied"}
+		openCalled := false
+
+		ops := fsOps{
+			statFile: func(name string) (os.FileInfo, error) {
+				return nil, errStatPermission
+			},
+			openFile: func(name string, flag int, perm os.FileMode) (*os.File, error) {
+				openCalled = true
+				return os.OpenFile(name, flag, perm)
+			},
+		}
+
+		newEntry := HistoryEntry{RunID: "run-should-not-append", Status: "failed"}
+		err := appendHistoryWithFS(historyPath, newEntry, ops)
+
+		if err == nil {
+			t.Fatal("expected error on stat permission failure, got nil")
+		}
+		if !errors.Is(err, errStatPermission) {
+			t.Fatalf("expected error to wrap errStatPermission, got: %v", err)
+		}
+		if openCalled {
+			t.Fatal("openFile should not be called when stat fails with non-NotExist error")
+		}
+
+		// Ensure original history was NOT deleted, replaced, or altered
+		currentBytes, err := os.ReadFile(historyPath)
+		if err != nil {
+			t.Fatalf("failed to read history file: %v", err)
+		}
+		if !bytes.Equal(currentBytes, origBytes) {
+			t.Fatalf("existing history was altered! expected %s, got %s", string(origBytes), string(currentBytes))
+		}
+	})
+}
+
+// Phase 2: Rollback Failure Handling Tests
+
+func TestAppendHistoryRollbackCloseFailure(t *testing.T) {
+	t.Run("existing file rollback close failure", func(t *testing.T) {
+		tempDir := t.TempDir()
+		historyPath := filepath.Join(tempDir, "history.jsonl")
+
+		entry1 := HistoryEntry{RunID: "run-001", Status: "passed"}
+		if err := AppendHistory(historyPath, entry1); err != nil {
+			t.Fatalf("setup AppendHistory failed: %v", err)
+		}
+
+		errWrite := &customTestError{tag: "write failed"}
+		errRollbackClose := &customTestError{tag: "rollback close failed"}
+
+		ops := fsOps{
+			writeFile: func(f *os.File, b []byte) (int, error) {
+				return 0, errWrite
+			},
+			closeFile: func(f *os.File) error {
+				_ = f.Close()
+				return errRollbackClose
+			},
+		}
+
+		entry2 := HistoryEntry{RunID: "run-002", Status: "failed"}
+		err := appendHistoryWithFS(historyPath, entry2, ops)
+
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, errWrite) {
+			t.Errorf("expected original append error to be discoverable, got: %v", err)
+		}
+		if !errors.Is(err, errRollbackClose) {
+			t.Errorf("expected rollback close error to be discoverable, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "rollback close") {
+			t.Errorf("expected 'rollback close' in error message, got: %v", err)
+		}
+	})
+
+	t.Run("new file rollback close failure", func(t *testing.T) {
+		tempDir := t.TempDir()
+		historyPath := filepath.Join(tempDir, "history.jsonl")
+
+		errWrite := &customTestError{tag: "write failed"}
+		errRollbackClose := &customTestError{tag: "rollback close failed"}
+
+		ops := fsOps{
+			writeFile: func(f *os.File, b []byte) (int, error) {
+				return 0, errWrite
+			},
+			closeFile: func(f *os.File) error {
+				_ = f.Close()
+				return errRollbackClose
+			},
+		}
+
+		entry := HistoryEntry{RunID: "run-new-close-fail", Status: "passed"}
+		err := appendHistoryWithFS(historyPath, entry, ops)
+
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, errWrite) {
+			t.Errorf("expected original append error to be discoverable, got: %v", err)
+		}
+		if !errors.Is(err, errRollbackClose) {
+			t.Errorf("expected rollback close error to be discoverable, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "rollback close") {
+			t.Errorf("expected 'rollback close' in error message, got: %v", err)
+		}
+	})
+}
+
+func TestAppendHistoryReopenFailureOnRollback(t *testing.T) {
+	tempDir := t.TempDir()
+	historyPath := filepath.Join(tempDir, "history.jsonl")
+
+	entry1 := HistoryEntry{RunID: "run-001", Status: "passed"}
+	if err := AppendHistory(historyPath, entry1); err != nil {
+		t.Fatalf("setup AppendHistory failed: %v", err)
+	}
+
+	errAppendClose := &customTestError{tag: "append close failed"}
+	errRollbackReopen := &customTestError{tag: "rollback reopen failed"}
+
+	openCalls := 0
+	ops := fsOps{
+		openFile: func(name string, flag int, perm os.FileMode) (*os.File, error) {
+			openCalls++
+			if openCalls == 1 {
+				// Initial open for append
+				return os.OpenFile(name, flag, perm)
+			}
+			// Reopen attempt during rollback
+			return nil, errRollbackReopen
+		},
+		closeFile: func(f *os.File) error {
+			_ = f.Close()
+			return errAppendClose
+		},
+	}
+
+	entry2 := HistoryEntry{RunID: "run-002", Status: "failed"}
+	err := appendHistoryWithFS(historyPath, entry2, ops)
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, errAppendClose) {
+		t.Errorf("expected original close error to be discoverable via errors.Is, got: %v", err)
+	}
+	if !errors.Is(err, errRollbackReopen) {
+		t.Errorf("expected rollback reopen error to be discoverable via errors.Is, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "rollback open") {
+		t.Errorf("expected 'rollback open' in error message, got: %v", err)
 	}
 }

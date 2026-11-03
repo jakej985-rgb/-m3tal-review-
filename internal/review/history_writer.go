@@ -36,10 +36,16 @@ func appendHistoryWithFS(path string, entry HistoryEntry, ops fsOps) (retErr err
 		return fmt.Errorf("create history directory: %w", err)
 	}
 
-	_, statErr := os.Stat(path)
-	fileExisted := statErr == nil
+	var fileExisted bool
+	if _, err := ops.statFile(path); err == nil {
+		fileExisted = true
+	} else if os.IsNotExist(err) {
+		fileExisted = false
+	} else {
+		return fmt.Errorf("stat history file: %w", err)
+	}
 
-	file, err := os.OpenFile(
+	file, err := ops.openFile(
 		path,
 		os.O_CREATE|os.O_APPEND|os.O_WRONLY,
 		0644,
@@ -65,7 +71,7 @@ func appendHistoryWithFS(path string, entry HistoryEntry, ops fsOps) (retErr err
 		if fileExisted {
 			targetFile := file
 			if fileClosed {
-				reopened, err := os.OpenFile(path, os.O_WRONLY, 0644)
+				reopened, err := ops.openFile(path, os.O_WRONLY, 0644)
 				if err != nil {
 					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback open: %w", err))
 					targetFile = nil

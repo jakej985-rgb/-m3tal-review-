@@ -326,3 +326,168 @@ func TestStorageRegressionTempFileCleanup(t *testing.T) {
 		}
 	}
 }
+
+// TestStorageRegressionRollbackFailureDiscovery verifies all rollback failure types are returned and discoverable.
+func TestStorageRegressionRollbackFailureDiscovery(t *testing.T) {
+	errOrigAppend := errors.New("original append failure")
+	errRollbackTruncate := errors.New("rollback truncate failure")
+	errRollbackSync := errors.New("rollback sync failure")
+	errRollbackClose := errors.New("rollback close failure")
+	errRollbackReopen := errors.New("rollback reopen failure")
+	errRollbackRemove := errors.New("rollback remove failure")
+
+	// 1. Truncate failure returned and discoverable
+	t.Run("truncate failure", func(t *testing.T) {
+		tempDir := t.TempDir()
+		historyPath := filepath.Join(tempDir, "history.jsonl")
+		_ = AppendHistory(historyPath, HistoryEntry{RunID: "run-init"})
+
+		ops := fsOps{
+			writeFile: func(f *os.File, b []byte) (int, error) {
+				return 0, errOrigAppend
+			},
+			truncateFile: func(f *os.File, size int64) error {
+				return errRollbackTruncate
+			},
+		}
+
+		err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
+		if !errors.Is(err, errOrigAppend) {
+			t.Fatalf("expected original append error discoverable via errors.Is, got: %v", err)
+		}
+		if !errors.Is(err, errRollbackTruncate) {
+			t.Fatalf("expected rollback truncate error discoverable via errors.Is, got: %v", err)
+		}
+	})
+
+	// 2. Rollback sync failure returned and discoverable
+	t.Run("rollback sync failure", func(t *testing.T) {
+		tempDir := t.TempDir()
+		historyPath := filepath.Join(tempDir, "history.jsonl")
+		_ = AppendHistory(historyPath, HistoryEntry{RunID: "run-init"})
+
+		ops := fsOps{
+			writeFile: func(f *os.File, b []byte) (int, error) {
+				return 0, errOrigAppend
+			},
+			syncFile: func(f *os.File) error {
+				return errRollbackSync
+			},
+		}
+
+		err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
+		if !errors.Is(err, errOrigAppend) {
+			t.Fatalf("expected original append error discoverable via errors.Is, got: %v", err)
+		}
+		if !errors.Is(err, errRollbackSync) {
+			t.Fatalf("expected rollback sync error discoverable via errors.Is, got: %v", err)
+		}
+	})
+
+	// 3. Rollback close failure returned and discoverable
+	t.Run("rollback close failure", func(t *testing.T) {
+		tempDir := t.TempDir()
+		historyPath := filepath.Join(tempDir, "history.jsonl")
+		_ = AppendHistory(historyPath, HistoryEntry{RunID: "run-init"})
+
+		ops := fsOps{
+			writeFile: func(f *os.File, b []byte) (int, error) {
+				return 0, errOrigAppend
+			},
+			closeFile: func(f *os.File) error {
+				_ = f.Close()
+				return errRollbackClose
+			},
+		}
+
+		err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
+		if !errors.Is(err, errOrigAppend) {
+			t.Fatalf("expected original append error discoverable via errors.Is, got: %v", err)
+		}
+		if !errors.Is(err, errRollbackClose) {
+			t.Fatalf("expected rollback close error discoverable via errors.Is, got: %v", err)
+		}
+	})
+
+	// 4. Reopen failure after original descriptor closed returned and discoverable
+	t.Run("rollback reopen failure", func(t *testing.T) {
+		tempDir := t.TempDir()
+		historyPath := filepath.Join(tempDir, "history.jsonl")
+		_ = AppendHistory(historyPath, HistoryEntry{RunID: "run-init"})
+
+		openCount := 0
+		ops := fsOps{
+			openFile: func(name string, flag int, perm os.FileMode) (*os.File, error) {
+				openCount++
+				if openCount == 1 {
+					return os.OpenFile(name, flag, perm)
+				}
+				return nil, errRollbackReopen
+			},
+			closeFile: func(f *os.File) error {
+				_ = f.Close()
+				return errOrigAppend
+			},
+		}
+
+		err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
+		if !errors.Is(err, errOrigAppend) {
+			t.Fatalf("expected original close error discoverable via errors.Is, got: %v", err)
+		}
+		if !errors.Is(err, errRollbackReopen) {
+			t.Fatalf("expected rollback reopen error discoverable via errors.Is, got: %v", err)
+		}
+	})
+
+	// 5. Removal failure for newly created history file returned and discoverable
+	t.Run("rollback remove failure", func(t *testing.T) {
+		tempDir := t.TempDir()
+		historyPath := filepath.Join(tempDir, "history.jsonl")
+
+		ops := fsOps{
+			writeFile: func(f *os.File, b []byte) (int, error) {
+				return 0, errOrigAppend
+			},
+			removeFile: func(name string) error {
+				return errRollbackRemove
+			},
+		}
+
+		err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
+		if !errors.Is(err, errOrigAppend) {
+			t.Fatalf("expected original append error discoverable via errors.Is, got: %v", err)
+		}
+		if !errors.Is(err, errRollbackRemove) {
+			t.Fatalf("expected rollback remove error discoverable via errors.Is, got: %v", err)
+		}
+	})
+}
+
+// TestStorageRegressionStatErrorPreventsHistoryModification verifies stat failure aborts without touching history.
+func TestStorageRegressionStatErrorPreventsHistoryModification(t *testing.T) {
+	tempDir := t.TempDir()
+	historyPath := filepath.Join(tempDir, "history.jsonl")
+
+	initialEntry := HistoryEntry{RunID: "run-orig-safe", Status: "passed"}
+	if err := AppendHistory(historyPath, initialEntry); err != nil {
+		t.Fatalf("initial append failed: %v", err)
+	}
+	origBytes, _ := os.ReadFile(historyPath)
+
+	errStatPerm := errors.New("stat permission denied")
+	ops := fsOps{
+		statFile: func(name string) (os.FileInfo, error) {
+			return nil, errStatPerm
+		},
+	}
+
+	err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-fail"}, ops)
+	if !errors.Is(err, errStatPerm) {
+		t.Fatalf("expected stat error returned immediately, got: %v", err)
+	}
+
+	content, _ := os.ReadFile(historyPath)
+	if !bytes.Equal(content, origBytes) {
+		t.Fatal("existing history was modified when stat failed!")
+	}
+}

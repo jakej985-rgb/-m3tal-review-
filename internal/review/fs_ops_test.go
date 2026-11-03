@@ -181,7 +181,9 @@ func TestFSOpsWithDefaults(t *testing.T) {
 	emptyOps := fsOps{}
 	populated := emptyOps.withDefaults()
 
-	if populated.writeFile == nil ||
+	if populated.openFile == nil ||
+		populated.statFile == nil ||
+		populated.writeFile == nil ||
 		populated.syncFile == nil ||
 		populated.closeFile == nil ||
 		populated.truncateFile == nil ||

@@ -8,6 +8,8 @@ import (
 
 // fsOps defines filesystem operations used for atomic report and history writes.
 type fsOps struct {
+	openFile     func(name string, flag int, perm os.FileMode) (*os.File, error)
+	statFile     func(name string) (os.FileInfo, error)
 	writeFile    func(f *os.File, b []byte) (int, error)
 	syncFile     func(f *os.File) error
 	closeFile    func(f *os.File) error
@@ -35,6 +37,8 @@ func defaultSyncDir(dir string) error {
 
 func defaultFSOps() fsOps {
 	return fsOps{
+		openFile:     os.OpenFile,
+		statFile:     os.Stat,
 		writeFile:    func(f *os.File, b []byte) (int, error) { return f.Write(b) },
 		syncFile:     func(f *os.File) error { return f.Sync() },
 		closeFile:    func(f *os.File) error { return f.Close() },
@@ -47,6 +51,12 @@ func defaultFSOps() fsOps {
 
 func (ops fsOps) withDefaults() fsOps {
 	def := defaultFSOps()
+	if ops.openFile == nil {
+		ops.openFile = def.openFile
+	}
+	if ops.statFile == nil {
+		ops.statFile = def.statFile
+	}
 	if ops.writeFile == nil {
 		ops.writeFile = def.writeFile
 	}
