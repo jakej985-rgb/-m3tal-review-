@@ -47,19 +47,21 @@ func compareCandidates(nameA string, repA Report, nameB string, repB Report) (pr
 // occurs, the original history is preserved.
 //
 // Durability & Atomicity Design:
-//  1. File payload persistence: file contents are flushed and synced via fsync (syncFileHook)
+//  1. File payload persistence: file contents are flushed and synced via fsync (syncFile)
 //     prior to closing and renaming.
 //  2. Atomicity: Recovered entries are written to a temporary file in the history directory and
-//     atomically moved into place using rename (renameFileHook).
-//  3. Directory sync: Parent directory syncing (syncDirHook) is best-effort; sync failures are logged
+//     atomically moved into place using rename (renameFile).
+//  3. Directory sync: Parent directory syncing (syncDir) is best-effort; sync failures are logged
 //     as warnings to os.Stderr rather than failing recovery, as history.jsonl is already in place.
 //  4. Cleanup: On any failure before rename, the temporary file is closed and removed, leaving the
 //     original history file completely intact.
 func RecoverHistory(reportsDir string, historyPath string) (int, error) {
-	return recoverHistoryWithFS(reportsDir, historyPath, currentFSOps())
+	return recoverHistoryWithFS(reportsDir, historyPath, defaultFSOps())
 }
 
 func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int, error) {
+	ops = ops.withDefaults()
+
 	if reportsDir == "" {
 		return 0, fmt.Errorf("reports directory cannot be empty")
 	}
@@ -147,7 +149,7 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 	defer func() {
 		if cleanup {
 			_ = ops.closeFile(tempFile)
-			_ = os.Remove(tempPath)
+			_ = ops.removeFile(tempPath)
 		}
 	}()
 
@@ -160,7 +162,7 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 		if err != nil {
 			return 0, fmt.Errorf("marshal history entry: %w", err)
 		}
-		if _, err := tempFile.Write(append(data, '\n')); err != nil {
+		if _, err := ops.writeFile(tempFile, append(data, '\n')); err != nil {
 			return 0, fmt.Errorf("write history entry: %w", err)
 		}
 	}

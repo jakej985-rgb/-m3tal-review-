@@ -137,13 +137,13 @@ func TestWriteReportInjectedFailures(t *testing.T) {
 
 	// 1. Injected syncFile failure
 	t.Run("syncFile failure", func(t *testing.T) {
-		setFSOpsForTest(t, fsOps{
+		ops := fsOps{
 			syncFile: func(f *os.File) error {
 				return fmt.Errorf("injected sync failure")
 			},
-		})
+		}
 
-		err := WriteReport(reportPath, report)
+		err := writeReportWithFS(reportPath, report, ops)
 		if err == nil || !strings.Contains(err.Error(), "injected sync failure") {
 			t.Fatalf("expected injected sync error, got: %v", err)
 		}
@@ -152,14 +152,14 @@ func TestWriteReportInjectedFailures(t *testing.T) {
 
 	// 2. Injected closeFile failure
 	t.Run("closeFile failure", func(t *testing.T) {
-		setFSOpsForTest(t, fsOps{
+		ops := fsOps{
 			closeFile: func(f *os.File) error {
 				_ = f.Close()
 				return fmt.Errorf("injected close failure")
 			},
-		})
+		}
 
-		err := WriteReport(reportPath, report)
+		err := writeReportWithFS(reportPath, report, ops)
 		if err == nil || !strings.Contains(err.Error(), "injected close failure") {
 			t.Fatalf("expected injected close error, got: %v", err)
 		}
@@ -168,13 +168,13 @@ func TestWriteReportInjectedFailures(t *testing.T) {
 
 	// 3. Injected renameFile failure
 	t.Run("renameFile failure", func(t *testing.T) {
-		setFSOpsForTest(t, fsOps{
+		ops := fsOps{
 			renameFile: func(oldpath, newpath string) error {
 				return fmt.Errorf("injected rename failure")
 			},
-		})
+		}
 
-		err := WriteReport(reportPath, report)
+		err := writeReportWithFS(reportPath, report, ops)
 		if err == nil || !strings.Contains(err.Error(), "injected rename failure") {
 			t.Fatalf("expected injected rename error, got: %v", err)
 		}
@@ -183,18 +183,18 @@ func TestWriteReportInjectedFailures(t *testing.T) {
 
 	// 4. Injected syncDir failure is non-fatal warning
 	t.Run("syncDir failure is non-fatal warning", func(t *testing.T) {
-		setFSOpsForTest(t, fsOps{
+		ops := fsOps{
 			syncDir: func(dir string) error {
 				return fmt.Errorf("injected dir sync failure")
 			},
-		})
+		}
 
 		// Capture stderr
 		r, w, _ := os.Pipe()
 		origStderr := os.Stderr
 		os.Stderr = w
 
-		err := WriteReport(reportPath, report)
+		err := writeReportWithFS(reportPath, report, ops)
 
 		os.Stderr = origStderr
 		_ = w.Close()
@@ -210,7 +210,7 @@ func TestWriteReportInjectedFailures(t *testing.T) {
 		_ = r.Close()
 
 		if err != nil {
-			t.Fatalf("expected WriteReport to succeed despite directory sync failure, got: %v", err)
+			t.Fatalf("expected writeReportWithFS to succeed despite directory sync failure, got: %v", err)
 		}
 		if !strings.Contains(buf.String(), "Warning: failed to sync report directory") {
 			t.Errorf("expected warning in stderr, got: %s", buf.String())

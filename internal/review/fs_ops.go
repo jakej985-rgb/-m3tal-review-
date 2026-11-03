@@ -8,10 +8,13 @@ import (
 
 // fsOps defines filesystem operations used for atomic report and history writes.
 type fsOps struct {
-	syncFile   func(f *os.File) error
-	closeFile  func(f *os.File) error
-	renameFile func(oldpath, newpath string) error
-	syncDir    func(dir string) error
+	writeFile    func(f *os.File, b []byte) (int, error)
+	syncFile     func(f *os.File) error
+	closeFile    func(f *os.File) error
+	truncateFile func(f *os.File, size int64) error
+	removeFile   func(name string) error
+	renameFile   func(oldpath, newpath string) error
+	syncDir      func(dir string) error
 }
 
 func defaultSyncDir(dir string) error {
@@ -32,27 +35,38 @@ func defaultSyncDir(dir string) error {
 
 func defaultFSOps() fsOps {
 	return fsOps{
-		syncFile:   func(f *os.File) error { return f.Sync() },
-		closeFile:  func(f *os.File) error { return f.Close() },
-		renameFile: func(oldpath, newpath string) error { return os.Rename(oldpath, newpath) },
-		syncDir:    defaultSyncDir,
+		writeFile:    func(f *os.File, b []byte) (int, error) { return f.Write(b) },
+		syncFile:     func(f *os.File) error { return f.Sync() },
+		closeFile:    func(f *os.File) error { return f.Close() },
+		truncateFile: func(f *os.File, size int64) error { return f.Truncate(size) },
+		removeFile:   func(name string) error { return os.Remove(name) },
+		renameFile:   func(oldpath, newpath string) error { return os.Rename(oldpath, newpath) },
+		syncDir:      defaultSyncDir,
 	}
 }
 
-// Package-level injectable hooks. Tests should use setFSOpsForTest or isolated fsOps.
-var (
-	syncFileHook   = func(f *os.File) error { return f.Sync() }
-	closeFileHook  = func(f *os.File) error { return f.Close() }
-	renameFileHook = func(oldpath, newpath string) error { return os.Rename(oldpath, newpath) }
-	syncDirHook    = defaultSyncDir
-)
-
-// currentFSOps returns the active filesystem operations using package-level hooks.
-func currentFSOps() fsOps {
-	return fsOps{
-		syncFile:   syncFileHook,
-		closeFile:  closeFileHook,
-		renameFile: renameFileHook,
-		syncDir:    syncDirHook,
+func (ops fsOps) withDefaults() fsOps {
+	def := defaultFSOps()
+	if ops.writeFile == nil {
+		ops.writeFile = def.writeFile
 	}
+	if ops.syncFile == nil {
+		ops.syncFile = def.syncFile
+	}
+	if ops.closeFile == nil {
+		ops.closeFile = def.closeFile
+	}
+	if ops.truncateFile == nil {
+		ops.truncateFile = def.truncateFile
+	}
+	if ops.removeFile == nil {
+		ops.removeFile = def.removeFile
+	}
+	if ops.renameFile == nil {
+		ops.renameFile = def.renameFile
+	}
+	if ops.syncDir == nil {
+		ops.syncDir = def.syncDir
+	}
+	return ops
 }

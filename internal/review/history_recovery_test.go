@@ -342,13 +342,13 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		setFSOpsForTest(t, fsOps{
+		ops := fsOps{
 			syncFile: func(f *os.File) error {
 				return fmt.Errorf("injected sync failure")
 			},
-		})
+		}
 
-		_, err := RecoverHistory(reportsDir, historyPath)
+		_, err := recoverHistoryWithFS(reportsDir, historyPath, ops)
 		if err == nil || !strings.Contains(err.Error(), "injected sync failure") {
 			t.Fatalf("expected injected sync failure, got: %v", err)
 		}
@@ -361,14 +361,14 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		setFSOpsForTest(t, fsOps{
+		ops := fsOps{
 			closeFile: func(f *os.File) error {
 				_ = f.Close()
 				return fmt.Errorf("injected close failure")
 			},
-		})
+		}
 
-		_, err := RecoverHistory(reportsDir, historyPath)
+		_, err := recoverHistoryWithFS(reportsDir, historyPath, ops)
 		if err == nil || !strings.Contains(err.Error(), "injected close failure") {
 			t.Fatalf("expected injected close failure, got: %v", err)
 		}
@@ -381,13 +381,13 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		setFSOpsForTest(t, fsOps{
+		ops := fsOps{
 			renameFile: func(oldpath, newpath string) error {
 				return fmt.Errorf("injected rename failure")
 			},
-		})
+		}
 
-		_, err := RecoverHistory(reportsDir, historyPath)
+		_, err := recoverHistoryWithFS(reportsDir, historyPath, ops)
 		if err == nil || !strings.Contains(err.Error(), "injected rename failure") {
 			t.Fatalf("expected injected rename failure, got: %v", err)
 		}
@@ -396,17 +396,17 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 
 	// 4. Injected syncDir failure is non-fatal warning
 	t.Run("syncDir failure is non-fatal warning", func(t *testing.T) {
-		setFSOpsForTest(t, fsOps{
+		ops := fsOps{
 			syncDir: func(dir string) error {
 				return fmt.Errorf("injected sync dir failure")
 			},
-		})
+		}
 
 		r, w, _ := os.Pipe()
 		origStderr := os.Stderr
 		os.Stderr = w
 
-		count, err := RecoverHistory(reportsDir, historyPath)
+		count, err := recoverHistoryWithFS(reportsDir, historyPath, ops)
 
 		os.Stderr = origStderr
 		_ = w.Close()
@@ -422,7 +422,7 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 		_ = r.Close()
 
 		if err != nil {
-			t.Fatalf("expected RecoverHistory to succeed despite directory sync failure, got: %v", err)
+			t.Fatalf("expected recoverHistoryWithFS to succeed despite directory sync failure, got: %v", err)
 		}
 		if count != 1 {
 			t.Fatalf("expected 1 entry recovered, got %d", count)

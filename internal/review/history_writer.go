@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,12 +16,19 @@ import (
 // 3. Best-effort directory sync: directory sync failure emits a warning to os.Stderr without failing the append.
 // 4. Data integrity: existing history entries are preserved if appending, syncing, or closing fails.
 func AppendHistory(path string, entry HistoryEntry) error {
-	return appendHistoryWithFS(path, entry, currentFSOps())
+	return appendHistoryWithFS(path, entry, defaultFSOps())
 }
 
-func appendHistoryWithFS(path string, entry HistoryEntry, ops fsOps) error {
+func appendHistoryWithFS(path string, entry HistoryEntry, ops fsOps) (retErr error) {
+	ops = ops.withDefaults()
+
 	if path == "" {
 		return fmt.Errorf("history path cannot be empty")
+	}
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal history entry: %w", err)
 	}
 
 	dir := filepath.Dir(path)
@@ -46,35 +54,71 @@ func appendHistoryWithFS(path string, entry HistoryEntry, ops fsOps) error {
 	}
 
 	success := false
+	fileClosed := false
+
 	defer func() {
-		if !success {
-			if fileExisted {
-				_ = file.Truncate(initialSize)
-				_ = ops.syncFile(file)
+		if success {
+			return
+		}
+
+		var rollbackErrs []error
+		if fileExisted {
+			targetFile := file
+			if fileClosed {
+				reopened, err := os.OpenFile(path, os.O_WRONLY, 0644)
+				if err != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback open: %w", err))
+					targetFile = nil
+				} else {
+					targetFile = reopened
+				}
 			}
-			_ = ops.closeFile(file)
-			if !fileExisted {
-				_ = os.Remove(path)
+
+			if targetFile != nil {
+				if err := ops.truncateFile(targetFile, initialSize); err != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback truncate: %w", err))
+				}
+				if err := ops.syncFile(targetFile); err != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback sync: %w", err))
+				}
+				if err := ops.closeFile(targetFile); err != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback close: %w", err))
+				}
 			}
+		} else {
+			if !fileClosed {
+				if err := ops.closeFile(file); err != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback close: %w", err))
+				}
+				fileClosed = true
+			}
+			if err := ops.removeFile(path); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback remove: %w", err))
+			}
+		}
+
+		if len(rollbackErrs) > 0 {
+			allErrs := append([]error{retErr}, rollbackErrs...)
+			retErr = errors.Join(allErrs...)
 		}
 	}()
 
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return fmt.Errorf("marshal history entry: %w", err)
-	}
-
-	if _, err := file.Write(append(data, '\n')); err != nil {
-		return fmt.Errorf("append history entry: %w", err)
+	if _, err := ops.writeFile(file, append(data, '\n')); err != nil {
+		retErr = fmt.Errorf("append history entry: %w", err)
+		return retErr
 	}
 
 	if err := ops.syncFile(file); err != nil {
-		return fmt.Errorf("sync history file: %w", err)
+		retErr = fmt.Errorf("sync history file: %w", err)
+		return retErr
 	}
 
+	fileClosed = true
 	if err := ops.closeFile(file); err != nil {
-		return fmt.Errorf("close history file: %w", err)
+		retErr = fmt.Errorf("close history file: %w", err)
+		return retErr
 	}
+
 	success = true
 
 	if !fileExisted {
