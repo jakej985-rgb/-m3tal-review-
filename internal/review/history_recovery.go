@@ -56,6 +56,10 @@ func compareCandidates(nameA string, repA Report, nameB string, repB Report) (pr
 //  4. Cleanup: On any failure before rename, the temporary file is closed and removed, leaving the
 //     original history file completely intact.
 func RecoverHistory(reportsDir string, historyPath string) (int, error) {
+	return recoverHistoryWithFS(reportsDir, historyPath, currentFSOps())
+}
+
+func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int, error) {
 	if reportsDir == "" {
 		return 0, fmt.Errorf("reports directory cannot be empty")
 	}
@@ -142,7 +146,7 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 	cleanup := true
 	defer func() {
 		if cleanup {
-			_ = closeFileHook(tempFile)
+			_ = ops.closeFile(tempFile)
 			_ = os.Remove(tempPath)
 		}
 	}()
@@ -161,21 +165,21 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 		}
 	}
 
-	if err := syncFileHook(tempFile); err != nil {
+	if err := ops.syncFile(tempFile); err != nil {
 		return 0, fmt.Errorf("sync temporary history file: %w", err)
 	}
 
-	if err := closeFileHook(tempFile); err != nil {
+	if err := ops.closeFile(tempFile); err != nil {
 		return 0, fmt.Errorf("close temporary history file: %w", err)
 	}
 
-	if err := renameFileHook(tempPath, historyPath); err != nil {
+	if err := ops.renameFile(tempPath, historyPath); err != nil {
 		return 0, fmt.Errorf("atomically replace history file: %w", err)
 	}
 
 	cleanup = false
 
-	if err := syncDirHook(historyDir); err != nil {
+	if err := ops.syncDir(historyDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to sync history directory %s: %v\n", historyDir, err)
 	}
 

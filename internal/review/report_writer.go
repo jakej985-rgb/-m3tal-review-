@@ -20,6 +20,10 @@ import (
 //     already safely in place on disk.
 //  4. Cleanup: Temporary files are guaranteed to be closed and removed on any failure before rename.
 func WriteReport(path string, report Report) error {
+	return writeReportWithFS(path, report, currentFSOps())
+}
+
+func writeReportWithFS(path string, report Report, ops fsOps) error {
 	if path == "" {
 		return fmt.Errorf("report path cannot be empty")
 	}
@@ -43,7 +47,7 @@ func WriteReport(path string, report Report) error {
 	cleanup := true
 	defer func() {
 		if cleanup {
-			_ = closeFileHook(tempFile)
+			_ = ops.closeFile(tempFile)
 			_ = os.Remove(tempPath)
 		}
 	}()
@@ -56,21 +60,21 @@ func WriteReport(path string, report Report) error {
 		return fmt.Errorf("write temporary report: %w", err)
 	}
 
-	if err := syncFileHook(tempFile); err != nil {
+	if err := ops.syncFile(tempFile); err != nil {
 		return fmt.Errorf("sync temporary report: %w", err)
 	}
 
-	if err := closeFileHook(tempFile); err != nil {
+	if err := ops.closeFile(tempFile); err != nil {
 		return fmt.Errorf("close temporary report: %w", err)
 	}
 
-	if err := renameFileHook(tempPath, path); err != nil {
+	if err := ops.renameFile(tempPath, path); err != nil {
 		return fmt.Errorf("rename temporary report to final path: %w", err)
 	}
 
 	cleanup = false
 
-	if err := syncDirHook(dir); err != nil {
+	if err := ops.syncDir(dir); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to sync report directory %s: %v\n", dir, err)
 	}
 

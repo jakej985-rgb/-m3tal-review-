@@ -342,11 +342,11 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		orig := syncFileHook
-		defer func() { syncFileHook = orig }()
-		syncFileHook = func(f *os.File) error {
-			return fmt.Errorf("injected sync failure")
-		}
+		setFSOpsForTest(t, fsOps{
+			syncFile: func(f *os.File) error {
+				return fmt.Errorf("injected sync failure")
+			},
+		})
 
 		_, err := RecoverHistory(reportsDir, historyPath)
 		if err == nil || !strings.Contains(err.Error(), "injected sync failure") {
@@ -361,12 +361,12 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		orig := closeFileHook
-		defer func() { closeFileHook = orig }()
-		closeFileHook = func(f *os.File) error {
-			_ = f.Close()
-			return fmt.Errorf("injected close failure")
-		}
+		setFSOpsForTest(t, fsOps{
+			closeFile: func(f *os.File) error {
+				_ = f.Close()
+				return fmt.Errorf("injected close failure")
+			},
+		})
 
 		_, err := RecoverHistory(reportsDir, historyPath)
 		if err == nil || !strings.Contains(err.Error(), "injected close failure") {
@@ -381,11 +381,11 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		orig := renameFileHook
-		defer func() { renameFileHook = orig }()
-		renameFileHook = func(oldpath, newpath string) error {
-			return fmt.Errorf("injected rename failure")
-		}
+		setFSOpsForTest(t, fsOps{
+			renameFile: func(oldpath, newpath string) error {
+				return fmt.Errorf("injected rename failure")
+			},
+		})
 
 		_, err := RecoverHistory(reportsDir, historyPath)
 		if err == nil || !strings.Contains(err.Error(), "injected rename failure") {
@@ -396,11 +396,11 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 
 	// 4. Injected syncDir failure is non-fatal warning
 	t.Run("syncDir failure is non-fatal warning", func(t *testing.T) {
-		orig := syncDirHook
-		defer func() { syncDirHook = orig }()
-		syncDirHook = func(dir string) error {
-			return fmt.Errorf("injected sync dir failure")
-		}
+		setFSOpsForTest(t, fsOps{
+			syncDir: func(dir string) error {
+				return fmt.Errorf("injected sync dir failure")
+			},
+		})
 
 		r, w, _ := os.Pipe()
 		origStderr := os.Stderr

@@ -10,9 +10,15 @@ import (
 // AppendHistory appends a new HistoryEntry to the history.jsonl log file.
 //
 // Durability Guarantees:
-// 1. File payload durability is guaranteed via fsync (syncFileHook) before closing.
+// 1. File payload durability: file contents are flushed and synced via fsync (syncFile) before closing.
 // 2. Directory entry durability: if the file was newly created, parent directory is synced.
+// 3. Best-effort directory sync: directory sync failure emits a warning to os.Stderr without failing the append.
+// 4. Data integrity: existing history entries are preserved if appending, syncing, or closing fails.
 func AppendHistory(path string, entry HistoryEntry) error {
+	return appendHistoryWithFS(path, entry, currentFSOps())
+}
+
+func appendHistoryWithFS(path string, entry HistoryEntry, ops fsOps) error {
 	if path == "" {
 		return fmt.Errorf("history path cannot be empty")
 	}
@@ -21,6 +27,9 @@ func AppendHistory(path string, entry HistoryEntry) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create history directory: %w", err)
 	}
+
+	_, statErr := os.Stat(path)
+	fileExisted := statErr == nil
 
 	file, err := os.OpenFile(
 		path,
@@ -31,10 +40,22 @@ func AppendHistory(path string, entry HistoryEntry) error {
 		return fmt.Errorf("open history file: %w", err)
 	}
 
-	closed := false
+	initialSize := int64(0)
+	if info, err := file.Stat(); err == nil {
+		initialSize = info.Size()
+	}
+
+	success := false
 	defer func() {
-		if !closed {
-			_ = closeFileHook(file)
+		if !success {
+			if fileExisted {
+				_ = file.Truncate(initialSize)
+				_ = ops.syncFile(file)
+			}
+			_ = ops.closeFile(file)
+			if !fileExisted {
+				_ = os.Remove(path)
+			}
 		}
 	}()
 
@@ -47,13 +68,19 @@ func AppendHistory(path string, entry HistoryEntry) error {
 		return fmt.Errorf("append history entry: %w", err)
 	}
 
-	if err := syncFileHook(file); err != nil {
+	if err := ops.syncFile(file); err != nil {
 		return fmt.Errorf("sync history file: %w", err)
 	}
 
-	closed = true
-	if err := closeFileHook(file); err != nil {
+	if err := ops.closeFile(file); err != nil {
 		return fmt.Errorf("close history file: %w", err)
+	}
+	success = true
+
+	if !fileExisted {
+		if err := ops.syncDir(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to sync directory %s: %v\n", dir, err)
+		}
 	}
 
 	return nil
