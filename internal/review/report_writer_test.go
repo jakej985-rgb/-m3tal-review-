@@ -181,17 +181,42 @@ func TestWriteReportInjectedFailures(t *testing.T) {
 		assertNoTempFiles("renameFile failure")
 	})
 
-	// 4. Injected syncDir failure
-	t.Run("syncDir failure", func(t *testing.T) {
+	// 4. Injected syncDir failure is non-fatal warning
+	t.Run("syncDir failure is non-fatal warning", func(t *testing.T) {
 		orig := syncDirHook
 		defer func() { syncDirHook = orig }()
 		syncDirHook = func(dir string) error {
 			return fmt.Errorf("injected dir sync failure")
 		}
 
+		// Capture stderr
+		r, w, _ := os.Pipe()
+		origStderr := os.Stderr
+		os.Stderr = w
+
 		err := WriteReport(reportPath, report)
-		if err == nil || !strings.Contains(err.Error(), "injected dir sync failure") {
-			t.Fatalf("expected injected dir sync error, got: %v", err)
+
+		os.Stderr = origStderr
+		_ = w.Close()
+		var buf strings.Builder
+		b := make([]byte, 1024)
+		for {
+			n, rerr := r.Read(b)
+			buf.Write(b[:n])
+			if rerr != nil {
+				break
+			}
+		}
+		_ = r.Close()
+
+		if err != nil {
+			t.Fatalf("expected WriteReport to succeed despite directory sync failure, got: %v", err)
+		}
+		if !strings.Contains(buf.String(), "Warning: failed to sync report directory") {
+			t.Errorf("expected warning in stderr, got: %s", buf.String())
+		}
+		if _, statErr := os.Stat(reportPath); statErr != nil {
+			t.Errorf("expected report to be successfully written, but stat failed: %v", statErr)
 		}
 	})
 }

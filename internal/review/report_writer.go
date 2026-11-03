@@ -9,13 +9,16 @@ import (
 
 // WriteReport writes a review report atomically to the specified path.
 //
-// Durability & Atomicity Guarantees:
-//  1. File payload durability is guaranteed via fsync (syncFileHook) before closing and renaming.
-//  2. Atomicity is achieved by writing to a temporary file in the target directory and moving it
-//     into place using atomic rename.
-//  3. Directory entry durability is ensured via syncDirHook on the parent directory following rename.
-//     Unsupported directory fsync errors (EINVAL/ENOTSUP) are safely ignored; genuine I/O failures are surfaced.
-//  4. Temporary files are guaranteed to be cleaned up on any write, sync, close, or rename failure.
+// Durability & Atomicity Design:
+//  1. File payload persistence: file contents are flushed and synced via fsync (syncFileHook)
+//     prior to closing and renaming. Write, sync, and close errors fail the operation immediately.
+//  2. Atomicity: The report is written to a temporary file in the target directory and moved into
+//     place using atomic rename (renameFileHook).
+//  3. Directory sync: Parent directory syncing (syncDirHook) is best-effort. Unsupported directory
+//     sync operations (e.g. EINVAL/ENOTSUP) are ignored, and any directory sync failure
+//     is logged as a warning to os.Stderr rather than failing the write, as the report file is
+//     already safely in place on disk.
+//  4. Cleanup: Temporary files are guaranteed to be closed and removed on any failure before rename.
 func WriteReport(path string, report Report) error {
 	if path == "" {
 		return fmt.Errorf("report path cannot be empty")
@@ -68,7 +71,7 @@ func WriteReport(path string, report Report) error {
 	cleanup = false
 
 	if err := syncDirHook(dir); err != nil {
-		return fmt.Errorf("sync report directory: %w", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to sync report directory %s: %v\n", dir, err)
 	}
 
 	return nil

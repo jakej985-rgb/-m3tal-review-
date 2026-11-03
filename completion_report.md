@@ -15,15 +15,15 @@ All requirements of the Final Verification and Release Gate across Phases 1 thro
    - Fully supports additions (`A`), modifications (`M`), deletions (`D`), renames (`R`), and copies (`C`), preserving filenames containing spaces, tabs, and special characters.
 2. **Storage Durability & Injected Failure Handling**:
    - Replaced fragile permission-only tests with injected filesystem hooks (`syncFileHook`, `closeFileHook`, `renameFileHook`, and `syncDirHook`) in `internal/review/fs_ops.go`.
-   - Verified that `WriteReport`, `AppendHistory`, and `RecoverHistory` reliably clean up temporary files on sync, close, or rename failures, preserve original history files on recovery failure, and surface genuine directory sync failures.
+   - Verified that `WriteReport`, `AppendHistory`, and `RecoverHistory` reliably clean up temporary files on sync, close, or rename failures, preserve original history files on recovery failure, and log directory sync failures as observable warnings on `os.Stderr` without failing atomic file writes.
 3. **Recovery Determinism with Multi-Backup Precedence**:
-   - Formalized duplicate RunID precedence in `internal/review/history_recovery.go` via `isBetterCandidate`:
+   - Formalized duplicate RunID precedence in `internal/review/history_recovery.go` via `compareCandidates`:
      1. Canonical filename (`<RunID>.json`) wins over non-canonical backup files.
      2. Otherwise, the newest `Timestamp` wins.
      3. On equal timestamps, lexicographically smaller filenames win.
-   - Emits informative warnings to `os.Stderr` and produces 100% byte-identical, deterministic history across repeated executions.
-4. **Typo in README.md**:
-   - Fixed typographical error (`determinisic` -> `deterministic`) in `README.md` and added a dedicated "Storage & Durability" section accurately documenting file-level fsync and directory sync behavior.
+   - Emits informative warnings to `os.Stderr` identifying which report was selected and why (e.g., canonical filename, newer timestamp, or filename order tie-break), producing 100% byte-identical, deterministic history across repeated executions.
+4. **Typo and Durability Documentation in README.md**:
+   - Fixed typographical error (`determinisic` -> `deterministic`) in `README.md` and added a dedicated "Storage & Durability" section accurately documenting file-level fsync payload guarantees, best-effort directory entry syncing, and recovery non-destructiveness without unsupported durability claims.
 
 ---
 

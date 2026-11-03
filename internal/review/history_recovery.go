@@ -9,28 +9,36 @@ import (
 	"strings"
 )
 
-// isBetterCandidate returns true if candidate (nameA, repA) should be preferred over (nameB, repB).
+// compareCandidates evaluates two candidate reports with identical RunIDs and determines
+// which should be preferred, along with an explicit explanatory reason.
+//
 // Deterministic precedence:
-// 1. Canonical filename (<RunID>.json) wins over non-canonical filename.
+// 1. Canonical filename (<RunID>.json) wins over non-canonical backup filename.
 // 2. If neither is canonical (or both), newer Timestamp wins.
 // 3. If timestamps are equal, lexicographical filename order wins (smaller filename wins).
-func isBetterCandidate(nameA string, repA Report, nameB string, repB Report) bool {
+func compareCandidates(nameA string, repA Report, nameB string, repB Report) (preferredA bool, reason string) {
 	canonicalName := repA.RunID + ".json"
 	aIsCanonical := (nameA == canonicalName)
 	bIsCanonical := (nameB == canonicalName)
 
 	if aIsCanonical != bIsCanonical {
-		return aIsCanonical
+		if aIsCanonical {
+			return true, fmt.Sprintf("canonical filename %s preferred over non-canonical %s", nameA, nameB)
+		}
+		return false, fmt.Sprintf("canonical filename %s preferred over non-canonical %s", nameB, nameA)
 	}
 
 	if repA.Timestamp.After(repB.Timestamp) {
-		return true
+		return true, fmt.Sprintf("newer timestamp in %s preferred over %s", nameA, nameB)
 	}
 	if repB.Timestamp.After(repA.Timestamp) {
-		return false
+		return false, fmt.Sprintf("newer timestamp in %s preferred over %s", nameB, nameA)
 	}
 
-	return nameA < nameB
+	if nameA < nameB {
+		return true, fmt.Sprintf("tie-break by filename order: %s before %s", nameA, nameB)
+	}
+	return false, fmt.Sprintf("tie-break by filename order: %s before %s", nameB, nameA)
 }
 
 // RecoverHistory rebuilds the history log non-destructively from valid report files.
@@ -38,12 +46,15 @@ func isBetterCandidate(nameA string, repA Report, nameB string, repB Report) boo
 // and atomically replaces history.jsonl only after success. If no valid reports exist or an error
 // occurs, the original history is preserved.
 //
-// Durability & Atomicity Guarantees:
-//  1. File payload durability is guaranteed via fsync (syncFileHook) prior to rename.
-//  2. Atomicity is achieved by writing to a temporary file in the history directory and atomically
-//     replacing history.jsonl via rename.
-//  3. Parent directory durability is ensured via syncDirHook following rename.
-//  4. Cleanup: If any step fails, the temporary file is unlinked, leaving any existing history intact.
+// Durability & Atomicity Design:
+//  1. File payload persistence: file contents are flushed and synced via fsync (syncFileHook)
+//     prior to closing and renaming.
+//  2. Atomicity: Recovered entries are written to a temporary file in the history directory and
+//     atomically moved into place using rename (renameFileHook).
+//  3. Directory sync: Parent directory syncing (syncDirHook) is best-effort; sync failures are logged
+//     as warnings to os.Stderr rather than failing recovery, as history.jsonl is already in place.
+//  4. Cleanup: On any failure before rename, the temporary file is closed and removed, leaving the
+//     original history file completely intact.
 func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 	if reportsDir == "" {
 		return 0, fmt.Errorf("reports directory cannot be empty")
@@ -87,11 +98,12 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 		newEntry := NewHistoryEntry(report)
 		existing, found := candidates[report.RunID]
 		if found {
-			if isBetterCandidate(entry.Name(), report, existing.fileName, existing.report) {
-				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s found in %s; replacing entry from %s\n", report.RunID, entry.Name(), existing.fileName)
+			preferredA, reason := compareCandidates(entry.Name(), report, existing.fileName, existing.report)
+			if preferredA {
+				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s: selected %s over %s (%s)\n", report.RunID, entry.Name(), existing.fileName, reason)
 				candidates[report.RunID] = reportCandidate{entry: newEntry, report: report, fileName: entry.Name()}
 			} else {
-				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s found in %s; keeping preferred entry from %s\n", report.RunID, entry.Name(), existing.fileName)
+				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s: selected %s over %s (%s)\n", report.RunID, existing.fileName, entry.Name(), reason)
 			}
 			continue
 		}
@@ -164,7 +176,7 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 	cleanup = false
 
 	if err := syncDirHook(historyDir); err != nil {
-		return 0, fmt.Errorf("sync history directory: %w", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to sync history directory %s: %v\n", historyDir, err)
 	}
 
 	return len(recoveredEntries), nil

@@ -394,17 +394,41 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 		assertNoTempFilesAndHistoryPreserved("renameFile failure")
 	})
 
-	// 4. Injected syncDir failure
-	t.Run("syncDir failure returns error", func(t *testing.T) {
+	// 4. Injected syncDir failure is non-fatal warning
+	t.Run("syncDir failure is non-fatal warning", func(t *testing.T) {
 		orig := syncDirHook
 		defer func() { syncDirHook = orig }()
 		syncDirHook = func(dir string) error {
 			return fmt.Errorf("injected sync dir failure")
 		}
 
-		_, err := RecoverHistory(reportsDir, historyPath)
-		if err == nil || !strings.Contains(err.Error(), "injected sync dir failure") {
-			t.Fatalf("expected injected sync dir failure, got: %v", err)
+		r, w, _ := os.Pipe()
+		origStderr := os.Stderr
+		os.Stderr = w
+
+		count, err := RecoverHistory(reportsDir, historyPath)
+
+		os.Stderr = origStderr
+		_ = w.Close()
+		var buf strings.Builder
+		b := make([]byte, 1024)
+		for {
+			n, rerr := r.Read(b)
+			buf.Write(b[:n])
+			if rerr != nil {
+				break
+			}
+		}
+		_ = r.Close()
+
+		if err != nil {
+			t.Fatalf("expected RecoverHistory to succeed despite directory sync failure, got: %v", err)
+		}
+		if count != 1 {
+			t.Fatalf("expected 1 entry recovered, got %d", count)
+		}
+		if !strings.Contains(buf.String(), "Warning: failed to sync history directory") {
+			t.Errorf("expected warning in stderr, got: %s", buf.String())
 		}
 	})
 }
@@ -429,7 +453,25 @@ func TestRecoverHistoryPrecedenceCanonicalOlderWins(t *testing.T) {
 	backupData, _ := json.Marshal(backupRep)
 	_ = os.WriteFile(filepath.Join(reportsDir, "backup.json"), backupData, 0644)
 
+	r, w, _ := os.Pipe()
+	origStderr := os.Stderr
+	os.Stderr = w
+
 	count, err := RecoverHistory(reportsDir, historyPath)
+
+	os.Stderr = origStderr
+	_ = w.Close()
+	var buf strings.Builder
+	b := make([]byte, 1024)
+	for {
+		n, rerr := r.Read(b)
+		buf.Write(b[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	_ = r.Close()
+
 	if err != nil {
 		t.Fatalf("RecoverHistory error: %v", err)
 	}
@@ -439,6 +481,11 @@ func TestRecoverHistoryPrecedenceCanonicalOlderWins(t *testing.T) {
 	entries, _ := ReadHistory(historyPath)
 	if entries[0].Summary != "canonical older" {
 		t.Errorf("canonical older report should win over newer backup, got: %q", entries[0].Summary)
+	}
+
+	warning := buf.String()
+	if !strings.Contains(warning, "selected "+runID+".json over backup.json") || !strings.Contains(warning, "canonical filename") {
+		t.Errorf("expected warning identifying selection and canonical reason, got: %s", warning)
 	}
 }
 
@@ -462,7 +509,25 @@ func TestRecoverHistoryPrecedenceCanonicalNewerWins(t *testing.T) {
 	backupData, _ := json.Marshal(backupRep)
 	_ = os.WriteFile(filepath.Join(reportsDir, "backup.json"), backupData, 0644)
 
+	r, w, _ := os.Pipe()
+	origStderr := os.Stderr
+	os.Stderr = w
+
 	count, err := RecoverHistory(reportsDir, historyPath)
+
+	os.Stderr = origStderr
+	_ = w.Close()
+	var buf strings.Builder
+	b := make([]byte, 1024)
+	for {
+		n, rerr := r.Read(b)
+		buf.Write(b[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	_ = r.Close()
+
 	if err != nil {
 		t.Fatalf("RecoverHistory error: %v", err)
 	}
@@ -472,6 +537,11 @@ func TestRecoverHistoryPrecedenceCanonicalNewerWins(t *testing.T) {
 	entries, _ := ReadHistory(historyPath)
 	if entries[0].Summary != "canonical newer" {
 		t.Errorf("canonical newer report should win over older backup, got: %q", entries[0].Summary)
+	}
+
+	warning := buf.String()
+	if !strings.Contains(warning, "selected "+runID+".json over backup.json") || !strings.Contains(warning, "canonical filename") {
+		t.Errorf("expected warning identifying selection and canonical reason, got: %s", warning)
 	}
 }
 
@@ -493,7 +563,25 @@ func TestRecoverHistoryPrecedenceEqualTimestampBackups(t *testing.T) {
 	dataB, _ := json.Marshal(repB)
 	_ = os.WriteFile(filepath.Join(reportsDir, "backup_b.json"), dataB, 0644)
 
+	r, w, _ := os.Pipe()
+	origStderr := os.Stderr
+	os.Stderr = w
+
 	count, err := RecoverHistory(reportsDir, historyPath)
+
+	os.Stderr = origStderr
+	_ = w.Close()
+	var buf strings.Builder
+	b := make([]byte, 1024)
+	for {
+		n, rerr := r.Read(b)
+		buf.Write(b[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	_ = r.Close()
+
 	if err != nil {
 		t.Fatalf("RecoverHistory error: %v", err)
 	}
@@ -503,6 +591,11 @@ func TestRecoverHistoryPrecedenceEqualTimestampBackups(t *testing.T) {
 	entries, _ := ReadHistory(historyPath)
 	if entries[0].Summary != "from backup_a" {
 		t.Errorf("lexicographically smaller filename backup_a should win, got: %q", entries[0].Summary)
+	}
+
+	warning := buf.String()
+	if !strings.Contains(warning, "selected backup_a.json over backup_b.json") || !strings.Contains(warning, "filename order") {
+		t.Errorf("expected warning identifying tie-break by filename order, got: %s", warning)
 	}
 }
 
@@ -529,7 +622,25 @@ func TestRecoverHistoryPrecedenceMultipleBackupsNewerWins(t *testing.T) {
 	data3, _ := json.Marshal(rep3)
 	_ = os.WriteFile(filepath.Join(reportsDir, "backup_3.json"), data3, 0644)
 
+	r, w, _ := os.Pipe()
+	origStderr := os.Stderr
+	os.Stderr = w
+
 	count, err := RecoverHistory(reportsDir, historyPath)
+
+	os.Stderr = origStderr
+	_ = w.Close()
+	var buf strings.Builder
+	b := make([]byte, 1024)
+	for {
+		n, rerr := r.Read(b)
+		buf.Write(b[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	_ = r.Close()
+
 	if err != nil {
 		t.Fatalf("RecoverHistory error: %v", err)
 	}
@@ -539,6 +650,11 @@ func TestRecoverHistoryPrecedenceMultipleBackupsNewerWins(t *testing.T) {
 	entries, _ := ReadHistory(historyPath)
 	if entries[0].Summary != "backup 2 newest" {
 		t.Errorf("newest timestamp backup should win, got: %q", entries[0].Summary)
+	}
+
+	warning := buf.String()
+	if !strings.Contains(warning, "selected backup_2.json") || !strings.Contains(warning, "newer timestamp") {
+		t.Errorf("expected warning identifying newer timestamp reason, got: %s", warning)
 	}
 }
 

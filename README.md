@@ -91,9 +91,10 @@ If multiple report files contain the same Run ID (e.g., from manual copies or ba
 ## Storage & Durability
 
 Review reports (`.m3tal-review/reports/<run-id>.json`) and review history (`.m3tal-review/history.jsonl`) use atomic and durable storage patterns:
-- **Reports**: Reports are written to a temporary file (`0644`), synced via `fsync` (`file.Sync()`), and atomically moved into place using `os.Rename`. Parent directory updates are synced following rename where supported by the filesystem. On any write or sync failure, temporary files are cleanly unlinked.
+- **Reports**: Reports are written to a temporary file (`0644`), synced via `fsync` (`file.Sync()`), and atomically moved into place using `os.Rename`. Parent directory syncing following rename is best-effort (failures are non-fatal warnings). On any write or sync failure prior to rename, temporary files are cleanly unlinked.
 - **History Log**: Appends to `history.jsonl` are flushed and synced via `fsync` before closing.
 - **Recovery Non-Destructiveness**: The `recover-history` command builds recovered history in a temporary file and atomically replaces `history.jsonl` only after all reports are validated and sorted. If no valid reports exist or an error occurs, the existing history file is completely preserved.
+- **Durability Limitations**: File payloads are persisted via OS sync calls (`fsync`). Directory-level metadata syncing is best-effort and subject to host OS and filesystem capabilities.
 
 ## Interpreting Findings
 
