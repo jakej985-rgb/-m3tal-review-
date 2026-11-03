@@ -46,7 +46,7 @@ func TestAllRulesPopulateRemediation(t *testing.T) {
 		{
 			name: "SlopRule",
 			rule: SlopRule{},
-			diff: "--- a/f.py\n+++ b/f.py\n@@ -0,0 +1 @@\n+if x == true:\n",
+			diff: "--- a/f.go\n+++ b/f.go\n@@ -0,0 +1 @@\n+if x == true {\n",
 		},
 	}
 

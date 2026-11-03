@@ -81,3 +81,55 @@ func TestSecurityRuleFindsCredentialNameVariantsAndNormalizesQuotedPaths(t *test
 		}
 	}
 }
+
+func credentialDiff(file, line string) string {
+	return "diff --git a/" + file + " b/" + file + "\n--- a/" + file + "\n+++ b/" + file + "\n@@ -0,0 +1,1 @@\n+" + line + "\n"
+}
+
+func TestSecurityRuleFindsPreviouslyMissedShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+		line string
+	}{
+		{"typed var", "a.go", `var dbPassword string = "hunter2hunter2"`},
+		{"json key", "a.json", `"api_token": "abcd1234efgh5678"`},
+		{"raw string", "a.go", "apiToken := `abcd1234efgh5678`"},
+		{"env unquoted", ".env", `API_TOKEN=abcd1234efgh5678`},
+		{"env export", "prod.env", `export DB_PASSWORD=hunter2hunter2`},
+		{"yaml unquoted", "config.yaml", `password: hunter2hunter2`},
+		{"example inside real secret", "a.go", `password = "real_example_secret_99"`},
+		{"plus-plus prefixed line", "a.txt", `++password = "hunter2hunter2"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			findings := (SecurityRule{}).Check(credentialDiff(tt.file, tt.line))
+			if len(findings) != 1 {
+				t.Fatalf("Check() returned %d findings, want 1: %+v", len(findings), findings)
+			}
+		})
+	}
+}
+
+func TestSecurityRuleIgnoresNonSecrets(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+		line string
+	}{
+		{"getenv call in go", "a.go", `apiToken := os.Getenv("API_TOKEN")`},
+		{"unquoted code outside config files", "a.go", `password: hunter2hunter2`},
+		{"env substitution", ".env", `API_TOKEN=${API_TOKEN_FROM_CI}`},
+		{"template value", "config.yaml", `password: {{ vault_password }}`},
+		{"example prefix", "a.go", `password = "example-password"`},
+		{"masked", "a.go", `password = "xxxxxxxx"`},
+		{"short value", "a.go", `password = "short"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if findings := (SecurityRule{}).Check(credentialDiff(tt.file, tt.line)); len(findings) != 0 {
+				t.Fatalf("Check() returned findings, want none: %+v", findings)
+			}
+		})
+	}
+}

@@ -216,3 +216,30 @@ new file mode 100644
 		t.Errorf("ChangeType = %q, want %q", fileDiffs[0].ChangeType, FileAdded)
 	}
 }
+
+func TestParseDiffAddedLinesStartingWithPlusPlus(t *testing.T) {
+	diff := "diff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -0,0 +1,3 @@\n+first\n+++i;\n+third\n"
+
+	fileDiffs := ParseDiff(diff)
+	if len(fileDiffs) != 1 {
+		t.Fatalf("expected 1 file diff, got %d", len(fileDiffs))
+	}
+	if !reflect.DeepEqual(fileDiffs[0].AddedLines, []int{1, 2, 3}) {
+		t.Errorf("AddedLines = %v, want [1 2 3]", fileDiffs[0].AddedLines)
+	}
+	if got := fileDiffs[0].AddedText[2]; got != "++i;" {
+		t.Errorf("AddedText[2] = %q, want %q", got, "++i;")
+	}
+}
+
+func TestParseDiffRemovedLinesStartingWithDashDash(t *testing.T) {
+	diff := "diff --git a/q.sql b/q.sql\n--- a/q.sql\n+++ b/q.sql\n@@ -1,2 +1,1 @@\n--- old comment\n-second\n@@ -5,0 +4,1 @@\n+added\n"
+
+	fileDiffs := ParseDiff(diff)
+	if len(fileDiffs) != 1 {
+		t.Fatalf("expected 1 file diff, got %d", len(fileDiffs))
+	}
+	if !reflect.DeepEqual(fileDiffs[0].AddedLines, []int{4}) {
+		t.Errorf("AddedLines = %v, want [4]", fileDiffs[0].AddedLines)
+	}
+}

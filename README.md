@@ -6,10 +6,11 @@ It provides actionable findings, records review trails (history), and supports a
 
 ## Features
 
-- **Review Engine**: Runs deterministic checks on staged Git changes.
+- **Review Engine**: `review` checks staged Git changes; `audit` checks the complete working-tree change set.
 - **Remediation Guidance**: Every finding provides actionable steps to fix the issue.
 - **Slop Detector**: For Go files, parses the exact staged file contents into an AST (`go/parser` and `go/ast`) to analyze added lines, detecting redundant boolean comparisons (`== true`), empty blocks (ignoring `interface{}`), and excessive nesting depth (4+ levels). Because it evaluates real AST nodes, string literals and comments are ignored and cannot produce false positives. For non-Go files (or when repository root is unset), falls back to deterministic regex-based heuristics.
-- **Staged-Only Semantics**: Accurately inspects staged content from the Git index (`git show :<file>`). Working-tree modifications that have not been staged are ignored. Deleted files are classified and handled without invoking AST analysis or generating false errors.
+- **Staged-Only Semantics**: `review` accurately inspects staged content from the Git index (`git show :<file>`). Working-tree modifications that have not been staged are ignored. Deleted files are classified and handled without invoking AST analysis or generating false errors.
+- **Working-Tree Audit**: `audit` checks all tracked files present in the working tree, including unchanged files, plus non-ignored untracked files. Its Go AST checks read the actual files from disk. It skips Git metadata, ignored untracked files, and generated `.m3tal-review` data. Binary files, submodules, unreadable files, and symlinks whose targets leave the repository are recorded as unanalyzed, and the report is marked incomplete. The audit does not stage files or change the Git index.
 - **Analysis Error Reporting**: Syntax errors in staged Go code or git index retrieval errors produce distinct high-severity findings (`code-slop-analysis-error`), ensuring that analysis failures cannot result in a passing review.
 - **Security Checks**: Detects hardcoded credentials, world-writable file permissions (0777), disabled TLS verification, and risky shell executions.
 - **Code Quality**: Identifies leftover `TODO` markers and debug print statements in staged diffs.
@@ -46,6 +47,16 @@ Review currently **staged** changes. This will generate a run ID, create a repor
 ```bash
 m3tal-review review
 ```
+
+### Audit the Working Tree
+
+Analyze the complete working-tree snapshot, including unchanged tracked files, staged and unstaged edits, and non-ignored untracked files:
+
+```bash
+m3tal-review audit
+```
+
+The report and history entry record the `working-tree` scope. Audit reads current file contents, does not stage changes, and marks the run incomplete when any in-scope file cannot be analyzed.
 
 If issues are found, the command will exit with a non-zero status and print the findings with their line numbers and remediation guidance.
 

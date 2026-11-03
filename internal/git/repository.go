@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
@@ -331,6 +332,23 @@ func UntrackedFiles(path string) ([]string, error) {
 		return []string{}, nil
 	}
 
+	return files, nil
+}
+
+// WorkingTreeFiles lists index-tracked paths and non-ignored untracked paths
+// using NUL delimiters, so unusual filenames are preserved safely.
+func WorkingTreeFiles(path string) ([]string, error) {
+	command := exec.Command("git", "-C", path, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("list working-tree files: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	trimmed := bytes.TrimSuffix(output, []byte{0})
+	if len(trimmed) == 0 {
+		return []string{}, nil
+	}
+	files := strings.Split(string(trimmed), "\x00")
+	sort.Strings(files)
 	return files, nil
 }
 

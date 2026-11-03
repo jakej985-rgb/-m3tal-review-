@@ -1171,3 +1171,279 @@ func TestReviewMarksStagedBinaryAsIncomplete(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultRulesIncludeTLSRule(t *testing.T) {
+	var found bool
+	for _, rule := range defaultRules("") {
+		if rule.Name() == (review.TLSRule{}).Name() {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("defaultRules() does not include TLSRule, but the README advertises TLS verification checks")
+	}
+}
+
+func TestAuditAnalyzesUnstagedAndUntrackedWorkingTreeWithoutChangingIndex(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+		return string(output)
+	}
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\nfunc main() { println(\"ok\") }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte(".m3tal-review/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "main.go", ".gitignore")
+	runGit("commit", "-m", "initial")
+	// Stage a harmless change, then make a separate unstaged source edit.
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\nfunc main() { println(\"staged\") }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "main.go")
+	indexBefore := runGit("diff", "--cached", "--binary")
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\nfunc main() {\n\tvalid := true\n\tif valid == true { println(\"unstaged\") }\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	untracked := "package main\nfunc extra() {\n\tvalid := true\n\tif valid == true { println(\"untracked\") }\n}\n"
+	if err := os.WriteFile(filepath.Join(repoDir, "extra.go"), []byte(untracked), 0644); err != nil {
+		t.Fatal(err)
+	}
+	statusBefore := runGit("status", "--porcelain", "-z")
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+	output, auditErr := captureOutput(func() error { return execute("audit") })
+	if auditErr == nil || !strings.Contains(auditErr.Error(), "audit found") {
+		t.Fatalf("audit error = %v, want finding error; output:\n%s", auditErr, output)
+	}
+	if !strings.Contains(output, "Scope: working-tree") || !strings.Contains(output, "main.go") || !strings.Contains(output, "extra.go") {
+		t.Fatalf("audit output omitted scope or working-tree files:\n%s", output)
+	}
+	if got := runGit("diff", "--cached", "--binary"); got != indexBefore {
+		t.Fatalf("audit changed the Git index\nbefore:\n%s\nafter:\n%s", indexBefore, got)
+	}
+	if got := runGit("status", "--porcelain", "-z"); got != statusBefore {
+		t.Fatalf("audit changed Git status\nbefore: %q\nafter: %q", statusBefore, got)
+	}
+	var runID string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "Run ID:") {
+			runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
+		}
+	}
+	report, err := review.ReadReport(filepath.Join(repoDir, ".m3tal-review", "reports", runID+".json"))
+	if err != nil {
+		t.Fatalf("read audit report: %v", err)
+	}
+	if report.Scope != "working-tree" || !reflect.DeepEqual(report.ReviewedFiles, []string{".gitignore", "extra.go", "main.go"}) {
+		t.Fatalf("unexpected audit report scope/files: %+v", report)
+	}
+	var sawMain, sawExtra bool
+	for _, finding := range report.Findings {
+		if finding.Rule == "code-slop" {
+			sawMain = sawMain || finding.File == "main.go"
+			sawExtra = sawExtra || finding.File == "extra.go"
+		}
+	}
+	if !sawMain || !sawExtra {
+		t.Fatalf("AST findings did not use current contents for both files: %+v", report.Findings)
+	}
+	entries, err := review.ReadHistory(filepath.Join(repoDir, ".m3tal-review", "history.jsonl"))
+	if err != nil || len(entries) != 1 || entries[0].Scope != "working-tree" {
+		t.Fatalf("audit history scope = %+v, err = %v", entries, err)
+	}
+}
+
+func TestAuditScansCleanTrackedFiles(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+		return string(output)
+	}
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n// TODO: existing cleanup\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte(".m3tal-review/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "main.go", ".gitignore")
+	runGit("commit", "-m", "initial")
+	statusBefore := runGit("status", "--porcelain", "-z")
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+	output, auditErr := captureOutput(func() error { return execute("audit") })
+	if auditErr == nil || !strings.Contains(output, "main.go") {
+		t.Fatalf("clean-tree audit did not scan the tracked source: err=%v output:\n%s", auditErr, output)
+	}
+	var runID string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "Run ID:") {
+			runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
+		}
+	}
+	report, err := review.ReadReport(filepath.Join(repoDir, ".m3tal-review", "reports", runID+".json"))
+	if err != nil {
+		t.Fatalf("read audit report: %v", err)
+	}
+	if !reflect.DeepEqual(report.ReviewedFiles, []string{".gitignore", "main.go"}) {
+		t.Fatalf("clean-tree audit reviewed files = %q", report.ReviewedFiles)
+	}
+	if got := runGit("status", "--porcelain", "-z"); got != statusBefore {
+		t.Fatalf("audit changed clean repository status: before=%q after=%q", statusBefore, got)
+	}
+	found := false
+	for _, finding := range report.Findings {
+		if finding.Rule == "todo-marker" && finding.File == "main.go" && finding.Line == 2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("clean-tree audit omitted existing TODO: %+v", report.Findings)
+	}
+}
+
+func TestAuditPreservesUnusualFilenames(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte(".m3tal-review/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".gitignore")
+	runGit("commit", "-m", "initial")
+	oddName := "space\tand\nnewline.txt"
+	if err := os.WriteFile(filepath.Join(repoDir, oddName), []byte("TODO: keep the filename intact\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+	output, auditErr := captureOutput(func() error { return execute("audit") })
+	if auditErr == nil || !strings.Contains(output, `space\x09and\x0anewline.txt`) {
+		t.Fatalf("audit did not safely display unusual filename: err=%v output:\n%s", auditErr, output)
+	}
+	var runID string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "Run ID:") {
+			runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
+		}
+	}
+	report, err := review.ReadReport(filepath.Join(repoDir, ".m3tal-review", "reports", runID+".json"))
+	if err != nil {
+		t.Fatalf("read audit report: %v", err)
+	}
+	if !reflect.DeepEqual(report.ReviewedFiles, []string{".gitignore", oddName}) {
+		t.Fatalf("audit changed unusual filename: %q", report.ReviewedFiles)
+	}
+}
+
+func TestAuditMarksExternalUntrackedSymlinkIncomplete(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init")
+	target := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(target, []byte("outside\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(repoDir, "outside-link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+	output, auditErr := captureOutput(func() error { return execute("audit") })
+	if auditErr == nil || !strings.Contains(auditErr.Error(), "audit incomplete") || !strings.Contains(output, "outside-link") {
+		t.Fatalf("external symlink was not marked incomplete: err=%v output:\n%s", auditErr, output)
+	}
+}
+
+func TestAuditMarksBinaryUntrackedFilesAndSkipsIgnoredFiles(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("*.ignored\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".gitignore")
+	runGit("commit", "-m", "initial")
+	if err := os.WriteFile(filepath.Join(repoDir, "asset.bin"), []byte{0, 1, 2, 255}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "secret.ignored"), []byte("ignored"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+	output, auditErr := captureOutput(func() error { return execute("audit") })
+	if auditErr == nil || !strings.Contains(auditErr.Error(), "audit incomplete") || !strings.Contains(output, "asset.bin") || strings.Contains(output, "secret.ignored") {
+		t.Fatalf("binary/ignored file handling is incorrect: err=%v output:\n%s", auditErr, output)
+	}
+}

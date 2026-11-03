@@ -3,6 +3,7 @@ package review
 import "time"
 
 type HistoryEntry struct {
+	Scope        string    `json:"scope,omitempty"`
 	RunID        string    `json:"run_id"`
 	Timestamp    time.Time `json:"timestamp"`
 	Status       string    `json:"status"`
@@ -21,6 +22,7 @@ func NewHistoryEntry(report Report) HistoryEntry {
 	}
 
 	return HistoryEntry{
+		Scope:        report.Scope,
 		RunID:        report.RunID,
 		Timestamp:    report.Timestamp,
 		Status:       status,

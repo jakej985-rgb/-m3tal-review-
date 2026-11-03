@@ -3,6 +3,7 @@ package review
 import "time"
 
 type Report struct {
+	Scope           string    `json:"scope,omitempty"`
 	RunID           string    `json:"run_id"`
 	Timestamp       time.Time `json:"timestamp"`
 	Repository      string    `json:"repository"`
@@ -37,6 +38,7 @@ func NewReport(
 	}
 
 	return Report{
+		Scope:         "staged",
 		RunID:         runID,
 		Timestamp:     time.Now().UTC(),
 		Repository:    repository,

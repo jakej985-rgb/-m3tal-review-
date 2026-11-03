@@ -1,6 +1,7 @@
 package review
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -28,6 +29,21 @@ type AddedDiffLine struct {
 	File string
 	Line int
 	Text string
+}
+
+// hunkCounts captures old count, new start and new count from a hunk header.
+// Omitted counts mean 1 (see hunkCount).
+var hunkCounts = regexp.MustCompile(`^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
+
+func hunkCount(s string) int {
+	if s == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 1
+	}
+	return n
 }
 
 func unquoteDiffPath(s string) string {
@@ -102,6 +118,11 @@ func ParseDiff(diff string) []FileDiff {
 
 	inHunk := false
 	currentLine := 0
+	// Remaining old/new line counts for the current hunk. Hunk bodies are
+	// delimited by these counts, not by line prefixes, so an added line whose
+	// content starts with "++" (diff line "+++...") is not mistaken for a file
+	// header.
+	oldRemaining, newRemaining := 0, 0
 
 	for _, line := range strings.Split(diff, "\n") {
 		if strings.HasPrefix(line, "diff --git ") {
@@ -148,26 +169,41 @@ func ParseDiff(diff string) []FileDiff {
 			}
 		}
 
-		if matches := hunkHeader.FindStringSubmatch(line); matches != nil {
+		if matches := hunkCounts.FindStringSubmatch(line); matches != nil {
+			// Body lines always start with "+", "-", " " or "\\", so a line starting
+			// with "@@" is always a hunk header, whatever the remaining counts say.
 			inHunk = true
-			currentLine, _ = strconv.Atoi(matches[1])
+			currentLine, _ = strconv.Atoi(matches[2])
+			oldRemaining = hunkCount(matches[1])
+			newRemaining = hunkCount(matches[3])
+			if oldRemaining == 0 && newRemaining == 0 {
+				inHunk = false
+			}
 			continue
 		}
 
 		if inHunk && current != nil {
-			if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			switch {
+			case strings.HasPrefix(line, "+"):
 				current.AddedLines = append(current.AddedLines, currentLine)
 				if current.AddedText == nil {
 					current.AddedText = make(map[int]string)
 				}
 				current.AddedText[currentLine] = strings.TrimPrefix(line, "+")
 				currentLine++
-			} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+				newRemaining--
+			case strings.HasPrefix(line, "-"):
 				// deleted line from old file; do not increment currentLine for new file
-			} else if strings.HasPrefix(line, "\\") {
-				// e.g. \ No newline at end of file; do not increment
-			} else if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+				oldRemaining--
+			case strings.HasPrefix(line, "\\"):
+				// e.g. \ No newline at end of file; do not count
+			case strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t"):
 				currentLine++
+				oldRemaining--
+				newRemaining--
+			}
+			if oldRemaining <= 0 && newRemaining <= 0 {
+				inHunk = false
 			}
 		}
 	}

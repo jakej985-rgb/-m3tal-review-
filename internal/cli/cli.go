@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -261,14 +263,7 @@ func execute(command string) error {
 			return err
 		}
 
-		engine := review.NewEngine(
-			review.TodoRule{},
-			review.DebugRule{},
-			review.SecurityRule{},
-			review.ShellRule{},
-			review.PermissionsRule{},
-			review.SlopRule{RepositoryRoot: repositoryRoot},
-		)
+		engine := review.NewEngine(defaultRules(repositoryRoot)...)
 
 		findings := engine.Run(diff)
 
@@ -353,6 +348,81 @@ func execute(command string) error {
 			return fmt.Errorf("review found %d issue(s)", len(report.Findings))
 		}
 
+		return nil
+
+	case "audit":
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+		if err := git.Available(); err != nil {
+			return err
+		}
+		repositoryRoot, err := git.RepositoryRoot(workingDir)
+		if err != nil {
+			return err
+		}
+		branch, err := git.CurrentBranch(repositoryRoot)
+		if err != nil {
+			return err
+		}
+		diff, reviewedFiles, unanalyzedFiles, err := workingTreeSnapshot(repositoryRoot)
+		if err != nil {
+			return err
+		}
+		runID, err := review.NewRunID()
+		if err != nil {
+			return err
+		}
+		rules := defaultRules(repositoryRoot)
+		for i, rule := range rules {
+			if slop, ok := rule.(review.SlopRule); ok {
+				slop.WorkingTree = true
+				rules[i] = slop
+			}
+		}
+		findings := review.NewEngine(rules...).Run(diff)
+		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: unable to determine current commit SHA: %s\n", displayText(err.Error()))
+			currentSHA = "unavailable"
+		}
+		report := review.NewReport(runID, repositoryRoot, branch, currentSHA, "", "", version, reviewedFiles, findings)
+		report.Scope = "working-tree"
+		if len(unanalyzedFiles) > 0 {
+			report.UnanalyzedFiles = unanalyzedFiles
+			report.Passed = false
+			report.Summary = "Audit incomplete. Some working-tree files could not be analyzed."
+		} else if len(findings) > 0 {
+			report.Summary = "Audit found findings that require attention."
+		}
+		reportPath := filepath.Join(repositoryRoot, ".m3tal-review", "reports", runID+".json")
+		if err := review.WriteReport(reportPath, report); err != nil {
+			return err
+		}
+		historyPath := filepath.Join(repositoryRoot, ".m3tal-review", "history.jsonl")
+		if err := review.AppendHistory(historyPath, review.NewHistoryEntry(report)); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to append to history log (report was successfully saved to %s): %s\n", displayText(reportPath), displayText(err.Error()))
+		}
+		fmt.Println(displayText(report.Summary))
+		fmt.Println("Scope: working-tree")
+		fmt.Println("Run ID:", displayText(runID))
+		fmt.Println("Report:", displayText(reportPath))
+		for _, finding := range report.Findings {
+			fmt.Printf("[%s] %s:%d: %s (%s)\n", displayText(finding.Severity), displayText(finding.File), finding.Line, displayText(finding.Message), displayText(finding.Rule))
+		}
+		if len(report.UnanalyzedFiles) > 0 {
+			fmt.Println("Unanalyzed files:")
+			for _, file := range report.UnanalyzedFiles {
+				fmt.Println("  ", displayText(file))
+			}
+		}
+		if !report.Passed {
+			if len(report.UnanalyzedFiles) > 0 {
+				return fmt.Errorf("audit incomplete: %d file(s) could not be analyzed", len(report.UnanalyzedFiles))
+			}
+			return fmt.Errorf("audit found %d issue(s)", len(report.Findings))
+		}
 		return nil
 
 	case "history":
@@ -493,12 +563,142 @@ func execute(command string) error {
 	}
 }
 
+// defaultRules returns the rules run by "review". Every staged-diff rule that
+// is advertised in the README must be listed here.
+func defaultRules(repositoryRoot string) []review.Rule {
+	return []review.Rule{
+		review.TodoRule{},
+		review.DebugRule{},
+		review.SecurityRule{},
+		review.ShellRule{},
+		review.TLSRule{},
+		review.PermissionsRule{},
+		review.SlopRule{RepositoryRoot: repositoryRoot},
+	}
+}
+
+func workingTreeSnapshot(repositoryRoot string) (string, []string, []string, error) {
+	files, err := git.WorkingTreeFiles(repositoryRoot)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	var diff strings.Builder
+	fileSet := make(map[string]bool, len(files))
+	unanalyzedSet := make(map[string]bool)
+	for _, file := range files {
+		if file == ".m3tal-review" || strings.HasPrefix(file, ".m3tal-review/") || file == ".git" || strings.HasPrefix(file, ".git/") {
+			continue
+		}
+		if !filepath.IsLocal(file) {
+			unanalyzedSet[file] = true
+			fileSet[file] = true
+			continue
+		}
+		fullPath := filepath.Join(repositoryRoot, file)
+		_, statErr := os.Lstat(fullPath)
+		if os.IsNotExist(statErr) {
+			continue
+		}
+		if statErr != nil {
+			unanalyzedSet[file] = true
+			fileSet[file] = true
+			continue
+		}
+		target, evalErr := filepath.EvalSymlinks(fullPath)
+		rel, relErr := filepath.Rel(repositoryRoot, target)
+		if evalErr != nil || relErr != nil || !filepath.IsLocal(rel) {
+			unanalyzedSet[file] = true
+			fileSet[file] = true
+			continue
+		}
+		contentInfo, contentStatErr := os.Stat(fullPath)
+		if contentStatErr != nil {
+			unanalyzedSet[file] = true
+			fileSet[file] = true
+			continue
+		}
+		content, readErr := os.ReadFile(fullPath)
+		fileSet[file] = true
+		if readErr != nil || !contentInfo.Mode().IsRegular() || strings.IndexByte(string(content), 0) >= 0 {
+			unanalyzedSet[file] = true
+			continue
+		}
+		diff.WriteString(untrackedFileDiff(file, content, contentInfo.Mode()))
+	}
+	unanalyzed := make([]string, 0, len(unanalyzedSet))
+	for file := range unanalyzedSet {
+		unanalyzed = append(unanalyzed, file)
+	}
+	sort.Strings(unanalyzed)
+	return filterUnanalyzedDiff(diff.String(), unanalyzedSet), sortedKeys(fileSet), unanalyzed, nil
+}
+
+func filterUnanalyzedDiff(diff string, unanalyzed map[string]bool) string {
+	if len(unanalyzed) == 0 {
+		return diff
+	}
+	var filtered strings.Builder
+	var chunk strings.Builder
+	flush := func() {
+		if chunk.Len() == 0 {
+			return
+		}
+		text := chunk.String()
+		parsed := review.ParseDiff(text)
+		if len(parsed) == 0 || !unanalyzed[parsed[0].Path] {
+			filtered.WriteString(text)
+		}
+		chunk.Reset()
+	}
+	for _, line := range strings.SplitAfter(diff, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			flush()
+		}
+		chunk.WriteString(line)
+	}
+	flush()
+	return filtered.String()
+}
+
+func sortedKeys(set map[string]bool) []string {
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func untrackedFileDiff(file string, content []byte, mode os.FileMode) string {
+	oldPath := strconv.Quote("a/" + file)
+	newPath := strconv.Quote("b/" + file)
+	quoted := strconv.Quote("b/" + file)
+	var b strings.Builder
+	gitMode := "100644"
+	if mode.Perm()&0o111 != 0 {
+		gitMode = "100755"
+	}
+	fmt.Fprintf(&b, "diff --git %s %s\nnew file mode %s\n--- /dev/null\n+++ %s\n", oldPath, newPath, gitMode, quoted)
+	lines := []string{}
+	if len(content) > 0 {
+		lines = strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
+	}
+	fmt.Fprintf(&b, "@@ -0,0 +1,%d @@\n", len(lines))
+	for _, line := range lines {
+		b.WriteByte('+')
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 func printHelp() {
 	fmt.Println(appName)
 	fmt.Println("Available commands:")
 	fmt.Println("  version")
 	fmt.Println("  check")
 	fmt.Println("  review")
+	fmt.Println("  audit")
 	fmt.Println("  history")
 	fmt.Println("  show <run-id>")
 	fmt.Println("  lint")
