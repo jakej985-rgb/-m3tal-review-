@@ -38,11 +38,12 @@ func (PermissionsRule) Check(diff string) []Finding {
 
 			if worldWritablePattern.MatchString(addedLine) {
 				findings = append(findings, Finding{
-					Rule:     "world-writable-file-mode",
-					Severity: "high",
-					File:     file,
-					Line:     lineNumber,
-					Message:  "File operation uses world-writable permissions (0777)",
+					Rule:        "world-writable-file-mode",
+					Severity:    "high",
+					File:        file,
+					Line:        lineNumber,
+					Message:     "File operation uses world-writable permissions (0777)",
+					Remediation: "Use more restrictive permissions (e.g., 0644 for files, 0755 for directories).",
 				})
 			}
 

@@ -23,9 +23,10 @@ func (r LintRule) Check(_ string) []Finding {
 
 	if r.RepositoryRoot == "" {
 		return []Finding{{
-			Rule:     r.Name(),
-			Severity: "high",
-			Message:  "Repository root is not configured for lint checks",
+			Rule:        r.Name(),
+			Severity:    "high",
+			Message:     "Repository root is not configured for lint checks",
+			Remediation: "Configure the lint rule with a valid repository root.",
 		}}
 	}
 
@@ -35,9 +36,10 @@ func (r LintRule) Check(_ string) []Finding {
 	formatOutput, formatErr := formatCmd.CombinedOutput()
 	if formatErr != nil {
 		findings = append(findings, Finding{
-			Rule:     r.Name(),
-			Severity: "high",
-			Message:  "gofmt execution failed: " + strings.TrimSpace(string(formatOutput)),
+			Rule:        r.Name(),
+			Severity:    "high",
+			Message:     "gofmt execution failed: " + strings.TrimSpace(string(formatOutput)),
+			Remediation: "Fix gofmt errors and run gofmt manually to verify.",
 		})
 	} else {
 		for _, file := range strings.Split(strings.TrimSpace(string(formatOutput)), "\n") {
@@ -46,10 +48,11 @@ func (r LintRule) Check(_ string) []Finding {
 			}
 
 			findings = append(findings, Finding{
-				Rule:     r.Name(),
-				Severity: "medium",
-				File:     filepath.ToSlash(file),
-				Message:  "File is not formatted; run gofmt",
+				Rule:        r.Name(),
+				Severity:    "medium",
+				File:        filepath.ToSlash(file),
+				Message:     "File is not formatted; run gofmt",
+				Remediation: "Run 'gofmt -w .' to format the code.",
 			})
 		}
 	}
@@ -74,20 +77,22 @@ func (r LintRule) Check(_ string) []Finding {
 			}
 
 			findings = append(findings, Finding{
-				Rule:     r.Name(),
-				Severity: "high",
-				File:     filepath.ToSlash(strings.TrimPrefix(match[1], "./")),
-				Line:     lineNumber,
-				Message:  "go vet: " + match[4],
+				Rule:        r.Name(),
+				Severity:    "high",
+				File:        filepath.ToSlash(strings.TrimPrefix(match[1], "./")),
+				Line:        lineNumber,
+				Message:     "go vet: " + match[4],
+				Remediation: "Fix the issue reported by go vet.",
 			})
 			parsed = true
 		}
 
 		if !parsed {
 			findings = append(findings, Finding{
-				Rule:     r.Name(),
-				Severity: "high",
-				Message:  "go vet failed: " + strings.TrimSpace(string(vetOutput)),
+				Rule:        r.Name(),
+				Severity:    "high",
+				Message:     "go vet failed: " + strings.TrimSpace(string(vetOutput)),
+				Remediation: "Fix the build errors preventing go vet from running.",
 			})
 		}
 	}

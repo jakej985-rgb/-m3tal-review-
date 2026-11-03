@@ -89,6 +89,9 @@ func showReport(runID string) error {
 			finding.Message,
 			finding.Rule,
 		)
+		if finding.Remediation != "" {
+			fmt.Printf("  Remediation: %s\n", finding.Remediation)
+		}
 	}
 
 	return nil
@@ -205,6 +208,11 @@ func execute(command string) error {
 			return nil
 		}
 
+		stagedFiles, err := git.StagedFiles(repositoryRoot)
+		if err != nil {
+			return err
+		}
+
 		runID, err := review.NewRunID()
 		if err != nil {
 			return err
@@ -216,20 +224,27 @@ func execute(command string) error {
 			review.SecurityRule{},
 			review.ShellRule{},
 			review.PermissionsRule{},
+			review.SlopRule{RepositoryRoot: repositoryRoot},
 		)
 
 		findings := engine.Run(diff)
 
-		lintFindings := (review.LintRule{
-			RepositoryRoot: repositoryRoot,
-		}).Check(diff)
-
-		findings = append(findings, lintFindings...)
+		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: unable to determine current commit SHA: %v\n", err)
+			currentSHA = "unavailable"
+		}
+		// tool version is a global `version`
 
 		report := review.NewReport(
 			runID,
 			repositoryRoot,
 			branch,
+			currentSHA,
+			"", // base commit SHA (future)
+			"", // diff hash (future)
+			version,
+			stagedFiles,
 			findings,
 		)
 
@@ -253,7 +268,7 @@ func execute(command string) error {
 		historyEntry := review.NewHistoryEntry(report)
 
 		if err := review.AppendHistory(historyPath, historyEntry); err != nil {
-			return err
+			fmt.Fprintf(os.Stderr, "Warning: failed to append to history log (report was successfully saved to %s): %v\n", reportPath, err)
 		}
 
 		fmt.Println(report.Summary)
@@ -269,6 +284,9 @@ func execute(command string) error {
 				finding.Message,
 				finding.Rule,
 			)
+			if finding.Remediation != "" {
+				fmt.Printf("  Remediation: %s\n", finding.Remediation)
+			}
 		}
 
 		if !report.Passed {
@@ -376,6 +394,33 @@ func execute(command string) error {
 
 		return nil
 
+	case "recover-history":
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+
+		repositoryRoot, err := git.RepositoryRoot(workingDir)
+		if err != nil {
+			return err
+		}
+
+		reportsDir := filepath.Join(repositoryRoot, ".m3tal-review", "reports")
+		historyPath := filepath.Join(repositoryRoot, ".m3tal-review", "history.jsonl")
+
+		recovered, err := review.RecoverHistory(reportsDir, historyPath)
+		if err != nil {
+			return fmt.Errorf("recover history: %w", err)
+		}
+
+		if recovered == 0 {
+			fmt.Println("No reports found to recover.")
+			return nil
+		}
+
+		fmt.Printf("Successfully recovered %d review entries to history.\n", recovered)
+		return nil
+
 	case "help":
 		printHelp()
 		return nil
@@ -395,5 +440,6 @@ func printHelp() {
 	fmt.Println("  history")
 	fmt.Println("  show <run-id>")
 	fmt.Println("  lint")
+	fmt.Println("  recover-history")
 	fmt.Println("  help")
 }

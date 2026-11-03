@@ -38,11 +38,12 @@ func (TLSRule) Check(diff string) []Finding {
 
 			if insecureTLSPattern.MatchString(addedLine) {
 				findings = append(findings, Finding{
-					Rule:     "insecure-tls-verification",
-					Severity: "high",
-					File:     file,
-					Line:     lineNumber,
-					Message:  "TLS certificate verification is disabled",
+					Rule:        "insecure-tls-verification",
+					Severity:    "high",
+					File:        file,
+					Line:        lineNumber,
+					Message:     "TLS certificate verification is disabled",
+					Remediation: "Remove InsecureSkipVerify or set it to false to ensure secure connections.",
 				})
 			}
 

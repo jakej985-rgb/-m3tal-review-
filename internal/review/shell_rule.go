@@ -49,11 +49,12 @@ func (ShellRule) Check(diff string) []Finding {
 			for _, shellPattern := range riskyShellPatterns {
 				if shellPattern.pattern.MatchString(addedLine) {
 					findings = append(findings, Finding{
-						Rule:     "risky-shell-execution",
-						Severity: "high",
-						File:     file,
-						Line:     lineNumber,
-						Message:  shellPattern.message,
+						Rule:        "risky-shell-execution",
+						Severity:    "high",
+						File:        file,
+						Line:        lineNumber,
+						Message:     shellPattern.message,
+						Remediation: "Avoid executing shells with untrusted input. Use direct binary execution with safely separated arguments.",
 					})
 					break
 				}

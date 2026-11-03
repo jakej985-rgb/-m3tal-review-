@@ -10,6 +10,11 @@ func TestNewReportPassed(t *testing.T) {
 		"run-001",
 		"/tmp/test-repo",
 		"main",
+		"abcd123",
+		"base123",
+		"diffhash",
+		"1.0.0",
+		[]string{"file1.go"},
 		nil,
 	)
 
@@ -49,6 +54,11 @@ func TestNewReportFailed(t *testing.T) {
 		"run-002",
 		"/tmp/test-repo",
 		"feature/test",
+		"abcd123",
+		"base123",
+		"diffhash",
+		"1.0.0",
+		[]string{"file1.go"},
 		findings,
 	)
 

@@ -159,6 +159,11 @@ func TestRunShowDisplaysReport(t *testing.T) {
 		runID,
 		repoDir,
 		"main",
+		"sha",
+		"basesha",
+		"hash",
+		"ver",
+		nil,
 		nil,
 	)
 
@@ -235,6 +240,111 @@ func TestRunShowDisplaysReport(t *testing.T) {
 
 	if !strings.Contains(outputText, "Findings: (none)") {
 		t.Errorf("output missing empty findings message:\n%s", outputText)
+	}
+}
+
+func TestRunShowDisplaysRemediation(t *testing.T) {
+	repoDir := t.TempDir()
+
+	initRepo := exec.Command("git", "init", repoDir)
+	if output, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("initialize test repository: %v\n%s", err, output)
+	}
+
+	runID := "b2c3d4e5f6071829"
+
+	findings := []review.Finding{
+		{
+			Rule:        "hardcoded-credential",
+			Severity:    "high",
+			File:        "config.go",
+			Line:        15,
+			Message:     "Possible hardcoded credential assigned to password",
+			Remediation: "Remove hardcoded credentials. Use environment variables.",
+		},
+	}
+
+	report := review.NewReport(
+		runID,
+		repoDir,
+		"main",
+		"commit-sha-123",
+		"",
+		"",
+		"1.0.0",
+		[]string{"config.go"},
+		findings,
+	)
+
+	reportPath := filepath.Join(
+		repoDir,
+		".m3tal-review",
+		"reports",
+		runID+".json",
+	)
+
+	if err := review.WriteReport(reportPath, report); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create output pipe: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	os.Stdout = writer
+
+	runErr := Run([]string{"show", runID})
+
+	os.Stdout = originalStdout
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close output writer: %v", err)
+	}
+
+	var captured strings.Builder
+	buffer := make([]byte, 1024)
+
+	for {
+		n, readErr := reader.Read(buffer)
+		captured.Write(buffer[:n])
+
+		if readErr != nil {
+			break
+		}
+	}
+
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close output reader: %v", err)
+	}
+
+	if runErr != nil {
+		t.Fatalf("Run(show) error: %v", runErr)
+	}
+
+	outputText := captured.String()
+
+	if !strings.Contains(outputText, "[high] config.go:15: Possible hardcoded credential assigned to password (hardcoded-credential)") {
+		t.Errorf("output missing finding line:\n%s", outputText)
+	}
+
+	if !strings.Contains(outputText, "Remediation: Remove hardcoded credentials. Use environment variables.") {
+		t.Errorf("output missing finding remediation:\n%s", outputText)
 	}
 }
 
@@ -381,129 +491,6 @@ func main(){println("hello")}
 	}
 }
 
-func TestReviewRecordsLintFindings(t *testing.T) {
-	repoDir := setupLintRepo(t, `package main
-func main(){println("hello")}
-`)
-
-	add := exec.Command("git", "-C", repoDir, "add", "go.mod", "main.go")
-	if output, err := add.CombinedOutput(); err != nil {
-		t.Fatalf("stage test files: %v\n%s", err, output)
-	}
-
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create output pipe: %v", err)
-	}
-
-	originalStdout := os.Stdout
-	os.Stdout = writer
-
-	reviewErr := execute("review")
-
-	os.Stdout = originalStdout
-
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close output writer: %v", err)
-	}
-
-	var captured strings.Builder
-	buffer := make([]byte, 1024)
-
-	for {
-		n, readErr := reader.Read(buffer)
-		captured.Write(buffer[:n])
-
-		if readErr != nil {
-			break
-		}
-	}
-
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close output reader: %v", err)
-	}
-
-	outputText := captured.String()
-
-	if reviewErr == nil {
-		t.Fatalf("execute(review) expected lint findings, got nil\n%s", outputText)
-	}
-
-	if !strings.Contains(outputText, "Run ID:") {
-		t.Fatalf("review output missing run ID:\n%s", outputText)
-	}
-
-	var runID string
-	for _, line := range strings.Split(outputText, "\n") {
-		if strings.HasPrefix(line, "Run ID:") {
-			runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
-			break
-		}
-	}
-
-	if runID == "" {
-		t.Fatalf("could not extract run ID:\n%s", outputText)
-	}
-
-	reportPath := filepath.Join(
-		repoDir,
-		".m3tal-review",
-		"reports",
-		runID+".json",
-	)
-
-	report, err := review.ReadReport(reportPath)
-	if err != nil {
-		t.Fatalf("read review report: %v", err)
-	}
-
-	if report.Passed {
-		t.Fatal("report.Passed = true, want false")
-	}
-
-	foundLintFinding := false
-	for _, finding := range report.Findings {
-		if finding.Rule == "repository-lint" &&
-			finding.File == "main.go" {
-			foundLintFinding = true
-			break
-		}
-	}
-
-	if !foundLintFinding {
-		t.Errorf("report missing repository-lint finding: %+v", report.Findings)
-	}
-
-	historyPath := filepath.Join(
-		repoDir,
-		".m3tal-review",
-		"history.jsonl",
-	)
-
-	entries, err := review.ReadHistory(historyPath)
-	if err != nil {
-		t.Fatalf("read review history: %v", err)
-	}
-
-	if len(entries) == 0 {
-		t.Fatal("review history is empty")
-	}
-
-	lastEntry := entries[len(entries)-1]
-
-	if lastEntry.RunID != runID {
-		t.Errorf("history RunID = %q, want %q", lastEntry.RunID, runID)
-	}
-
-	if lastEntry.Status != "failed" {
-		t.Errorf("history Status = %q, want %q", lastEntry.Status, "failed")
-	}
-
-	if lastEntry.FindingCount == 0 {
-		t.Error("history FindingCount = 0, want at least 1")
-	}
-}
-
 func TestReviewRecordsSecurityFindings(t *testing.T) {
 	repoDir := setupLintRepo(t, `package main
 
@@ -586,5 +573,439 @@ func main() {
 
 	if !found {
 		t.Fatalf("report missing expected security finding: %+v", report.Findings)
+	}
+}
+
+func TestReviewRecordsSlopFindings(t *testing.T) {
+	repoDir := setupLintRepo(t, `package main
+
+func main() {
+	isValid := true
+	if isValid == true {
+		println("Slop!")
+	}
+}
+`)
+
+	add := exec.Command("git", "-C", repoDir, "add", "go.mod", "main.go")
+	if output, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("stage test files: %v\n%s", err, output)
+	}
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create output pipe: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	os.Stdout = writer
+	reviewErr := execute("review")
+	os.Stdout = originalStdout
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close output writer: %v", err)
+	}
+
+	var captured strings.Builder
+	buffer := make([]byte, 1024)
+	for {
+		n, readErr := reader.Read(buffer)
+		captured.Write(buffer[:n])
+		if readErr != nil {
+			break
+		}
+	}
+
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close output reader: %v", err)
+	}
+
+	outputText := captured.String()
+	if reviewErr == nil {
+		t.Fatalf("execute(review) expected slop finding, got nil\n%s", outputText)
+	}
+
+	if !strings.Contains(outputText, "Remediation: Remove the explicit comparison") {
+		t.Errorf("expected remediation output, got: \n%s", outputText)
+	}
+
+	var runID string
+	for _, line := range strings.Split(outputText, "\n") {
+		if strings.HasPrefix(line, "Run ID:") {
+			runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
+			break
+		}
+	}
+	if runID == "" {
+		t.Fatalf("could not extract run ID:\n%s", outputText)
+	}
+
+	reportPath := filepath.Join(
+		repoDir,
+		".m3tal-review",
+		"reports",
+		runID+".json",
+	)
+
+	report, err := review.ReadReport(reportPath)
+	if err != nil {
+		t.Fatalf("read review report: %v", err)
+	}
+
+	found := false
+	for _, finding := range report.Findings {
+		if finding.Rule == "code-slop" &&
+			finding.File == "main.go" {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatalf("report missing expected code-slop finding: %+v", report.Findings)
+	}
+}
+
+func TestLintVsReviewSeparation(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v error: %v\n%s", args, err, out)
+		}
+	}
+
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "go.mod"), []byte("module testmod\n\ngo 1.23\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".")
+	runGit("commit", "-m", "initial")
+
+	// Create an unstaged file with terrible formatting that fails gofmt
+	badFormatFile := filepath.Join(repoDir, "unstaged_bad.go")
+	if err := os.WriteFile(badFormatFile, []byte("package   main\n\nfunc    bad(  )   {\n\tprintln(\"bad\")\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stage a clean change in main.go
+	cleanMain := "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\nfunc cleanHelper() {\n\tprintln(\"helper\")\n}\n"
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte(cleanMain), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "main.go")
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalDir)
+	})
+
+	// 1. review should succeed because staged changes in main.go are clean
+	reviewErr := execute("review")
+	if reviewErr != nil {
+		t.Fatalf("review expected to pass staged-only check, got error: %v", reviewErr)
+	}
+
+	// 2. lint should fail because unstaged_bad.go is not formatted with gofmt
+	lintErr := execute("lint")
+	if lintErr == nil {
+		t.Fatalf("lint expected to fail repository-wide check due to unformatted file, but passed")
+	}
+}
+
+func TestReviewHandlesMissingCommitMetadataUnbornBranch(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v error: %v\n%s", args, err, out)
+		}
+	}
+
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+
+	cleanMain := "package main\n\nfunc main() {\n\tprintln(\"unborn\")\n}\n"
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte(cleanMain), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "main.go")
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalDir)
+	})
+
+	// Capture stdout
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = stdoutW
+
+	// Capture stderr
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = stderrW
+
+	reviewErr := execute("review")
+
+	os.Stdout = origStdout
+	os.Stderr = origStderr
+	stdoutW.Close()
+	stderrW.Close()
+
+	var stdoutBuf, stderrBuf strings.Builder
+	buf := make([]byte, 1024)
+	for {
+		n, rerr := stdoutR.Read(buf)
+		stdoutBuf.Write(buf[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	for {
+		n, rerr := stderrR.Read(buf)
+		stderrBuf.Write(buf[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	stdoutR.Close()
+	stderrR.Close()
+
+	if reviewErr != nil {
+		t.Fatalf("review on unborn branch returned unexpected error: %v", reviewErr)
+	}
+
+	stderrOut := stderrBuf.String()
+	if !strings.Contains(stderrOut, "Warning: unable to determine current commit SHA") {
+		t.Errorf("expected warning in stderr about commit SHA, got:\n%s", stderrOut)
+	}
+
+	stdoutOut := stdoutBuf.String()
+	var runID string
+	for _, line := range strings.Split(stdoutOut, "\n") {
+		if strings.HasPrefix(line, "Run ID:") {
+			runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
+			break
+		}
+	}
+	if runID == "" {
+		t.Fatalf("could not extract run ID from stdout:\n%s", stdoutOut)
+	}
+
+	reportPath := filepath.Join(repoDir, ".m3tal-review", "reports", runID+".json")
+	report, err := review.ReadReport(reportPath)
+	if err != nil {
+		t.Fatalf("failed to read report: %v", err)
+	}
+	if report.CommitSHA != "unavailable" {
+		t.Errorf("expected CommitSHA == 'unavailable', got %q", report.CommitSHA)
+	}
+}
+
+func captureOutput(f func() error) (string, error) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", err
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+
+	execErr := f()
+
+	os.Stdout = origStdout
+	_ = w.Close()
+
+	var buf strings.Builder
+	b := make([]byte, 1024)
+	for {
+		n, rerr := r.Read(b)
+		buf.Write(b[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	_ = r.Close()
+	return buf.String(), execErr
+}
+
+func TestCLIHelpCommand(t *testing.T) {
+	out, err := captureOutput(func() error {
+		return Run([]string{"help"})
+	})
+	if err != nil {
+		t.Fatalf("Run(help) unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Available commands:") || !strings.Contains(out, "recover-history") {
+		t.Errorf("unexpected help output:\n%s", out)
+	}
+
+	// Also verify default with nil args
+	outNil, errNil := captureOutput(func() error {
+		return Run(nil)
+	})
+	if errNil != nil {
+		t.Fatalf("Run(nil) unexpected error: %v", errNil)
+	}
+	if !strings.Contains(outNil, "Available commands:") {
+		t.Errorf("unexpected help output for nil args:\n%s", outNil)
+	}
+}
+
+func TestCLIVersionCommand(t *testing.T) {
+	out, err := captureOutput(func() error {
+		return Run([]string{"version"})
+	})
+	if err != nil {
+		t.Fatalf("Run(version) unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Version:") || !strings.Contains(out, "Go:") {
+		t.Errorf("unexpected version output:\n%s", out)
+	}
+}
+
+func TestCLIHistoryCommandEmptyAndPopulated(t *testing.T) {
+	repoDir := t.TempDir()
+	cmd := exec.Command("git", "init", repoDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+	})
+
+	// 1. Empty history
+	out, err := captureOutput(func() error {
+		return Run([]string{"history"})
+	})
+	if err != nil {
+		t.Fatalf("Run(history) unexpected error on empty history: %v", err)
+	}
+	if !strings.Contains(out, "No review history found.") {
+		t.Errorf("expected 'No review history found.', got:\n%s", out)
+	}
+
+	// 2. Populated history
+	historyPath := filepath.Join(repoDir, ".m3tal-review", "history.jsonl")
+	entry := review.HistoryEntry{
+		RunID:        "0123456789abcdef",
+		Status:       "passed",
+		FindingCount: 0,
+		Summary:      "Review passed. No findings.",
+	}
+	if err := review.AppendHistory(historyPath, entry); err != nil {
+		t.Fatalf("AppendHistory failed: %v", err)
+	}
+
+	outPop, errPop := captureOutput(func() error {
+		return Run([]string{"history"})
+	})
+	if errPop != nil {
+		t.Fatalf("Run(history) unexpected error on populated history: %v", errPop)
+	}
+	if !strings.Contains(outPop, "0123456789abcdef") || !strings.Contains(outPop, "findings: 0") {
+		t.Errorf("expected history entry in output, got:\n%s", outPop)
+	}
+}
+
+func TestCLIRecoverHistoryCommand(t *testing.T) {
+	repoDir := t.TempDir()
+	cmd := exec.Command("git", "init", repoDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origDir)
+	})
+
+	// 1. Recover when no reports directory
+	outNoReports, errNoReports := captureOutput(func() error {
+		return Run([]string{"recover-history"})
+	})
+	if errNoReports != nil {
+		t.Fatalf("Run(recover-history) unexpected error when no reports: %v", errNoReports)
+	}
+	if !strings.Contains(outNoReports, "No reports found to recover.") {
+		t.Errorf("expected 'No reports found to recover.', got:\n%s", outNoReports)
+	}
+
+	// 2. Recover with valid report
+	reportsDir := filepath.Join(repoDir, ".m3tal-review", "reports")
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	rep := review.NewReport("0123456789abcdef", repoDir, "main", "sha", "", "", "1.0.0", nil, nil)
+	reportPath := filepath.Join(reportsDir, "0123456789abcdef.json")
+	if err := review.WriteReport(reportPath, rep); err != nil {
+		t.Fatal(err)
+	}
+
+	outRecover, errRecover := captureOutput(func() error {
+		return Run([]string{"recover-history"})
+	})
+	if errRecover != nil {
+		t.Fatalf("Run(recover-history) unexpected error: %v", errRecover)
+	}
+	if !strings.Contains(outRecover, "Successfully recovered 1 review entries to history.") {
+		t.Errorf("expected recovery success output, got:\n%s", outRecover)
+	}
+}
+
+func TestCLIUnknownCommand(t *testing.T) {
+	out, err := captureOutput(func() error {
+		return Run([]string{"unknown-cmd"})
+	})
+	if err == nil {
+		t.Fatalf("expected error for unknown command, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("expected error message to mention unknown command, got: %v", err)
+	}
+	if !strings.Contains(out, "Available commands:") {
+		t.Errorf("expected help output printed for unknown command, got:\n%s", out)
 	}
 }

@@ -20,12 +20,17 @@ func ReadHistory(path string) ([]HistoryEntry, error) {
 
 	var entries []HistoryEntry
 	scanner := bufio.NewScanner(file)
+	// Support larger history lines up to 10MB
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 10*1024*1024)
 
 	for scanner.Scan() {
 		var entry HistoryEntry
 
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			return nil, fmt.Errorf("decode history entry: %w", err)
+			// Skip corrupt or unparseable lines gracefully to keep history usable, but make it observable
+			fmt.Fprintf(os.Stderr, "Warning: skipped corrupt history entry: %v\n", err)
+			continue
 		}
 
 		entries = append(entries, entry)
