@@ -42,7 +42,7 @@ func (TodoRule) Check(diff string) []Finding {
 					File:        file,
 					Line:        lineNumber,
 					Message:     "Added line contains a TODO marker",
-					Remediation: "Resolve the TODO or track it in an issue tracker.",
+					Remediation: "Resolve the TODO or create a tracked issue with an owner and follow-up plan.",
 				})
 			}
 
