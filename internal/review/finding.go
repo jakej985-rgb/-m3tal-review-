@@ -1,10 +1,5 @@
 package review
 
-type Finding struct {
-	Rule        string `json:"rule"`
-	Severity    string `json:"severity"`
-	File        string `json:"file"`
-	Line        int    `json:"line"`
-	Message     string `json:"message"`
-	Remediation string `json:"remediation"`
-}
+import "github.com/jakej985-rgb/m3tal-review/internal/review/model"
+
+type Finding = model.Finding

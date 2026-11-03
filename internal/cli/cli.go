@@ -376,9 +376,25 @@ func execute(command string) error {
 		}
 		rules := defaultRules(repositoryRoot)
 		for i, rule := range rules {
-			if slop, ok := rule.(review.SlopRule); ok {
-				slop.WorkingTree = true
-				rules[i] = slop
+			switch typed := rule.(type) {
+			case review.SlopRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.SecurityRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.ShellRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.TLSRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.PermissionsRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.DebugRule:
+				typed.WorkingTree = true
+				rules[i] = typed
 			}
 		}
 		findings := review.NewEngine(rules...).Run(diff)
@@ -568,11 +584,11 @@ func execute(command string) error {
 func defaultRules(repositoryRoot string) []review.Rule {
 	return []review.Rule{
 		review.TodoRule{},
-		review.DebugRule{},
-		review.SecurityRule{},
-		review.ShellRule{},
-		review.TLSRule{},
-		review.PermissionsRule{},
+		review.DebugRule{RepositoryRoot: repositoryRoot},
+		review.SecurityRule{RepositoryRoot: repositoryRoot},
+		review.ShellRule{RepositoryRoot: repositoryRoot},
+		review.TLSRule{RepositoryRoot: repositoryRoot},
+		review.PermissionsRule{RepositoryRoot: repositoryRoot},
 		review.SlopRule{RepositoryRoot: repositoryRoot},
 	}
 }

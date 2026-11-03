@@ -1,6 +1,7 @@
-package review
+package slop_test
 
 import (
+	review "github.com/jakej985-rgb/m3tal-review/internal/review"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,7 +68,7 @@ func main() {
 +	}
  }`
 
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 
 	// In AST mode, Empty block will also be found because {} are empty. So expect 4 findings.
 	foundRedundantCount := 0
@@ -110,7 +111,7 @@ func main() {
 +				}
 			}
 `
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 
 	foundNesting := false
 	for _, finding := range findings {
@@ -138,7 +139,7 @@ func main() {
 +	if err != nil {}
  }
 `
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 
 	foundEmpty := false
 	for _, f := range findings {
@@ -170,14 +171,14 @@ func main() {
 +	}
  }`
 
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	if len(findings) != 0 {
 		t.Errorf("Check() returned findings for normal code: %+v", findings)
 	}
 }
 
 func TestSlopRuleName(t *testing.T) {
-	if got := (SlopRule{}).Name(); got != "code-slop" {
+	if got := (review.SlopRule{}).Name(); got != "code-slop" {
 		t.Errorf("Name() = %q, want %q", got, "code-slop")
 	}
 }
@@ -193,7 +194,7 @@ var x interface{}`
  package main
 +var x interface{}
 `
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	if len(findings) != 0 {
 		t.Fatalf("Check() returned %d findings, want 0", len(findings))
 	}
@@ -210,7 +211,7 @@ func TestSlopRuleIgnoresComments(t *testing.T) {
  package main
 +// if x == true {}
 `
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	if len(findings) != 0 {
 		t.Fatalf("Check() returned %d findings, want 0", len(findings))
 	}
@@ -230,7 +231,7 @@ func main() {
  func main() {
 +	println("this contains == true and {}")
  }`
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	if len(findings) != 0 {
 		t.Fatalf("Check() returned %d findings, want 0", len(findings))
 	}
@@ -250,7 +251,7 @@ func main() {
 	isValid := false
 +	if isValid == true { println("valid") }
  }`
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	foundRedundant := false
 	for _, f := range findings {
 		if f.Message == "Redundant boolean comparison" {
@@ -271,7 +272,7 @@ func TestSlopRuleDeletedFile(t *testing.T) {
 -package main
 -func empty() {}
 `
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings for deleted file, got %d", len(findings))
 	}
@@ -292,7 +293,7 @@ func TestSlopRuleWorkingTreeDifference(t *testing.T) {
  func main() {
 +	if true == false {}
  }`
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 
 	found := false
 	for _, f := range findings {
@@ -324,7 +325,7 @@ func main() {
 +		}
 	}
  }`
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	for _, f := range findings {
 		if f.Message == "Excessive AST nesting depth (4+ levels)" {
 			t.Fatalf("expected NO excessive nesting finding for depth 3, got %+v", findings)
@@ -357,7 +358,7 @@ func main() {
 +					}
 				}
 `
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	found := false
 	for _, f := range findings {
 		if f.Message == "Excessive AST nesting depth (4+ levels)" && f.Line == 7 {
@@ -392,7 +393,7 @@ func main() { // 1
 +		}
 	}
  }`
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	for _, f := range findings {
 		if f.Message == "Excessive AST nesting depth (4+ levels)" {
 			t.Fatalf("expected NO excessive nesting finding for depth 3, got %+v", findings)
@@ -413,7 +414,7 @@ func main() {
  func main() {
 +	if true == true {}
  }`
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 
 	// This has an empty block AND a redundant boolean comparison on the exact same line!
 	// It should return exactly two findings, one for each rule, no duplicates!
@@ -450,7 +451,7 @@ func main() {
 @@ -2,2 +2,3 @@
  func main() {
 +	if true == true { // Missing closing brace`
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 
 	foundError := false
 	for _, f := range findings {
@@ -473,7 +474,7 @@ func TestSlopRuleAnalysisErrorOnMissingFile(t *testing.T) {
 @@ -1,2 +1,3 @@
  package main
 +func missing() {}`
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 
 	foundError := false
 	for _, f := range findings {
@@ -516,7 +517,7 @@ func TestSlopRuleRealGitStagedDeletion(t *testing.T) {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
 
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	for _, f := range findings {
 		if f.Rule == "code-slop-analysis-error" {
 			t.Fatalf("unexpected analysis error for deleted file: %+v", f)
@@ -563,7 +564,7 @@ func TestSlopRuleRealGitStagedRename(t *testing.T) {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
 
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	for _, f := range findings {
 		if f.File != "new.go" {
 			t.Errorf("Finding file = %q, want %q", f.File, "new.go")
@@ -643,7 +644,7 @@ func funcThree() {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
 
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	redundantCount := 0
 	for _, f := range findings {
 		if f.Message == "Redundant boolean comparison" {
@@ -688,7 +689,7 @@ func TestSlopRuleSimilarFindingsInSeparateFiles(t *testing.T) {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
 
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 
 	foundA := false
 	foundB := false
@@ -742,9 +743,9 @@ func second() {
 	}
 
 	runs := 5
-	var firstRunFindings []Finding
+	var firstRunFindings []review.Finding
 	for i := 0; i < runs; i++ {
-		findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+		findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 		if i == 0 {
 			firstRunFindings = findings
 		} else {
@@ -778,7 +779,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	foundNesting := false
 	for _, f := range findings {
 		if f.Message == "Excessive AST nesting depth (4+ levels)" {
@@ -806,7 +807,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	for _, f := range findings {
 		if f.Message == "Excessive AST nesting depth (4+ levels)" {
 			t.Fatalf("did not expect nesting finding for 3 levels, got: %+v", f)
@@ -838,7 +839,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	for _, f := range findings {
 		if f.Message == "Excessive AST nesting depth (4+ levels)" {
 			t.Fatalf("did not expect nesting finding for sequential sibling ifs, got: %+v", f)
@@ -868,7 +869,7 @@ func test() {
 	if err != nil {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	foundNesting := false
 	for _, f := range findings {
 		if f.Message == "Excessive AST nesting depth (4+ levels)" {
@@ -908,7 +909,7 @@ func second() {
 	if err != nil {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	for _, f := range findings {
 		if f.Message == "Excessive AST nesting depth (4+ levels)" {
 			t.Fatalf("nesting depth should reset per function; neither has 4 levels, got: %+v", f)
@@ -955,7 +956,7 @@ func test() {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
 
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 
 	foundRedundant := false
 	for _, f := range findings {
@@ -990,7 +991,7 @@ func TestSlopRuleUnstagedSlopIgnored(t *testing.T) {
 		t.Fatalf("git.StagedDiff failed: %v", err)
 	}
 
-	findings := (SlopRule{RepositoryRoot: repoDir}).Check(diff)
+	findings := (review.SlopRule{RepositoryRoot: repoDir}).Check(diff)
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings because slop is unstaged, got: %+v", findings)
 	}

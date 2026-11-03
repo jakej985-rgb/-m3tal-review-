@@ -1,0 +1,63 @@
+package language
+
+import (
+	"path"
+	"strings"
+)
+
+type CodeLanguage string
+
+const (
+	LanguageGo         CodeLanguage = "go"
+	LanguageJavaScript CodeLanguage = "javascript"
+	LanguageTypeScript CodeLanguage = "typescript"
+	LanguagePython     CodeLanguage = "python"
+	LanguageJava       CodeLanguage = "java"
+	LanguageKotlin     CodeLanguage = "kotlin"
+	LanguageC          CodeLanguage = "c"
+	LanguageCpp        CodeLanguage = "cpp"
+	LanguageCSharp     CodeLanguage = "csharp"
+	LanguageRust       CodeLanguage = "rust"
+	LanguageSwift      CodeLanguage = "swift"
+	LanguagePHP        CodeLanguage = "php"
+	LanguageUnknown    CodeLanguage = "unknown"
+)
+
+// CodeChecker identifies the language from the file extension so review rules
+// can select language-specific behavior.
+type CodeChecker struct{}
+
+func (CodeChecker) Language(file string) CodeLanguage {
+	ext := path.Ext(file)
+	if ext == ".C" || ext == ".H" || ext == ".c++" || ext == ".C++" || ext == ".cc" || ext == ".CC" {
+		return LanguageCpp
+	}
+	switch strings.ToLower(ext) {
+	case ".go":
+		return LanguageGo
+	case ".js", ".jsx", ".mjs", ".cjs":
+		return LanguageJavaScript
+	case ".ts", ".tsx", ".mts", ".cts":
+		return LanguageTypeScript
+	case ".py":
+		return LanguagePython
+	case ".java":
+		return LanguageJava
+	case ".kt", ".kts":
+		return LanguageKotlin
+	case ".c":
+		return LanguageC
+	case ".h", ".cc", ".cpp", ".cxx", ".c++", ".hh", ".hpp", ".hxx", ".h++":
+		return LanguageCpp
+	case ".cs", ".csx":
+		return LanguageCSharp
+	case ".rs":
+		return LanguageRust
+	case ".swift":
+		return LanguageSwift
+	case ".php", ".phtml":
+		return LanguagePHP
+	default:
+		return LanguageUnknown
+	}
+}

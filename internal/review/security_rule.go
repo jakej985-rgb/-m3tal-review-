@@ -3,10 +3,14 @@ package review
 import (
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
-type SecurityRule struct{}
+type SecurityRule struct {
+	RepositoryRoot string
+	WorkingTree    bool
+}
 
 func (SecurityRule) Name() string {
 	return "hardcoded-credential"
@@ -72,30 +76,93 @@ func isConfigStyleFile(file string) bool {
 		return true
 	}
 	switch path.Ext(base) {
-	case ".yml", ".yaml", ".properties", ".ini", ".conf", ".cfg", ".toml":
+	case ".json", ".jsonc", ".yml", ".yaml", ".properties", ".ini", ".conf", ".cfg", ".toml":
 		return true
 	}
 	return false
 }
 
-func (SecurityRule) Check(diff string) []Finding {
+func (r SecurityRule) Check(diff string) []Finding {
 	var findings []Finding
+	seen := make(map[string]bool)
+	for _, fileDiff := range ParseDiff(diff) {
+		if len(fileDiff.AddedLines) == 0 {
+			continue
+		}
+		blocks := diffSourceBlocksForFile(diff, fileDiff.Path)
+		if source, err := readRuleSource(r.RepositoryRoot, fileDiff.Path, r.WorkingTree); err == nil {
+			blocks = []diffSourceBlock{fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)}
+		}
+		for _, block := range blocks {
+			code := sourceCodeMask(block.file, block.text)
+			for _, match := range credentialPattern.FindAllStringSubmatchIndex(block.text, -1) {
+				nameStart, nameEnd := match[2], match[3]
+				name := block.text[nameStart:nameEnd]
+				if !isCredentialName(name) || offsetInComment(block.file, block.text, nameStart) {
+					continue
+				}
+				if !isConfigStyleFile(block.file) && (nameStart >= len(code) || !code[nameStart]) {
+					continue
+				}
+				if !matchTouchesAdded(block, block.text, match[0], match[1]) {
+					continue
+				}
+				value := credentialValueFromMatch(block.text, match)
+				if value == "" || isPlaceholderValue(value) {
+					continue
+				}
+				line := lineAtOffset(block.firstLine, block.text, nameStart)
+				key := block.file + ":" + strconv.Itoa(line)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				findings = append(findings, Finding{Rule: "hardcoded-credential", Severity: "high", File: block.file, Line: line, Message: "Possible hardcoded credential assigned to " + name, Remediation: "Remove hardcoded credentials. Use environment variables or a secret management system."})
+			}
+		}
+	}
 	for _, added := range AddedDiffLines(diff) {
-		name, value := findCredential(added.File, added.Text)
+		if !isConfigStyleFile(added.File) || isCommentOnlyLine(added.File, added.Text) {
+			continue
+		}
+		name, value := findConfigCredential(added.Text)
 		if name == "" || isPlaceholderValue(value) {
 			continue
 		}
-
-		findings = append(findings, Finding{
-			Rule:        "hardcoded-credential",
-			Severity:    "high",
-			File:        added.File,
-			Line:        added.Line,
-			Message:     "Possible hardcoded credential assigned to " + name,
-			Remediation: "Remove hardcoded credentials. Use environment variables or a secret management system.",
-		})
+		key := added.File + ":" + strconv.Itoa(added.Line)
+		if !seen[key] {
+			seen[key] = true
+			findings = append(findings, Finding{Rule: "hardcoded-credential", Severity: "high", File: added.File, Line: added.Line, Message: "Possible hardcoded credential assigned to " + name, Remediation: "Remove hardcoded credentials. Use environment variables or a secret management system."})
+		}
 	}
 	return findings
+}
+
+func diffSourceBlocksForFile(diff, file string) []diffSourceBlock {
+	var blocks []diffSourceBlock
+	for _, block := range diffSourceBlocks(diff) {
+		if block.file == file {
+			blocks = append(blocks, block)
+		}
+	}
+	return blocks
+}
+
+func credentialValueFromMatch(text string, match []int) string {
+	for group := 2; group < len(match)/2; group++ {
+		start, end := match[group*2], match[group*2+1]
+		if start >= 0 && end >= start {
+			return text[start:end]
+		}
+	}
+	return ""
+}
+
+func findConfigCredential(text string) (string, string) {
+	if match := unquotedCredentialPattern.FindStringSubmatch(text); match != nil && isCredentialName(match[1]) {
+		return match[1], match[2]
+	}
+	return "", ""
 }
 
 // findCredential returns the credential-like name and its value from a line,
@@ -122,7 +189,7 @@ func findCredential(file, text string) (string, string) {
 func isCredentialName(name string) bool {
 	name = strings.ToLower(name)
 	name = strings.NewReplacer("_", "", "-", "", ".", "").Replace(name)
-	for _, marker := range []string{"password", "passwd", "apikey", "token", "secret"} {
+	for _, marker := range []string{"password", "passwd", "apikey", "accesskey", "privatekey", "token", "secret"} {
 		if strings.Contains(name, marker) {
 			return true
 		}

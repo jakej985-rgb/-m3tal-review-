@@ -8,7 +8,7 @@ It provides actionable findings, records review trails (history), and supports a
 
 - **Review Engine**: `review` checks staged Git changes; `audit` checks the complete working-tree change set.
 - **Remediation Guidance**: Every finding provides actionable steps to fix the issue.
-- **Slop Detector**: For Go files, parses the exact staged file contents into an AST (`go/parser` and `go/ast`) to analyze added lines, detecting redundant boolean comparisons (`== true`), empty blocks (ignoring `interface{}`), and excessive nesting depth (4+ levels). Because it evaluates real AST nodes, string literals and comments are ignored and cannot produce false positives. For non-Go files (or when repository root is unset), falls back to deterministic regex-based heuristics.
+- **Slop Detector**: For Go files, parses the exact staged file contents into an AST (`go/parser` and `go/ast`) to analyze added lines, detecting redundant boolean comparisons (`== true`), empty blocks (ignoring `interface{}`), and excessive nesting depth (4+ levels). JavaScript/TypeScript files use a deterministic syntax scanner for control-flow nesting and boolean comparisons; Python files use indentation-aware control-flow analysis. Java, Kotlin, C/C++, C#, Rust, Swift, and PHP use language-configured structural scanners. Comments and string literals are excluded from these checks.
 - **Staged-Only Semantics**: `review` accurately inspects staged content from the Git index (`git show :<file>`). Working-tree modifications that have not been staged are ignored. Deleted files are classified and handled without invoking AST analysis or generating false errors.
 - **Working-Tree Audit**: `audit` checks all tracked files present in the working tree, including unchanged files, plus non-ignored untracked files. Its Go AST checks read the actual files from disk. It skips Git metadata, ignored untracked files, and generated `.m3tal-review` data. Binary files, submodules, unreadable files, and symlinks whose targets leave the repository are recorded as unanalyzed, and the report is marked incomplete. The audit does not stage files or change the Git index.
 - **Analysis Error Reporting**: Syntax errors in staged Go code or git index retrieval errors produce distinct high-severity findings (`code-slop-analysis-error`), ensuring that analysis failures cannot result in a passing review.
@@ -17,6 +17,20 @@ It provides actionable findings, records review trails (history), and supports a
 - **Independent Repository Linting**: Dedicated `lint` command runs `gofmt` and `go vet` across the entire repository to enforce formatting and catch subtle bugs without interfering with staged-only diff reviews.
 - **Review History**: Maintains a JSONL log of previous reviews with atomic writes and durable recovery.
 - **Detailed Reports**: Saves full review results as JSON files.
+
+### Slop Analyzer Coverage
+
+`internal/review/language/lang_checker.go` identifies source languages by file extension for rules that need language-specific behavior. The slop analyzer routes each file to its language-specific implementation. Findings are limited to added lines while each syntax-aware analyzer reads the full staged file (or working-tree file during `audit`) for context.
+
+| Language | Analysis | Current checks |
+| --- | --- | --- |
+| Go | Go AST | Redundant boolean comparisons, empty control blocks, and deep nesting |
+| JavaScript / JSX | Local structural scanner | Boolean comparisons, empty control blocks, and deep nesting; reports mismatched delimiters |
+| TypeScript / TSX | Local structural scanner | JavaScript-compatible checks and mismatched delimiters |
+| Python | Indentation-aware scanner | Boolean comparisons, deep nesting, pass-only suites, and incomplete suite detection |
+| Java, Kotlin, C/C++, C#, Rust, Swift, PHP | Language-configured structural scanner | Boolean comparisons, empty control blocks, deep control-flow nesting, and mismatched delimiters |
+
+The non-Go structural scanners tokenize source and apply language-specific control-flow and boolean rules; they are not complete language parsers. C, C++, C#, and Swift conditional compilation scans one branch, so findings in alternate branches may be missed. Unsupported syntax can also be missed, so the analyzer coverage table reflects the checks currently implemented.
 
 ## Installation
 

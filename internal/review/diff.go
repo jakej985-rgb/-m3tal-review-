@@ -16,12 +16,13 @@ const (
 )
 
 type FileDiff struct {
-	OldPath    string
-	NewPath    string
-	Path       string
-	ChangeType FileChangeType
-	AddedLines []int
-	AddedText  map[int]string
+	OldPath     string
+	NewPath     string
+	Path        string
+	ChangeType  FileChangeType
+	AddedLines  []int
+	AddedText   map[int]string
+	ContextText map[int]string
 }
 
 // AddedDiffLine is a normalized source line from the new side of a Git diff.
@@ -198,6 +199,10 @@ func ParseDiff(diff string) []FileDiff {
 			case strings.HasPrefix(line, "\\"):
 				// e.g. \ No newline at end of file; do not count
 			case strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t"):
+				if current.ContextText == nil {
+					current.ContextText = make(map[int]string)
+				}
+				current.ContextText[currentLine] = line[1:]
 				currentLine++
 				oldRemaining--
 				newRemaining--

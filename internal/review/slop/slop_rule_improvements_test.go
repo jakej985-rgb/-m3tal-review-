@@ -1,6 +1,7 @@
-package review
+package slop_test
 
 import (
+	review "github.com/jakej985-rgb/m3tal-review/internal/review"
 	"os/exec"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ func slopMessages(t *testing.T, source string) []string {
 		t.Fatal(err)
 	}
 	var got []string
-	for _, f := range (SlopRule{RepositoryRoot: repoDir}).Check(string(out)) {
+	for _, f := range (review.SlopRule{RepositoryRoot: repoDir}).Check(string(out)) {
 		got = append(got, f.Message)
 	}
 	return got
@@ -34,7 +35,7 @@ func regexMessages(file, added string) []string {
 	diff := "diff --git a/" + file + " b/" + file + "\nnew file mode 100644\n--- /dev/null\n+++ b/" + file +
 		"\n@@ -0,0 +1," + string(rune('0'+n)) + " @@\n" + body.String()
 	var got []string
-	for _, f := range (SlopRule{}).Check(diff) {
+	for _, f := range (review.SlopRule{}).Check(diff) {
 		got = append(got, f.Message)
 	}
 	return got
@@ -115,9 +116,9 @@ func TestSlopRegexSkipsNonCodeFiles(t *testing.T) {
 }
 
 func TestSlopRegexFindingsAttributedToOwnFile(t *testing.T) {
-	diff := "diff --git a/a.js b/a.js\nnew file mode 100644\n--- /dev/null\n+++ b/a.js\n@@ -0,0 +1 @@\n+if (x == true) {\n" +
-		"diff --git a/b.js b/b.js\nnew file mode 100644\n--- /dev/null\n+++ b/b.js\n@@ -0,0 +1,2 @@\n+ok();\n+if (y != false) {\n"
-	fs := (SlopRule{}).Check(diff)
+	diff := "diff --git a/a.js b/a.js\nnew file mode 100644\n--- /dev/null\n+++ b/a.js\n@@ -0,0 +1 @@\n+if (x === true) {\n" +
+		"diff --git a/b.js b/b.js\nnew file mode 100644\n--- /dev/null\n+++ b/b.js\n@@ -0,0 +1,2 @@\n+ok();\n+if (y !== false) {\n"
+	fs := (review.SlopRule{}).Check(diff)
 	if len(fs) != 2 || fs[0].File != "a.js" || fs[0].Line != 1 || fs[1].File != "b.js" || fs[1].Line != 2 {
 		t.Fatalf("unexpected findings: %+v", fs)
 	}

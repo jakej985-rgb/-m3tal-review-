@@ -5,32 +5,44 @@ import (
 	"strconv"
 )
 
-type PermissionsRule struct{}
+type PermissionsRule struct {
+	RepositoryRoot string
+	WorkingTree    bool
+}
 
 func (PermissionsRule) Name() string {
 	return "world-writable-file-mode"
 }
 
 var worldWritablePattern = regexp.MustCompile(
-	`\b(?:(?:os\.)?(?:WriteFile|Mkdir|MkdirAll|OpenFile|Chmod)|[A-Za-z_]\w*\.Chmod)\s*\([^)]*\b(0[0-7]{3,4}|0o[0-7]{3,4}|os\.ModePerm)\b`,
+	`\b(?:(?:os\.)?(?:WriteFile|Mkdir|MkdirAll|OpenFile|Chmod)|[A-Za-z_]\w*\.Chmod)\s*\((?:[^()]|\([^()]*\))*?\b(0[0-7]{3,4}|0o[0-7]{3,4}|os\.ModePerm)\b`,
 )
 
-func (PermissionsRule) Check(diff string) []Finding {
+func (r PermissionsRule) Check(diff string) []Finding {
 	var findings []Finding
-	for _, added := range AddedDiffLines(diff) {
-		match := worldWritablePattern.FindStringSubmatch(added.Text)
-		if match != nil && isWorldWritableMode(match[1]) {
-			findings = append(findings, Finding{
-				Rule:        "world-writable-file-mode",
-				Severity:    "high",
-				File:        added.File,
-				Line:        added.Line,
-				Message:     "File operation uses world-writable permissions (0777)",
-				Remediation: "Use more restrictive permissions (e.g., 0644 for files, 0755 for directories).",
-			})
+	for _, fileDiff := range ParseDiff(diff) {
+		blocks := diffSourceBlocksForFile(diff, fileDiff.Path)
+		if source, err := readRuleSource(r.RepositoryRoot, fileDiff.Path, r.WorkingTree); err == nil {
+			blocks = []diffSourceBlock{fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)}
+		}
+		for _, block := range blocks {
+			code := string(maskNonCode(block.file, block.text))
+			for _, match := range worldWritablePattern.FindAllStringSubmatchIndex(code, -1) {
+				mode := code[match[2]:match[3]]
+				if !isWorldWritableMode(mode) || !matchTouchesAdded(block, code, match[0], match[1]) {
+					continue
+				}
+				findings = append(findings, Finding{
+					Rule:        "world-writable-file-mode",
+					Severity:    "high",
+					File:        block.file,
+					Line:        lineAtOffset(block.firstLine, code, match[2]),
+					Message:     "File operation grants world-write permission",
+					Remediation: "Use more restrictive permissions (e.g., 0644 for files, 0755 for directories).",
+				})
+			}
 		}
 	}
-
 	return findings
 }
 
