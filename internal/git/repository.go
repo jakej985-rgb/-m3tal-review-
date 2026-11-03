@@ -335,10 +335,21 @@ func UntrackedFiles(path string) ([]string, error) {
 	return files, nil
 }
 
-// WorkingTreeFiles lists index-tracked paths and non-ignored untracked paths
-// using NUL delimiters, so unusual filenames are preserved safely.
+// WorkingTreeFiles lists index-tracked paths and all untracked paths, including
+// ignored files, using NUL delimiters so unusual filenames are preserved safely.
 func WorkingTreeFiles(path string) ([]string, error) {
-	command := exec.Command("git", "-C", path, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	return WorkingTreeFilesWithIgnored(path, true)
+}
+
+// WorkingTreeFilesWithIgnored lists tracked paths and untracked paths. When
+// includeIgnored is false, Git ignore rules filter untracked paths.
+func WorkingTreeFilesWithIgnored(path string, includeIgnored bool) ([]string, error) {
+	args := []string{"-C", path, "ls-files", "--cached", "--others"}
+	if !includeIgnored {
+		args = append(args, "--exclude-standard")
+	}
+	args = append(args, "-z")
+	command := exec.Command("git", args...)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("list working-tree files: %s: %w", strings.TrimSpace(string(output)), err)

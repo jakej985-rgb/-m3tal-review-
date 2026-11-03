@@ -61,3 +61,21 @@ func (CodeChecker) Language(file string) CodeLanguage {
 		return LanguageUnknown
 	}
 }
+
+// IsLikelySourceFile reports common source-code extensions that do not yet
+// have a dedicated analyzer. Audits use this to avoid reporting a complete
+// pass when a source file was skipped by every language-aware rule.
+func IsLikelySourceFile(file string) bool {
+	ext := strings.ToLower(path.Ext(file))
+	switch ext {
+	case ".rb", ".rake", ".scala", ".sc", ".dart", ".vue", ".svelte",
+		".sql", ".lua", ".r", ".m", ".mm", ".pl", ".pm", ".ex", ".exs",
+		".erl", ".hrl", ".clj", ".cljs", ".cljc", ".groovy", ".gradle",
+		".sh", ".bash", ".zsh", ".fish", ".elm", ".hs", ".lhs",
+		".jl", ".nim", ".nix", ".proto", ".graphql", ".gql",
+		".tf", ".hcl", ".sol", ".v", ".sv", ".asm", ".s":
+		return true
+	default:
+		return false
+	}
+}

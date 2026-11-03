@@ -400,7 +400,7 @@ func TestRunShowDisplaysUnanalyzedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run(show) error: %v", err)
 	}
-	if !strings.Contains(output, "Not fully analyzed (binary, submodule, or file-mode changes):") || !strings.Contains(output, "asset.bin") {
+	if !strings.Contains(output, "Not fully analyzed (binary, unsupported source language, submodule, or file-mode changes):") || !strings.Contains(output, "asset.bin") {
 		t.Fatalf("show output omitted unanalyzed files:\n%s", output)
 	}
 	if strings.ContainsAny(output, "\x1b") || !strings.Contains(output, `bad\x1b]52;c;payload.go`) {
@@ -916,6 +916,88 @@ func TestCLIHelpCommand(t *testing.T) {
 	}
 }
 
+func TestParseReviewAndAuditOptions(t *testing.T) {
+	profile, withTools, err := parseReviewOptions([]string{"--profile", "full", "--with-tools"})
+	if err != nil || profile != "full" || !withTools {
+		t.Fatalf("parseReviewOptions = %q, %t, %v", profile, withTools, err)
+	}
+	options, err := parseAuditOptions([]string{"--include-ignored", "--profile=full", "--max-files", "20", "--max-bytes=4096", "--with-tools"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !options.IncludeIgnored || !options.WithTools || options.Profile != "full" || options.MaxFiles != 20 || options.MaxBytes != 4096 {
+		t.Fatalf("parsed audit options = %+v", options)
+	}
+	if _, err := parseAuditOptions([]string{"--max-files", "0"}); err == nil {
+		t.Fatal("expected zero file budget to be rejected")
+	}
+}
+
+func TestOptionalLocalToolsReportMissingBinariesAsIncomplete(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	findings, checks := runOptionalLocalTools(t.TempDir())
+	if len(checks) != 3 || len(findings) != 3 {
+		t.Fatalf("got %d checks and %d findings; want 3 each", len(checks), len(findings))
+	}
+	for i, check := range checks {
+		if check.Status != "unavailable" {
+			t.Errorf("check %q status = %q; want unavailable", check.Name, check.Status)
+		}
+		if findings[i].Severity != "high" || findings[i].Category != "confidence" {
+			t.Errorf("finding for %q = %+v; want high-severity incomplete check", check.Name, findings[i])
+		}
+	}
+}
+
+func TestWorkingTreeSnapshotOptionsIncludeIgnoredFilesAndEnforceBudget(t *testing.T) {
+	repo := t.TempDir()
+	if output, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, output)
+	}
+	for name, body := range map[string]string{
+		".gitignore":  "private.env\n",
+		"private.env": "password=secret-value\n",
+		"main.go":     "package main\nfunc main() {}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	options := defaultAuditOptions()
+	_, files, _, err := workingTreeSnapshotWithOptions(repo, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsFile(files, "private.env") {
+		t.Fatal("ignored file was included without --include-ignored")
+	}
+	options.IncludeIgnored = true
+	diff, files, unanalyzed, err := workingTreeSnapshotWithOptions(repo, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsFile(files, "private.env") || !strings.Contains(diff, "password=secret-value") {
+		t.Fatalf("ignored file missing from opted-in snapshot; files=%v", files)
+	}
+	options.MaxBytes = 1
+	_, _, unanalyzed, err = workingTreeSnapshotWithOptions(repo, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsFile(unanalyzed, "main.go") || len(unanalyzed) == 0 {
+		t.Fatalf("scan budget did not mark skipped files unanalyzed: %v", unanalyzed)
+	}
+}
+
+func containsFile(files []string, target string) bool {
+	for _, file := range files {
+		if file == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCLIVersionCommand(t *testing.T) {
 	out, err := captureOutput(func() error {
 		return Run([]string{"version"})
@@ -1079,7 +1161,7 @@ func TestReviewMarksStagedModeChangeAsIncomplete(t *testing.T) {
 	if reviewErr == nil || !strings.Contains(reviewErr.Error(), "review incomplete") {
 		t.Fatalf("review error = %v, want incomplete-analysis error; output:\n%s", reviewErr, output)
 	}
-	if !strings.Contains(output, "Not fully analyzed (binary, submodule, or file-mode changes):") || !strings.Contains(output, "script.sh") {
+	if !strings.Contains(output, "Not fully analyzed (binary, unsupported source language, submodule, or file-mode changes):") || !strings.Contains(output, "script.sh") {
 		t.Fatalf("review output omitted the mode-only change:\n%s", output)
 	}
 
@@ -1148,7 +1230,7 @@ func TestReviewMarksStagedBinaryAsIncomplete(t *testing.T) {
 			if reviewErr == nil || !strings.Contains(reviewErr.Error(), "review incomplete") {
 				t.Fatalf("execute(review) error = %v, want incomplete-analysis error; output:\n%s", reviewErr, output)
 			}
-			if !strings.Contains(output, "asset.bin") || !strings.Contains(output, "Not fully analyzed (binary, submodule, or file-mode changes):") {
+			if !strings.Contains(output, "asset.bin") || !strings.Contains(output, "Not fully analyzed (binary, unsupported source language, submodule, or file-mode changes):") {
 				t.Fatalf("review output did not identify the unsupported file:\n%s", output)
 			}
 

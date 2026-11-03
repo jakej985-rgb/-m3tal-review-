@@ -123,20 +123,26 @@ func analyzeBraceLanguage(file, source string, added map[int]bool, cfg braceLang
 	var findings []Finding
 	seen := make(map[string]bool)
 	type braceFrame struct {
-		counted     bool
-		scope       bool
-		parentDepth int
+		counted            bool
+		scope              bool
+		parentDepth        int
+		parentDeepReported bool
 	}
 	var stack []braceFrame
 	depth := 0
+	deepReported := false
 	for i, tok := range tokens {
+		if depth < 4 {
+			deepReported = false
+		}
 		if cfg.phpAltSyntax && (tok.text == "else" || tok.text == "elseif") && i+2 < len(tokens) && tokens[i+1].text == ":" && (isPHPAlternativeEnd(tokens[i+2].text) || tokens[i+2].text == "else" || tokens[i+2].text == "elseif") && added[tok.line] {
 			appendSlopFinding(&findings, seen, file, tok.line, "Empty block", "Remove the empty block or add an explanatory comment.")
 		}
 		if line, ok := altStarts[i]; ok {
 			depth++
-			if depth >= 4 && added[line] {
+			if depth >= 4 && added[line] && !deepReported {
 				appendSlopFinding(&findings, seen, file, line, "Excessive syntax nesting depth (4+ levels)", "Refactor to reduce nesting depth.")
+				deepReported = true
 			}
 			if i+1 < len(tokens) && (tokens[i+1].text == "else" || tokens[i+1].text == "elseif" || isPHPAlternativeEnd(tokens[i+1].text)) && added[line] {
 				appendSlopFinding(&findings, seen, file, line, "Empty block", "Remove the empty block or add an explanatory comment.")
@@ -147,12 +153,14 @@ func analyzeBraceLanguage(file, source string, added map[int]bool, cfg braceLang
 		}
 		if line, ok := unbracedStarts[i]; ok {
 			depth++
-			if depth >= 4 && added[line] {
+			if depth >= 4 && added[line] && !deepReported {
 				appendSlopFinding(&findings, seen, file, line, "Excessive syntax nesting depth (4+ levels)", "Refactor to reduce nesting depth.")
+				deepReported = true
 			}
 		}
-		if added[tok.line] && depth >= 4 {
+		if added[tok.line] && depth >= 4 && !deepReported {
 			appendSlopFinding(&findings, seen, file, tok.line, "Excessive syntax nesting depth (4+ levels)", "Refactor to reduce nesting depth.")
+			deepReported = true
 		}
 		switch tok.text {
 		case "{":
@@ -161,7 +169,9 @@ func analyzeBraceLanguage(file, source string, added map[int]bool, cfg braceLang
 			frame := braceFrame{counted: isControl && control.addDepth, scope: scope}
 			if scope {
 				frame.parentDepth = depth
+				frame.parentDeepReported = deepReported
 				depth = 0
+				deepReported = false
 			}
 			stack = append(stack, frame)
 			if !isControl {
@@ -170,8 +180,9 @@ func analyzeBraceLanguage(file, source string, added map[int]bool, cfg braceLang
 			if control.addDepth {
 				depth++
 			}
-			if control.addDepth && depth >= 4 && added[control.line] {
+			if control.addDepth && depth >= 4 && added[control.line] && !deepReported {
 				appendSlopFinding(&findings, seen, file, control.line, "Excessive syntax nesting depth (4+ levels)", "Refactor to reduce nesting depth.")
+				deepReported = true
 			}
 			if i+1 < len(tokens) && tokens[i+1].text == "}" && added[control.line] && strings.TrimSpace(source[tok.end:tokens[i+1].start]) == "" {
 				appendSlopFinding(&findings, seen, file, control.line, "Empty block", "Remove the empty block or add an explanatory comment.")
@@ -185,6 +196,9 @@ func analyzeBraceLanguage(file, source string, added map[int]bool, cfg braceLang
 				stack = stack[:len(stack)-1]
 				if frame.scope {
 					depth = frame.parentDepth
+					deepReported = frame.parentDeepReported
+				} else if depth < 4 {
+					deepReported = false
 				}
 			}
 		}

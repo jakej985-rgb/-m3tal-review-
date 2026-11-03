@@ -376,21 +376,28 @@ func analyzeBraceSlop(file, language, source string, added map[int]bool) []Findi
 
 	var findings []Finding
 	type jsFrame struct {
-		counted, scope bool
-		parentDepth    int
+		counted, scope     bool
+		parentDepth        int
+		parentDeepReported bool
 	}
 	var stack []jsFrame
 	depth := 0
+	deepReported := false
 	seen := make(map[string]bool)
 	for i, tok := range tokens {
+		if depth < 4 {
+			deepReported = false
+		}
 		if line, ok := unbracedStarts[i]; ok {
 			depth++
-			if depth >= 4 && added[line] {
+			if depth >= 4 && added[line] && !deepReported {
 				appendSlopFinding(&findings, seen, file, line, "Excessive syntax nesting depth (4+ levels)", "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.")
+				deepReported = true
 			}
 		}
-		if added[tok.line] && depth >= 4 {
+		if added[tok.line] && depth >= 4 && !deepReported {
 			appendSlopFinding(&findings, seen, file, tok.line, "Excessive syntax nesting depth (4+ levels)", "Refactor to reduce nesting depth.")
+			deepReported = true
 		}
 		switch tok.text {
 		case "{":
@@ -400,7 +407,9 @@ func analyzeBraceSlop(file, language, source string, added map[int]bool) []Findi
 			frame := jsFrame{counted: counted, scope: scope}
 			if scope {
 				frame.parentDepth = depth
+				frame.parentDeepReported = deepReported
 				depth = 0
+				deepReported = false
 			}
 			stack = append(stack, frame)
 			if !isControl {
@@ -409,8 +418,9 @@ func analyzeBraceSlop(file, language, source string, added map[int]bool) []Findi
 			if counted {
 				depth++
 			}
-			if depth >= 4 && added[control.line] {
+			if depth >= 4 && added[control.line] && !deepReported {
 				appendSlopFinding(&findings, seen, file, control.line, "Excessive syntax nesting depth (4+ levels)", "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.")
+				deepReported = true
 			}
 			if isControl && i+1 < len(tokens) && tokens[i+1].text == "}" && added[control.line] && isEmptyBraceBody(source[tok.end:tokens[i+1].start]) {
 				appendSlopFinding(&findings, seen, file, control.line, "Empty block", "Remove the empty block or add a comment explaining why it is empty.")
@@ -424,6 +434,9 @@ func analyzeBraceSlop(file, language, source string, added map[int]bool) []Findi
 				stack = stack[:len(stack)-1]
 				if frame.scope {
 					depth = frame.parentDepth
+					deepReported = frame.parentDeepReported
+				} else if depth < 4 {
+					deepReported = false
 				}
 			}
 		}

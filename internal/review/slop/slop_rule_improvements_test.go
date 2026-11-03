@@ -115,11 +115,11 @@ func TestSlopRegexSkipsNonCodeFiles(t *testing.T) {
 	}
 }
 
-func TestSlopRegexFindingsAttributedToOwnFile(t *testing.T) {
+func TestSlopMalformedFilesAreReportedIndividually(t *testing.T) {
 	diff := "diff --git a/a.js b/a.js\nnew file mode 100644\n--- /dev/null\n+++ b/a.js\n@@ -0,0 +1 @@\n+if (x === true) {\n" +
 		"diff --git a/b.js b/b.js\nnew file mode 100644\n--- /dev/null\n+++ b/b.js\n@@ -0,0 +1,2 @@\n+ok();\n+if (y !== false) {\n"
 	fs := (review.SlopRule{}).Check(diff)
-	if len(fs) != 2 || fs[0].File != "a.js" || fs[0].Line != 1 || fs[1].File != "b.js" || fs[1].Line != 2 {
+	if len(fs) != 2 || fs[0].Rule != "code-slop-analysis-error" || fs[0].File != "a.js" || fs[0].Line != 0 || fs[1].Rule != "code-slop-analysis-error" || fs[1].File != "b.js" || fs[1].Line != 0 {
 		t.Fatalf("unexpected findings: %+v", fs)
 	}
 }

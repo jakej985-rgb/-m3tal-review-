@@ -23,8 +23,8 @@ func (SecurityRule) Name() string {
 //   - double-quoted, single-quoted or backtick-quoted values of 8+ characters
 var credentialPattern = regexp.MustCompile(
 	`(?i)["']?\b([A-Za-z_][A-Za-z0-9_.-]*)["']?` +
-		`(?:\s+[A-Za-z_][A-Za-z0-9_.\[\]*]*)?` +
-		`\s*(?::=|[:=])\s*` +
+		`(?:[ \t]+[A-Za-z_][A-Za-z0-9_.\[\]*]*)?` +
+		`[ \t]*(?::=|[:=])[ \t]*` +
 		"(?:\"([^\"]{8,})\"|'([^']{8,})'|`([^`]{8,})`)")
 
 // unquotedCredentialPattern matches `NAME=value` / `name: value` lines in

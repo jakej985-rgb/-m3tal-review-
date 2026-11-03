@@ -2,6 +2,7 @@ package review
 
 import (
 	"regexp"
+	"sort"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/review/language"
 )
@@ -92,6 +93,12 @@ func (r ShellRule) Check(diff string) []Finding {
 			}
 		}
 	}
+	sort.SliceStable(findings, func(i, j int) bool {
+		if findings[i].File != findings[j].File {
+			return findings[i].File < findings[j].File
+		}
+		return findings[i].Line < findings[j].Line
+	})
 
 	return findings
 }

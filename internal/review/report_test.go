@@ -74,3 +74,27 @@ func TestNewReportFailed(t *testing.T) {
 		t.Fatalf("expected 1 finding, got %d", len(report.Findings))
 	}
 }
+
+func TestInformationalRiskSignalDoesNotFailReport(t *testing.T) {
+	report := NewReport("run-info", "/tmp/test-repo", "main", "head", "base", "hash", "1.0.0", nil, []Finding{{
+		Rule: "review-risk", Category: "risk", Severity: "info", File: "internal/auth/login.go", Message: "Sensitive area changed",
+	}})
+	if !report.Passed {
+		t.Fatal("informational risk signal should not fail the review")
+	}
+	if report.Summary != "Review passed with informational risk signals." {
+		t.Fatalf("summary = %q", report.Summary)
+	}
+	if report.Findings[0].ID == "" {
+		t.Fatal("finding ID was not assigned")
+	}
+}
+
+func TestCompareFindingsReportsNewResolvedAndExisting(t *testing.T) {
+	previous := []Finding{{Rule: "todo-marker", File: "a.go", Line: 1, Message: "TODO"}, {Rule: "debug-leftover", File: "b.go", Line: 2, Message: "debug"}}
+	current := []Finding{{Rule: "todo-marker", File: "a.go", Line: 1, Message: "TODO"}, {Rule: "code-slop", File: "c.go", Line: 3, Message: "slop"}}
+	changes := CompareFindings(previous, current)
+	if changes.Existing != 1 || len(changes.New) != 1 || len(changes.Resolved) != 1 {
+		t.Fatalf("finding changes = %+v", changes)
+	}
+}

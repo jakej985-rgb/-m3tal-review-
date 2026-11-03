@@ -45,6 +45,11 @@ func (r SlopRule) Analyze(fileDiffs []FileDiff) []Finding {
 func (r SlopRule) checkFile(fd FileDiff) []Finding {
 	if r.RepositoryRoot == "" {
 		if fd.Source != "" {
+			if (language.CodeChecker{}).Language(fd.Path) == language.LanguageGo {
+				if _, err := parser.ParseFile(token.NewFileSet(), fd.Path, fd.Source, parser.AllErrors); err != nil {
+					return r.checkAddedLineRegex(fd)
+				}
+			}
 			return analyzeSource(fd, fd.Source)
 		}
 		if source, err := r.readImplicitSource(fd.Path); err == nil && sourceMatchesDiff(fd, source) {
@@ -278,16 +283,18 @@ func isControlFlow(n ast.Node) bool {
 }
 
 type slopInspector struct {
-	file       string
-	fset       *token.FileSet
-	lineMap    map[int]bool
-	findings   []Finding
-	seen       map[string]bool
-	depth      int
-	stack      []ast.Node
-	counted    []bool // parallel to stack: whether the node incremented depth
-	depthStack []int
-	comments   []*ast.CommentGroup
+	file         string
+	fset         *token.FileSet
+	lineMap      map[int]bool
+	findings     []Finding
+	seen         map[string]bool
+	depth        int
+	stack        []ast.Node
+	counted      []bool // parallel to stack: whether the node incremented depth
+	depthStack   []int
+	deepStack    []bool
+	deepReported bool
+	comments     []*ast.CommentGroup
 }
 
 // hasCommentWithin reports whether a comment sits inside the block's braces.
@@ -407,12 +414,17 @@ func analyzeGoSourceAST(file string, content []byte, addedLines []int) []Finding
 				if inspector.counted[last] {
 					inspector.depth--
 				}
+				if inspector.depth < 4 {
+					inspector.deepReported = false
+				}
 				inspector.stack = inspector.stack[:last]
 				inspector.counted = inspector.counted[:last]
 				switch top.(type) {
 				case *ast.FuncDecl, *ast.FuncLit:
 					inspector.depth = inspector.depthStack[len(inspector.depthStack)-1]
 					inspector.depthStack = inspector.depthStack[:len(inspector.depthStack)-1]
+					inspector.deepReported = inspector.deepStack[len(inspector.deepStack)-1]
+					inspector.deepStack = inspector.deepStack[:len(inspector.deepStack)-1]
 				}
 			}
 			return false
@@ -426,7 +438,9 @@ func analyzeGoSourceAST(file string, content []byte, addedLines []int) []Finding
 		switch n.(type) {
 		case *ast.FuncDecl, *ast.FuncLit:
 			inspector.depthStack = append(inspector.depthStack, inspector.depth)
+			inspector.deepStack = append(inspector.deepStack, inspector.deepReported)
 			inspector.depth = 0
+			inspector.deepReported = false
 		}
 
 		counted := countsAsNesting(parent, n)
@@ -436,12 +450,10 @@ func analyzeGoSourceAST(file string, content []byte, addedLines []int) []Finding
 
 		if counted {
 			inspector.depth++
-			if inspector.depth >= 4 && inspector.lineMap[line] {
-				inspector.addFinding(line, "Excessive AST nesting depth (4+ levels)", "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.")
-			}
 		}
-		if inspector.depth >= 4 && inspector.lineMap[line] {
+		if inspector.depth >= 4 && inspector.lineMap[line] && !inspector.deepReported {
 			inspector.addFinding(line, "Excessive AST nesting depth (4+ levels)", "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.")
+			inspector.deepReported = true
 		}
 
 		switch node := n.(type) {
