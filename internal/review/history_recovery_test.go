@@ -72,6 +72,64 @@ func TestRecoverHistorySuccess(t *testing.T) {
 	}
 }
 
+func TestRecoverHistorySerializesConcurrentAppend(t *testing.T) {
+	tempDir := t.TempDir()
+	reportsDir := filepath.Join(tempDir, "reports")
+	historyPath := filepath.Join(tempDir, "history.jsonl")
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	report := Report{RunID: "abcdef0123456789", Timestamp: time.Now().UTC(), Passed: true}
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reportsDir, report.RunID+".json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	recoveryWriting := make(chan struct{})
+	releaseRecovery := make(chan struct{})
+	ops := fsOps{
+		writeFile: func(file *os.File, data []byte) (int, error) {
+			close(recoveryWriting)
+			<-releaseRecovery
+			return file.Write(data)
+		},
+	}
+	recoveryDone := make(chan error, 1)
+	go func() {
+		_, err := recoverHistoryWithFS(reportsDir, historyPath, ops)
+		recoveryDone <- err
+	}()
+	<-recoveryWriting
+
+	appendDone := make(chan error, 1)
+	go func() {
+		appendDone <- AppendHistory(historyPath, HistoryEntry{RunID: "concurrent-entry", Status: "passed"})
+	}()
+	select {
+	case err := <-appendDone:
+		t.Fatalf("append completed during locked recovery: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseRecovery)
+	if err := <-recoveryDone; err != nil {
+		t.Fatalf("recovery failed: %v", err)
+	}
+	if err := <-appendDone; err != nil {
+		t.Fatalf("append failed: %v", err)
+	}
+
+	entries, err := ReadHistory(historyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("history lost a recovered or appended entry: %+v", entries)
+	}
+}
+
 func TestRecoverHistoryCorruptReportFiles(t *testing.T) {
 	tempDir := t.TempDir()
 	reportsDir := filepath.Join(tempDir, "reports")
@@ -118,20 +176,19 @@ func TestRecoverHistoryCorruptReportFiles(t *testing.T) {
 		t.Fatalf("failed to write zero_time.json: %v", err)
 	}
 
-	count, err := RecoverHistory(reportsDir, historyPath)
+	existingData := []byte("original history\n")
+	if err := os.WriteFile(historyPath, existingData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := RecoverHistory(reportsDir, historyPath); err == nil || count != 0 {
+		t.Fatalf("RecoverHistory() = (%d, %v), want error and no replacement", count, err)
+	}
+	got, err := os.ReadFile(historyPath)
 	if err != nil {
-		t.Fatalf("RecoverHistory error: %v", err)
+		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("expected exactly 1 recovered entry, got %d", count)
-	}
-
-	entries, err := ReadHistory(historyPath)
-	if err != nil {
-		t.Fatalf("ReadHistory error: %v", err)
-	}
-	if len(entries) != 1 || entries[0].RunID != "abcdef0123456789" {
-		t.Fatalf("unexpected entries: %+v", entries)
+	if string(got) != string(existingData) {
+		t.Fatalf("history changed after invalid report: %q", got)
 	}
 }
 
@@ -156,11 +213,8 @@ func TestRecoverHistoryPreservesExistingOnNoValidReports(t *testing.T) {
 	}
 
 	count, err := RecoverHistory(reportsDir, historyPath)
-	if err != nil {
-		t.Fatalf("RecoverHistory error: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("expected 0 recovered entries, got %d", count)
+	if err == nil || count != 0 {
+		t.Fatalf("RecoverHistory() = (%d, %v), want error and no replacement", count, err)
 	}
 
 	content, err := os.ReadFile(historyPath)

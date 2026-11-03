@@ -6,16 +6,17 @@ func TestTLSRuleFindsDisabledVerification(t *testing.T) {
 	diff := `diff --git a/client.go b/client.go
 --- a/client.go
 +++ b/client.go
-@@ -1,1 +1,3 @@
+@@ -1,1 +1,4 @@
  package main
 +tls.Config{InsecureSkipVerify: true}
 +InsecureSkipVerify: true,
++cfg.InsecureSkipVerify = true
 `
 
 	findings := (TLSRule{}).Check(diff)
 
-	if len(findings) != 2 {
-		t.Fatalf("Check() returned %d findings, want 2: %+v", len(findings), findings)
+	if len(findings) != 3 {
+		t.Fatalf("Check() returned %d findings, want 3: %+v", len(findings), findings)
 	}
 
 	for i, finding := range findings {
@@ -38,9 +39,10 @@ func TestTLSRuleIgnoresEnabledVerification(t *testing.T) {
 	diff := `diff --git a/client.go b/client.go
 --- a/client.go
 +++ b/client.go
-@@ -1,1 +1,2 @@
+@@ -1,1 +1,3 @@
  package main
 +tls.Config{InsecureSkipVerify: false}
++cfg.InsecureSkipVerify = false
 `
 
 	findings := (TLSRule{}).Check(diff)

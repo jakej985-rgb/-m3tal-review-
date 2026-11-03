@@ -25,20 +25,27 @@ func appendHistoryWithFS(path string, entry HistoryEntry, ops fsOps) (retErr err
 	if path == "" {
 		return fmt.Errorf("history path cannot be empty")
 	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create history directory: %w", err)
+	}
+
+	unlock, err := lockHistory(path)
+	if err != nil {
+		return fmt.Errorf("lock history file: %w", err)
+	}
+	defer unlock()
 
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("marshal history entry: %w", err)
 	}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create history directory: %w", err)
-	}
-
 	var fileExisted bool
-	if _, err := ops.statFile(path); err == nil {
+	initialSize := int64(0)
+	if info, err := ops.statFile(path); err == nil {
 		fileExisted = true
+		initialSize = info.Size()
 	} else if os.IsNotExist(err) {
 		fileExisted = false
 	} else {
@@ -52,11 +59,6 @@ func appendHistoryWithFS(path string, entry HistoryEntry, ops fsOps) (retErr err
 	)
 	if err != nil {
 		return fmt.Errorf("open history file: %w", err)
-	}
-
-	initialSize := int64(0)
-	if info, err := file.Stat(); err == nil {
-		initialSize = info.Size()
 	}
 
 	success := false
@@ -129,7 +131,7 @@ func appendHistoryWithFS(path string, entry HistoryEntry, ops fsOps) (retErr err
 
 	if !fileExisted {
 		if err := ops.syncDir(dir); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to sync directory %s: %v\n", dir, err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to sync directory %s: %s\n", safeTerminalText(dir), safeTerminalText(err.Error()))
 		}
 	}
 

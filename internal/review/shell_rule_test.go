@@ -6,16 +6,17 @@ func TestShellRuleFindsRiskyShellExecution(t *testing.T) {
 	diff := `diff --git a/runner.go b/runner.go
 --- a/runner.go
 +++ b/runner.go
-@@ -1,1 +1,3 @@
+@@ -1,1 +1,4 @@
  package main
 +exec.Command("sh", "-c", userInput)
 +exec.Command("bash", "-c", "echo hello")
++exec.CommandContext(ctx, "sh", "-c", userInput)
 `
 
 	findings := (ShellRule{}).Check(diff)
 
-	if len(findings) != 2 {
-		t.Fatalf("Check() returned %d findings, want 2: %+v", len(findings), findings)
+	if len(findings) != 3 {
+		t.Fatalf("Check() returned %d findings, want 3: %+v", len(findings), findings)
 	}
 
 	for i, finding := range findings {

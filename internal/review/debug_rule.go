@@ -2,8 +2,6 @@ package review
 
 import (
 	"regexp"
-	"strconv"
-	"strings"
 )
 
 type DebugRule struct{}
@@ -32,44 +30,19 @@ var debugPatterns = []struct {
 
 func (DebugRule) Check(diff string) []Finding {
 	var findings []Finding
-
-	var file string
-	lineNumber := 0
-
-	for _, line := range strings.Split(diff, "\n") {
-		if strings.HasPrefix(line, "+++ b/") {
-			file = strings.TrimPrefix(line, "+++ b/")
-			continue
-		}
-
-		if matches := hunkHeader.FindStringSubmatch(line); matches != nil {
-			lineNumber, _ = strconv.Atoi(matches[1])
-			continue
-		}
-
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			addedLine := strings.TrimPrefix(line, "+")
-
-			for _, debugPattern := range debugPatterns {
-				if debugPattern.pattern.MatchString(addedLine) {
-					findings = append(findings, Finding{
-						Rule:        "debug-leftover",
-						Severity:    "medium",
-						File:        file,
-						Line:        lineNumber,
-						Message:     debugPattern.message,
-						Remediation: "Remove debug output before merging, or replace it with the project's approved logging.",
-					})
-					break
-				}
+	for _, added := range AddedDiffLines(diff) {
+		for _, debugPattern := range debugPatterns {
+			if debugPattern.pattern.MatchString(added.Text) {
+				findings = append(findings, Finding{
+					Rule:        "debug-leftover",
+					Severity:    "medium",
+					File:        added.File,
+					Line:        added.Line,
+					Message:     debugPattern.message,
+					Remediation: "Remove debug output before merging, or replace it with the project's approved logging.",
+				})
+				break
 			}
-
-			lineNumber++
-			continue
-		}
-
-		if strings.HasPrefix(line, " ") {
-			lineNumber++
 		}
 	}
 

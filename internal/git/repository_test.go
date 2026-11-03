@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,54 @@ func TestRepositoryRoot(t *testing.T) {
 
 	if root != filepath.Clean(repoDir) {
 		t.Errorf("RepositoryRoot() = %q, want %q", root, filepath.Clean(repoDir))
+	}
+}
+
+func TestParseBinaryFilesFromNumstat(t *testing.T) {
+	output := []byte("-\t-\timage.bin\x0012\t3\ttext file.go\x00-\t-\t\x00old.bin\x00new name.bin\x00")
+	got, err := ParseBinaryFilesFromNumstat(output)
+	if err != nil {
+		t.Fatalf("ParseBinaryFilesFromNumstat() error: %v", err)
+	}
+	want := []string{"image.bin", "new name.bin"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseBinaryFilesFromNumstat() = %q, want %q", got, want)
+	}
+}
+
+func TestParseBinaryFilesFromNumstatRejectsMalformedInput(t *testing.T) {
+	if _, err := ParseBinaryFilesFromNumstat([]byte("not-numstat\x00")); err == nil {
+		t.Fatal("expected malformed numstat error")
+	}
+}
+
+func TestStagedSubmoduleFiles(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) []byte {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+		return output
+	}
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("baseline\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README.md")
+	runGit("commit", "-m", "initial")
+	sha := strings.TrimSpace(string(runGit("rev-parse", "HEAD")))
+	runGit("update-index", "--add", "--cacheinfo", "160000,"+sha+",vendor/lib")
+	got, err := StagedSubmoduleFiles(repoDir)
+	if err != nil {
+		t.Fatalf("StagedSubmoduleFiles() error: %v", err)
+	}
+	if !reflect.DeepEqual(got, []string{"vendor/lib"}) {
+		t.Fatalf("StagedSubmoduleFiles() = %q, want [vendor/lib]", got)
 	}
 }
 
@@ -159,8 +208,11 @@ func TestCurrentBranchDetachedHEAD(t *testing.T) {
 	}
 
 	branch, err := CurrentBranch(repoDir)
-	if err == nil {
-		t.Fatalf("CurrentBranch() = %q, want error for detached HEAD", branch)
+	if err != nil {
+		t.Fatalf("CurrentBranch() error for detached HEAD: %v", err)
+	}
+	if !strings.Contains(branch, "(detached HEAD at ") {
+		t.Fatalf("CurrentBranch() = %q, want detached HEAD label", branch)
 	}
 }
 

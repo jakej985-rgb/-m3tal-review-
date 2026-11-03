@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func captureStderr(t *testing.T, fn func()) string {
@@ -258,6 +259,54 @@ func TestAppendHistoryConcurrency(t *testing.T) {
 
 	if len(entries) != concurrency {
 		t.Fatalf("expected %d entries, got %d", concurrency, len(entries))
+	}
+}
+
+func TestAppendHistoryFailedFirstWriterDoesNotRemoveNextWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	firstInStat := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondInStat := make(chan struct{}, 1)
+	writeErr := errors.New("simulated write failure")
+	firstOps := fsOps{
+		statFile: func(name string) (os.FileInfo, error) {
+			close(firstInStat)
+			<-releaseFirst
+			return os.Stat(name)
+		},
+		writeFile: func(*os.File, []byte) (int, error) { return 0, writeErr },
+	}
+	secondOps := fsOps{
+		statFile: func(name string) (os.FileInfo, error) {
+			secondInStat <- struct{}{}
+			return os.Stat(name)
+		},
+	}
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- appendHistoryWithFS(path, HistoryEntry{RunID: "first"}, firstOps) }()
+	<-firstInStat
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- appendHistoryWithFS(path, HistoryEntry{RunID: "second"}, secondOps) }()
+
+	select {
+	case <-secondInStat:
+		t.Fatal("second append entered filesystem transaction before the first released its lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseFirst)
+	if err := <-firstDone; !errors.Is(err, writeErr) {
+		t.Fatalf("first append error = %v, want write failure", err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second append failed: %v", err)
+	}
+	entries, err := ReadHistory(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].RunID != "second" {
+		t.Fatalf("successful concurrent entry was lost: %+v", entries)
 	}
 }
 

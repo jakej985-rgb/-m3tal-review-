@@ -6,16 +6,20 @@ func TestPermissionsRuleFindsWorldWritableModes(t *testing.T) {
 	diff := `diff --git a/files.go b/files.go
 --- a/files.go
 +++ b/files.go
-@@ -1,1 +1,3 @@
+@@ -1,1 +1,7 @@
  package main
 +os.WriteFile("config.json", data, 0777)
 +os.Mkdir("uploads", 0o777)
++os.Chmod("config.json", 0777)
++file.Chmod(0o777)
++os.Chmod("config.json", 0o0777)
++os.Chmod("config.json", os.ModePerm)
 `
 
 	findings := (PermissionsRule{}).Check(diff)
 
-	if len(findings) != 2 {
-		t.Fatalf("Check() returned %d findings, want 2: %+v", len(findings), findings)
+	if len(findings) != 6 {
+		t.Fatalf("Check() returned %d findings, want 6: %+v", len(findings), findings)
 	}
 
 	for i, finding := range findings {
@@ -38,10 +42,14 @@ func TestPermissionsRuleIgnoresRestrictiveModes(t *testing.T) {
 	diff := `diff --git a/files.go b/files.go
 --- a/files.go
 +++ b/files.go
-@@ -1,1 +1,3 @@
+@@ -1,1 +1,7 @@
  package main
 +os.WriteFile("config.json", data, 0600)
 +os.Mkdir("uploads", 0755)
++os.Chmod("config.json", 0600)
++file.Chmod(0644)
++os.Chmod("config.json", 0o0644)
++os.Chmod("config.json", 0644)
 `
 
 	findings := (PermissionsRule{}).Check(diff)

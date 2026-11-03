@@ -2,7 +2,6 @@ package review
 
 import (
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -13,7 +12,7 @@ func (SecurityRule) Name() string {
 }
 
 var credentialPattern = regexp.MustCompile(
-	`(?i)\b(password|passwd|api[_-]?key|access[_-]?token|auth[_-]?token|secret)\b\s*[:=]+\s*["']([^"']{8,})["']`)
+	`(?i)\b([A-Za-z_][A-Za-z0-9_-]*)\s*[:=]+\s*["']([^"']{8,})["']`)
 
 var credentialPlaceholders = []string{
 	"your_",
@@ -28,55 +27,43 @@ var credentialPlaceholders = []string{
 
 func (SecurityRule) Check(diff string) []Finding {
 	var findings []Finding
-
-	var file string
-	lineNumber := 0
-
-	for _, line := range strings.Split(diff, "\n") {
-		if strings.HasPrefix(line, "+++ b/") {
-			file = strings.TrimPrefix(line, "+++ b/")
+	for _, added := range AddedDiffLines(diff) {
+		match := credentialPattern.FindStringSubmatch(added.Text)
+		if match == nil || !isCredentialName(match[1]) {
 			continue
 		}
 
-		if matches := hunkHeader.FindStringSubmatch(line); matches != nil {
-			lineNumber, _ = strconv.Atoi(matches[1])
-			continue
-		}
-
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			addedLine := strings.TrimPrefix(line, "+")
-
-			if match := credentialPattern.FindStringSubmatch(addedLine); match != nil {
-				value := strings.ToLower(match[2])
-				isPlaceholder := false
-
-				for _, placeholder := range credentialPlaceholders {
-					if strings.Contains(value, placeholder) {
-						isPlaceholder = true
-						break
-					}
-				}
-
-				if !isPlaceholder {
-					findings = append(findings, Finding{
-						Rule:        "hardcoded-credential",
-						Severity:    "high",
-						File:        file,
-						Line:        lineNumber,
-						Message:     "Possible hardcoded credential assigned to " + match[1],
-						Remediation: "Remove hardcoded credentials. Use environment variables or a secret management system.",
-					})
-				}
+		value := strings.ToLower(match[2])
+		isPlaceholder := false
+		for _, placeholder := range credentialPlaceholders {
+			if strings.Contains(value, placeholder) {
+				isPlaceholder = true
+				break
 			}
-
-			lineNumber++
+		}
+		if isPlaceholder {
 			continue
 		}
 
-		if strings.HasPrefix(line, " ") {
-			lineNumber++
+		findings = append(findings, Finding{
+			Rule:        "hardcoded-credential",
+			Severity:    "high",
+			File:        added.File,
+			Line:        added.Line,
+			Message:     "Possible hardcoded credential assigned to " + match[1],
+			Remediation: "Remove hardcoded credentials. Use environment variables or a secret management system.",
+		})
+	}
+	return findings
+}
+
+func isCredentialName(name string) bool {
+	name = strings.ToLower(name)
+	name = strings.NewReplacer("_", "", "-", "").Replace(name)
+	for _, marker := range []string{"password", "passwd", "apikey", "token", "secret"} {
+		if strings.Contains(name, marker) {
+			return true
 		}
 	}
-
-	return findings
+	return false
 }

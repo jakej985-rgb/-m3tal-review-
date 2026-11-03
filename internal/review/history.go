@@ -16,6 +16,9 @@ func NewHistoryEntry(report Report) HistoryEntry {
 	if !report.Passed {
 		status = "failed"
 	}
+	if len(report.UnanalyzedFiles) > 0 {
+		status = "incomplete"
+	}
 
 	return HistoryEntry{
 		RunID:        report.RunID,

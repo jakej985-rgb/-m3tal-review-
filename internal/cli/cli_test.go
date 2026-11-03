@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -372,6 +373,41 @@ func TestRunShowRejectsInvalidRunID(t *testing.T) {
 	}
 }
 
+func TestRunShowDisplaysUnanalyzedFiles(t *testing.T) {
+	repoDir := t.TempDir()
+	if output, err := exec.Command("git", "init", repoDir).CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, output)
+	}
+	const runID = "0123456789abcdef"
+	report := review.NewReport(runID, repoDir, "main", "sha", "", "", "1.0.0", []string{"asset.bin"}, nil)
+	report.UnanalyzedFiles = []string{"asset.bin"}
+	report.Findings = []review.Finding{{Rule: "test", Severity: "low", File: "bad\x1b]52;c;payload.go", Line: 1, Message: "test finding"}}
+	report.Passed = false
+	report.Summary = "Review incomplete. Some staged files could not be analyzed."
+	path := filepath.Join(repoDir, ".m3tal-review", "reports", runID+".json")
+	if err := review.WriteReport(path, report); err != nil {
+		t.Fatal(err)
+	}
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+	output, err := captureOutput(func() error { return Run([]string{"show", runID}) })
+	if err != nil {
+		t.Fatalf("Run(show) error: %v", err)
+	}
+	if !strings.Contains(output, "Not fully analyzed (binary, submodule, or file-mode changes):") || !strings.Contains(output, "asset.bin") {
+		t.Fatalf("show output omitted unanalyzed files:\n%s", output)
+	}
+	if strings.ContainsAny(output, "\x1b") || !strings.Contains(output, `bad\x1b]52;c;payload.go`) {
+		t.Fatalf("show output did not safely escape the control character in the path:\n%q", output)
+	}
+}
+
 func setupLintRepo(t *testing.T, source string) string {
 	t.Helper()
 
@@ -585,6 +621,7 @@ func main() {
 		println("Slop!")
 	}
 }
+
 `)
 
 	add := exec.Command("git", "-C", repoDir, "add", "go.mod", "main.go")
@@ -1007,5 +1044,130 @@ func TestCLIUnknownCommand(t *testing.T) {
 	}
 	if !strings.Contains(out, "Available commands:") {
 		t.Errorf("expected help output printed for unknown command, got:\n%s", out)
+	}
+}
+
+func TestReviewMarksStagedModeChangeAsIncomplete(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+	runGit("init")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "script.sh"), []byte("#!/bin/sh\necho ok\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "script.sh")
+	runGit("commit", "-m", "add script")
+	runGit("update-index", "--chmod=+x", "script.sh")
+
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalDir) })
+
+	output, reviewErr := captureOutput(func() error { return execute("review") })
+	if reviewErr == nil || !strings.Contains(reviewErr.Error(), "review incomplete") {
+		t.Fatalf("review error = %v, want incomplete-analysis error; output:\n%s", reviewErr, output)
+	}
+	if !strings.Contains(output, "Not fully analyzed (binary, submodule, or file-mode changes):") || !strings.Contains(output, "script.sh") {
+		t.Fatalf("review output omitted the mode-only change:\n%s", output)
+	}
+
+	var runID string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "Run ID:") {
+			runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
+			break
+		}
+	}
+	if runID == "" {
+		t.Fatalf("could not extract run ID:\n%s", output)
+	}
+	report, err := review.ReadReport(filepath.Join(repoDir, ".m3tal-review", "reports", runID+".json"))
+	if err != nil {
+		t.Fatalf("read review report: %v", err)
+	}
+	if report.Passed || !reflect.DeepEqual(report.UnanalyzedFiles, []string{"script.sh"}) {
+		t.Fatalf("report did not preserve incomplete mode analysis: %+v", report)
+	}
+}
+func TestReviewMarksStagedBinaryAsIncomplete(t *testing.T) {
+	for _, withText := range []bool{false, true} {
+		name := "binary-only"
+		if withText {
+			name = "mixed-text-and-binary"
+		}
+		t.Run(name, func(t *testing.T) {
+			repoDir := t.TempDir()
+			runGit := func(args ...string) {
+				t.Helper()
+				cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v failed: %v\n%s", args, err, output)
+				}
+			}
+			runGit("init")
+			runGit("config", "user.name", "Test User")
+			runGit("config", "user.email", "test@example.com")
+			if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("baseline\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			runGit("add", "README.md")
+			runGit("commit", "-m", "initial")
+			if err := os.WriteFile(filepath.Join(repoDir, "asset.bin"), []byte{0, 1, 2, 0, 255}, 0644); err != nil {
+				t.Fatal(err)
+			}
+			runGit("add", "asset.bin")
+			if withText {
+				if err := os.WriteFile(filepath.Join(repoDir, "change.go"), []byte("package main\n\nfunc change() { println(\"ok\") }\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				runGit("add", "change.go")
+			}
+
+			originalDir, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chdir(repoDir); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chdir(originalDir) })
+
+			output, reviewErr := captureOutput(func() error { return execute("review") })
+			if reviewErr == nil || !strings.Contains(reviewErr.Error(), "review incomplete") {
+				t.Fatalf("execute(review) error = %v, want incomplete-analysis error; output:\n%s", reviewErr, output)
+			}
+			if !strings.Contains(output, "asset.bin") || !strings.Contains(output, "Not fully analyzed (binary, submodule, or file-mode changes):") {
+				t.Fatalf("review output did not identify the unsupported file:\n%s", output)
+			}
+
+			var runID string
+			for _, line := range strings.Split(output, "\n") {
+				if strings.HasPrefix(line, "Run ID:") {
+					runID = strings.TrimSpace(strings.TrimPrefix(line, "Run ID:"))
+				}
+			}
+			report, err := review.ReadReport(filepath.Join(repoDir, ".m3tal-review", "reports", runID+".json"))
+			if err != nil {
+				t.Fatalf("read report: %v", err)
+			}
+			if report.Passed || !reflect.DeepEqual(report.UnanalyzedFiles, []string{"asset.bin"}) {
+				t.Fatalf("report does not preserve incomplete analysis state: %+v", report)
+			}
+			if withText && !reflect.DeepEqual(report.ReviewedFiles, []string{"asset.bin", "change.go"}) {
+				t.Fatalf("mixed report reviewed files = %q", report.ReviewedFiles)
+			}
+		})
 	}
 }

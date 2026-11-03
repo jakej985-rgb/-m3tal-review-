@@ -3,18 +3,19 @@ package review
 import "time"
 
 type Report struct {
-	RunID         string    `json:"run_id"`
-	Timestamp     time.Time `json:"timestamp"`
-	Repository    string    `json:"repository"`
-	Branch        string    `json:"branch"`
-	CommitSHA     string    `json:"commit_sha"`
-	BaseCommitSHA string    `json:"base_commit_sha"`
-	DiffHash      string    `json:"diff_hash"`
-	ToolVersion   string    `json:"tool_version"`
-	ReviewedFiles []string  `json:"reviewed_files"`
-	Passed        bool      `json:"passed"`
-	Summary       string    `json:"summary"`
-	Findings      []Finding `json:"findings"`
+	RunID           string    `json:"run_id"`
+	Timestamp       time.Time `json:"timestamp"`
+	Repository      string    `json:"repository"`
+	Branch          string    `json:"branch"`
+	CommitSHA       string    `json:"commit_sha"`
+	BaseCommitSHA   string    `json:"base_commit_sha"`
+	DiffHash        string    `json:"diff_hash"`
+	ToolVersion     string    `json:"tool_version"`
+	ReviewedFiles   []string  `json:"reviewed_files"`
+	UnanalyzedFiles []string  `json:"unanalyzed_files,omitempty"`
+	Passed          bool      `json:"passed"`
+	Summary         string    `json:"summary"`
+	Findings        []Finding `json:"findings"`
 }
 
 func NewReport(

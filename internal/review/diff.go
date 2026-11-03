@@ -20,6 +20,14 @@ type FileDiff struct {
 	Path       string
 	ChangeType FileChangeType
 	AddedLines []int
+	AddedText  map[int]string
+}
+
+// AddedDiffLine is a normalized source line from the new side of a Git diff.
+type AddedDiffLine struct {
+	File string
+	Line int
+	Text string
 }
 
 func unquoteDiffPath(s string) string {
@@ -149,6 +157,10 @@ func ParseDiff(diff string) []FileDiff {
 		if inHunk && current != nil {
 			if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
 				current.AddedLines = append(current.AddedLines, currentLine)
+				if current.AddedText == nil {
+					current.AddedText = make(map[int]string)
+				}
+				current.AddedText[currentLine] = strings.TrimPrefix(line, "+")
 				currentLine++
 			} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
 				// deleted line from old file; do not increment currentLine for new file
@@ -162,4 +174,19 @@ func ParseDiff(diff string) []FileDiff {
 
 	finish()
 	return fileDiffs
+}
+
+// AddedDiffLines returns added source lines with normalized paths and line numbers.
+func AddedDiffLines(diff string) []AddedDiffLine {
+	var lines []AddedDiffLine
+	for _, fileDiff := range ParseDiff(diff) {
+		for _, lineNumber := range fileDiff.AddedLines {
+			lines = append(lines, AddedDiffLine{
+				File: fileDiff.Path,
+				Line: lineNumber,
+				Text: fileDiff.AddedText[lineNumber],
+			})
+		}
+	}
+	return lines
 }

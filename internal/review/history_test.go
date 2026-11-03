@@ -53,3 +53,16 @@ func TestNewHistoryEntryFailed(t *testing.T) {
 		t.Errorf("FindingCount = %d, want 2", entry.FindingCount)
 	}
 }
+
+func TestNewHistoryEntryIncompleteAnalysis(t *testing.T) {
+	report := Report{
+		RunID:           "run-incomplete",
+		Passed:          false,
+		UnanalyzedFiles: []string{"asset.bin"},
+		Findings:        nil,
+	}
+	entry := NewHistoryEntry(report)
+	if entry.Status != "incomplete" {
+		t.Errorf("Status = %q, want incomplete", entry.Status)
+	}
+}

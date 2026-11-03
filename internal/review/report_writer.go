@@ -77,7 +77,7 @@ func writeReportWithFS(path string, report Report, ops fsOps) error {
 	cleanup = false
 
 	if err := ops.syncDir(dir); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to sync report directory %s: %v\n", dir, err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to sync report directory %s: %s\n", safeTerminalText(dir), safeTerminalText(err.Error()))
 	}
 
 	return nil

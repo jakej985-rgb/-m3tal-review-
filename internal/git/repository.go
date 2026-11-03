@@ -62,7 +62,12 @@ func CurrentBranch(path string) (string, error) {
 
 	branch := strings.TrimSpace(string(output))
 	if branch == "" {
-		return "", fmt.Errorf("get current branch: repository is in detached HEAD state")
+		command := exec.Command("git", "-C", path, "rev-parse", "--short", "HEAD")
+		output, err := command.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("get detached HEAD commit: %s: %w", strings.TrimSpace(string(output)), err)
+		}
+		return "(detached HEAD at " + strings.TrimSpace(string(output)) + ")", nil
 	}
 
 	return branch, nil
@@ -73,11 +78,20 @@ func ChangedFiles(path string) ([]string, error) {
 
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf(
-			"get changed files: %s: %w",
-			strings.TrimSpace(string(output)),
-			err,
-		)
+		// A repository without commits has no HEAD to diff against. In that case,
+		// report the staged paths, which are the tracked changes in the unborn tree.
+		headCommand := exec.Command("git", "-C", path, "rev-parse", "--verify", "HEAD")
+		if _, headErr := headCommand.CombinedOutput(); headErr != nil {
+			stagedCommand := exec.Command("git", "-C", path, "diff", "--cached", "--name-only", "-z")
+			stagedOutput, stagedErr := stagedCommand.CombinedOutput()
+			if stagedErr == nil {
+				output = stagedOutput
+				err = nil
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get changed files: %s: %w", strings.TrimSpace(string(output)), err)
+		}
 	}
 
 	files := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
@@ -171,6 +185,130 @@ func StagedFileStatuses(path string) (map[string]string, error) {
 	}
 
 	return ParseStagedFileStatuses(output)
+}
+
+// ParseBinaryFilesFromNumstat returns paths whose staged diff has no textual line counts.
+// Git emits '-' for both counts on binary files. With -z, rename records contain an
+// empty path token followed by the old and new paths.
+func ParseBinaryFilesFromNumstat(output []byte) ([]string, error) {
+	trimmed := bytes.TrimSuffix(output, []byte{0})
+	if len(trimmed) == 0 {
+		return []string{}, nil
+	}
+	tokens := bytes.Split(trimmed, []byte{0})
+	var binaryFiles []string
+	for i := 0; i < len(tokens); {
+		fields := bytes.SplitN(tokens[i], []byte{'\t'}, 3)
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("malformed git numstat record at token %d", i)
+		}
+		isBinary := bytes.Equal(fields[0], []byte("-")) && bytes.Equal(fields[1], []byte("-"))
+		path := string(fields[2])
+		i++
+		if path == "" { // rename/copy: next two tokens are old and new paths
+			if i+1 >= len(tokens) || len(tokens[i]) == 0 || len(tokens[i+1]) == 0 {
+				return nil, fmt.Errorf("malformed git numstat rename record")
+			}
+			path = string(tokens[i+1])
+			i += 2
+		}
+		if isBinary {
+			binaryFiles = append(binaryFiles, path)
+		}
+	}
+	return binaryFiles, nil
+}
+
+// StagedBinaryFiles lists staged paths represented as binary in Git's numstat output.
+func StagedBinaryFiles(path string) ([]string, error) {
+	command := exec.Command("git", "-C", path, "diff", "--cached", "--diff-filter=ACMRTUXB", "--numstat", "-z")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("get staged binary files: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return ParseBinaryFilesFromNumstat(output)
+}
+
+// StagedSubmoduleFiles lists staged paths whose index mode is a Git submodule.
+func StagedSubmoduleFiles(path string) ([]string, error) {
+	staged, err := StagedFiles(path)
+	if err != nil {
+		return nil, err
+	}
+	stagedSet := make(map[string]bool, len(staged))
+	for _, file := range staged {
+		stagedSet[file] = true
+	}
+	command := exec.Command("git", "-C", path, "ls-files", "--stage", "-z")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("get staged index modes: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	trimmed := bytes.TrimSuffix(output, []byte{0})
+	var submodules []string
+	for _, record := range bytes.Split(trimmed, []byte{0}) {
+		parts := bytes.SplitN(record, []byte{'\t'}, 2)
+		if len(parts) != 2 {
+			if len(record) == 0 {
+				continue
+			}
+			return nil, fmt.Errorf("malformed git index entry")
+		}
+		metadata := bytes.Fields(parts[0])
+		file := string(parts[1])
+		if len(metadata) >= 3 && string(metadata[0]) == "160000" && stagedSet[file] {
+			submodules = append(submodules, file)
+		}
+	}
+	return submodules, nil
+}
+
+// StagedModeChangedFiles lists staged paths whose Git mode changed without
+// treating ordinary additions and deletions as mode-only review gaps.
+func StagedModeChangedFiles(path string) ([]string, error) {
+	command := exec.Command("git", "-C", path, "diff", "--cached", "--raw", "-z", "--no-abbrev")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("get staged mode changes: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return ParseModeChangedFiles(output)
+}
+
+// ParseModeChangedFiles parses NUL-delimited raw diff records and returns paths
+// whose old and new Git modes differ, excluding added and deleted files.
+func ParseModeChangedFiles(output []byte) ([]string, error) {
+	trimmed := bytes.TrimSuffix(output, []byte{0})
+	if len(trimmed) == 0 {
+		return []string{}, nil
+	}
+	tokens := bytes.Split(trimmed, []byte{0})
+	var modeChanged []string
+	for i := 0; i < len(tokens); {
+		fields := bytes.Fields(tokens[i])
+		if len(fields) != 5 || len(fields[0]) < 2 || fields[0][0] != ':' {
+			return nil, fmt.Errorf("malformed git raw diff record at token %d", i)
+		}
+		oldMode := string(fields[0][1:])
+		newMode := string(fields[1])
+		status := string(fields[4])
+		i++
+		if i >= len(tokens) || len(tokens[i]) == 0 {
+			return nil, fmt.Errorf("malformed git raw diff path at token %d", i)
+		}
+		path := string(tokens[i])
+		i++
+		if strings.HasPrefix(status, "R") || strings.HasPrefix(status, "C") {
+			if i >= len(tokens) || len(tokens[i]) == 0 {
+				return nil, fmt.Errorf("malformed git raw diff rename path at token %d", i)
+			}
+			path = string(tokens[i])
+			i++
+		}
+		if oldMode != newMode && status[0] != 'A' && status[0] != 'D' {
+			modeChanged = append(modeChanged, path)
+		}
+	}
+	return modeChanged, nil
 }
 
 func UntrackedFiles(path string) ([]string, error) {

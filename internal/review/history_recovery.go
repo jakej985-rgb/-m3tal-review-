@@ -68,6 +68,15 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 	if historyPath == "" {
 		return 0, fmt.Errorf("history path cannot be empty")
 	}
+	historyDir := filepath.Dir(historyPath)
+	if err := os.MkdirAll(historyDir, 0755); err != nil {
+		return 0, fmt.Errorf("create history directory: %w", err)
+	}
+	unlock, err := lockHistory(historyPath)
+	if err != nil {
+		return 0, fmt.Errorf("lock history file: %w", err)
+	}
+	defer unlock()
 
 	entries, err := os.ReadDir(reportsDir)
 	if err != nil {
@@ -83,6 +92,7 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 		fileName string
 	}
 	candidates := make(map[string]reportCandidate)
+	invalidReports := false
 
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
@@ -92,12 +102,14 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 		reportPath := filepath.Join(reportsDir, entry.Name())
 		report, err := ReadReport(reportPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to read report %s: %v\n", entry.Name(), err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to read report %s: %s\n", safeTerminalText(entry.Name()), safeTerminalText(err.Error()))
+			invalidReports = true
 			continue
 		}
 
 		if report.RunID == "" || !IsValidRunID(report.RunID) || report.Timestamp.IsZero() {
-			fmt.Fprintf(os.Stderr, "Warning: skipping invalid report %s: invalid metadata\n", entry.Name())
+			fmt.Fprintf(os.Stderr, "Warning: skipping invalid report %s: invalid metadata\n", safeTerminalText(entry.Name()))
+			invalidReports = true
 			continue
 		}
 
@@ -106,15 +118,18 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 		if found {
 			preferredA, reason := compareCandidates(entry.Name(), report, existing.fileName, existing.report)
 			if preferredA {
-				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s: selected %s over %s (%s)\n", report.RunID, entry.Name(), existing.fileName, reason)
+				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s: selected %s over %s (%s)\n", safeTerminalText(report.RunID), safeTerminalText(entry.Name()), safeTerminalText(existing.fileName), safeTerminalText(reason))
 				candidates[report.RunID] = reportCandidate{entry: newEntry, report: report, fileName: entry.Name()}
 			} else {
-				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s: selected %s over %s (%s)\n", report.RunID, existing.fileName, entry.Name(), reason)
+				fmt.Fprintf(os.Stderr, "Warning: duplicate report for run ID %s: selected %s over %s (%s)\n", safeTerminalText(report.RunID), safeTerminalText(existing.fileName), safeTerminalText(entry.Name()), safeTerminalText(reason))
 			}
 			continue
 		}
 
 		candidates[report.RunID] = reportCandidate{entry: newEntry, report: report, fileName: entry.Name()}
+	}
+	if invalidReports {
+		return 0, fmt.Errorf("history recovery aborted: one or more report files were invalid; existing history was preserved")
 	}
 
 	if len(candidates) == 0 {
@@ -133,11 +148,6 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 		}
 		return recoveredEntries[i].Timestamp.Before(recoveredEntries[j].Timestamp)
 	})
-
-	historyDir := filepath.Dir(historyPath)
-	if err := os.MkdirAll(historyDir, 0755); err != nil {
-		return 0, fmt.Errorf("create history directory: %w", err)
-	}
 
 	tempFile, err := os.CreateTemp(historyDir, "history-recovery-*.tmp")
 	if err != nil {
@@ -182,7 +192,7 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 	cleanup = false
 
 	if err := ops.syncDir(historyDir); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to sync history directory %s: %v\n", historyDir, err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to sync history directory %s: %s\n", safeTerminalText(historyDir), safeTerminalText(err.Error()))
 	}
 
 	return len(recoveredEntries), nil

@@ -69,77 +69,32 @@ func (r SlopRule) Check(diff string) []Finding {
 
 func (r SlopRule) checkFileRegex(diff string, targetFile string, addedLines []int) []Finding {
 	var findings []Finding
-
 	lineMap := make(map[int]bool, len(addedLines))
 	for _, l := range addedLines {
 		lineMap[l] = true
 	}
-
-	var currentFile string
-	lineNumber := 0
-	inHunk := false
-
-	for _, line := range strings.Split(diff, "\n") {
-		if strings.HasPrefix(line, "diff --git ") {
-			inHunk = false
-			parts := strings.Split(strings.TrimPrefix(line, "diff --git "), " ")
-			if len(parts) > 1 && strings.HasPrefix(parts[1], "b/") {
-				currentFile = strings.TrimPrefix(parts[1], "b/")
-			}
+	for _, added := range AddedDiffLines(diff) {
+		if added.File != targetFile || !lineMap[added.Line] {
 			continue
 		}
-
-		if strings.HasPrefix(line, "+++ b/") {
-			currentFile = strings.TrimPrefix(line, "+++ b/")
-			inHunk = false
+		if strings.HasPrefix(strings.TrimSpace(added.Text), "//") || strings.HasPrefix(strings.TrimSpace(added.Text), "/*") {
 			continue
 		}
-
-		if matches := hunkHeader.FindStringSubmatch(line); matches != nil {
-			inHunk = true
-			lineNumber, _ = strconv.Atoi(matches[1])
-			continue
-		}
-
-		if inHunk {
-			if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-				if currentFile == targetFile && lineMap[lineNumber] {
-					addedLine := strings.TrimPrefix(line, "+")
-
-					if !strings.HasPrefix(strings.TrimSpace(addedLine), "//") && !strings.HasPrefix(strings.TrimSpace(addedLine), "/*") {
-						for _, slopPattern := range slopPatterns {
-							if slopPattern.pattern.MatchString(addedLine) {
-								if slopPattern.message == "Empty block" && strings.Contains(addedLine, "interface{}") {
-									continue
-								}
-
-								findings = append(findings, Finding{
-									Rule:        "code-slop",
-									Severity:    "low",
-									File:        currentFile,
-									Line:        lineNumber,
-									Message:     slopPattern.message,
-									Remediation: slopPattern.remediation,
-								})
-							}
-						}
-					}
-				}
-				lineNumber++
+		for _, slopPattern := range slopPatterns {
+			if !slopPattern.pattern.MatchString(added.Text) {
 				continue
 			}
-
-			if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			if slopPattern.message == "Empty block" && strings.Contains(added.Text, "interface{}") {
 				continue
 			}
-
-			if strings.HasPrefix(line, "\\") {
-				continue
-			}
-
-			if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-				lineNumber++
-			}
+			findings = append(findings, Finding{
+				Rule:        "code-slop",
+				Severity:    "low",
+				File:        added.File,
+				Line:        added.Line,
+				Message:     slopPattern.message,
+				Remediation: slopPattern.remediation,
+			})
 		}
 	}
 

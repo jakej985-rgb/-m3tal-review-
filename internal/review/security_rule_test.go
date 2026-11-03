@@ -57,3 +57,27 @@ func TestSecurityRuleName(t *testing.T) {
 		t.Errorf("Name() = %q, want %q", got, "hardcoded-credential")
 	}
 }
+
+func TestSecurityRuleFindsCredentialNameVariantsAndNormalizesQuotedPaths(t *testing.T) {
+	diff := `diff --git "a/config with spaces.go" "b/config with spaces.go"
+--- "a/config with spaces.go"
++++ "b/config with spaces.go"
+@@ -0,0 +1,3 @@
++token := "a-real-token-value"
++clientSecret := "a-real-secret-value"
++refresh-token = "another-real-secret"
+`
+
+	findings := (SecurityRule{}).Check(diff)
+	if len(findings) != 3 {
+		t.Fatalf("Check() returned %d findings, want 3: %+v", len(findings), findings)
+	}
+	for i, finding := range findings {
+		if finding.File != "config with spaces.go" {
+			t.Errorf("finding[%d].File = %q, want normalized path", i, finding.File)
+		}
+		if finding.Line != i+1 {
+			t.Errorf("finding[%d].Line = %d, want %d", i, finding.Line, i+1)
+		}
+	}
+}
