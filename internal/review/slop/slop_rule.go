@@ -6,7 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -146,8 +146,11 @@ func sourceMatchesDiff(fd FileDiff, source []byte) bool {
 }
 
 func (r SlopRule) readImplicitSource(file string) ([]byte, error) {
+	if !filepath.IsLocal(file) || file == "." {
+		return nil, os.ErrInvalid
+	}
 	if r.WorkingTree {
-		return os.ReadFile(path.Join(".", file))
+		return os.ReadFile(filepath.Join(".", file))
 	}
 	return git.StagedFileContent(".", file)
 }
@@ -185,8 +188,11 @@ func analyzeSource(fd FileDiff, source string) []Finding {
 }
 
 func (r SlopRule) readSourceForAnalysis(file string) ([]byte, error) {
+	if !filepath.IsLocal(file) || file == "." {
+		return nil, os.ErrInvalid
+	}
 	if r.WorkingTree {
-		return os.ReadFile(path.Join(r.RepositoryRoot, file))
+		return os.ReadFile(filepath.Join(r.RepositoryRoot, file))
 	}
 	return git.StagedFileContent(r.RepositoryRoot, file)
 }
@@ -349,10 +355,13 @@ func (v *slopInspector) addFinding(line int, message, remediation string) {
 }
 
 func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
+	if !filepath.IsLocal(file) || file == "." {
+		return r.analysisReadError(file, os.ErrInvalid)
+	}
 	var content []byte
 	var err error
 	if r.WorkingTree {
-		content, err = os.ReadFile(path.Join(r.RepositoryRoot, file))
+		content, err = os.ReadFile(filepath.Join(r.RepositoryRoot, file))
 	} else {
 		content, err = git.StagedFileContent(r.RepositoryRoot, file)
 	}
