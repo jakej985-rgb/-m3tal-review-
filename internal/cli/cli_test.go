@@ -894,14 +894,18 @@ func captureOutput(f func() error) (string, error) {
 }
 
 func TestCLIHelpCommand(t *testing.T) {
-	out, err := captureOutput(func() error {
-		return Run([]string{"help"})
-	})
-	if err != nil {
-		t.Fatalf("Run(help) unexpected error: %v", err)
-	}
-	if !strings.Contains(out, "Available commands:") || !strings.Contains(out, "recover-history") {
-		t.Errorf("unexpected help output:\n%s", out)
+	for _, flag := range []string{"help", "--help", "-h", "-help"} {
+		t.Run(flag, func(t *testing.T) {
+			out, err := captureOutput(func() error {
+				return Run([]string{flag})
+			})
+			if err != nil {
+				t.Fatalf("Run(%q) unexpected error: %v", flag, err)
+			}
+			if !strings.Contains(out, "Available commands:") || !strings.Contains(out, "recover-history") {
+				t.Errorf("unexpected help output for %q:\n%s", flag, out)
+			}
+		})
 	}
 
 	// Also verify default with nil args
@@ -999,14 +1003,18 @@ func containsFile(files []string, target string) bool {
 }
 
 func TestCLIVersionCommand(t *testing.T) {
-	out, err := captureOutput(func() error {
-		return Run([]string{"version"})
-	})
-	if err != nil {
-		t.Fatalf("Run(version) unexpected error: %v", err)
-	}
-	if !strings.Contains(out, "Version:") || !strings.Contains(out, "Go:") {
-		t.Errorf("unexpected version output:\n%s", out)
+	for _, flag := range []string{"version", "--version", "-v", "-version"} {
+		t.Run(flag, func(t *testing.T) {
+			out, err := captureOutput(func() error {
+				return Run([]string{flag})
+			})
+			if err != nil {
+				t.Fatalf("Run(%q) unexpected error: %v", flag, err)
+			}
+			if !strings.Contains(out, "Version:") || !strings.Contains(out, "Go:") {
+				t.Errorf("unexpected version output for %q:\n%s", flag, out)
+			}
+		})
 	}
 }
 
