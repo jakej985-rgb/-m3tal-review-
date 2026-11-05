@@ -252,3 +252,27 @@ func TestWave8Detectors(t *testing.T) {
 		})
 	}
 }
+
+func TestWave910Detectors(t *testing.T) {
+	cases := []struct {
+		rule string
+		file string
+		body string
+	}{
+		{"unsafe-code", "link.go", "package main\nimport _ \"unsafe\"\n//go:linkname nanotime runtime.nanotime\nfunc nanotime() int64\n"},
+		{"unsafe-code", "n.py", "import ctypes\ndef f(p):\n    return ctypes.string_at(p)\n"},
+		{"cleartext-websocket", "app.js", "const ws = new WebSocket(\"ws://example.com/socket\")\n"},
+		{"secret-material", "k.txt", "dop_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"},
+		{"container-privilege", "deploy.yml", "securityContext:\n  runAsUser: 0\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.rule+"/"+tc.file, func(t *testing.T) {
+			diff := extraDiff(tc.file, tc.body)
+			for _, r := range rulesByName(t, tc.rule) {
+				if !hasFinding(r.Check(diff), tc.rule) {
+					t.Errorf("rule %s did not fire on %s", tc.rule, tc.file)
+				}
+			}
+		})
+	}
+}

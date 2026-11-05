@@ -48,6 +48,9 @@ type patternRule struct {
 	// raw matches against unmasked source; required for patterns that must see
 	// inside string literals (tokens, headers, URLs, template syntax).
 	raw bool
+	// rawPatterns are matched against unmasked source even when raw is false;
+	// for signals that live in comments or string literals (//go: directives).
+	rawPatterns []langPattern
 	// anyLanguage allows patterns with LanguageUnknown to apply to all files.
 	anyLanguage bool
 }
@@ -91,6 +94,35 @@ func (r *patternRule) Check(diff string) []Finding {
 					Message:     p.message,
 					Remediation: r.remediation,
 				})
+			}
+		}
+		if !r.raw {
+			for _, p := range r.rawPatterns {
+				if p.language != fileLanguage && !(r.anyLanguage && p.language == language.LanguageUnknown) {
+					continue
+				}
+				for _, match := range p.pattern.FindAllStringIndex(block.text, -1) {
+					if !matchTouchesAdded(block, block.text, match[0], match[1]) {
+						continue
+					}
+					line := lineAtOffset(block.firstLine, block.text, match[0])
+					if r.skipLine != nil && r.skipLine.MatchString(lineContentAt(block.text, match[0])) {
+						continue
+					}
+					key := block.file + ":" + strconv.Itoa(line)
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+					findings = append(findings, Finding{
+						Rule:        r.name,
+						Severity:    r.severity,
+						File:        block.file,
+						Line:        line,
+						Message:     p.message,
+						Remediation: r.remediation,
+					})
+				}
 			}
 		}
 	}

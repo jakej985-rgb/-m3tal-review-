@@ -91,8 +91,12 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Review unsafe/cgo usage carefully; prefer memory-safe alternatives.",
 			patterns: []langPattern{
 				{language.LanguageGo, regexp.MustCompile(`\bunsafe\.(?:Pointer|Sizeof|Offsetof|Add|Slice|String|SliceData)`), "unsafe package usage"},
-				{language.LanguageGo, regexp.MustCompile(`(?m)^import\s+"C"`), "cgo import detected"},
 				{language.LanguageGo, regexp.MustCompile(`\bnet/http/pprof\b|/debug/(?:pprof|vars|expvar)`), "Debug/pprof endpoint exposure"},
+				{language.LanguagePython, regexp.MustCompile(`\bctypes\.(?:CDLL|CFUNCTYPE|pythonapi|memmove|string_at)|cffi\.FFI\b`), "Native code interface; verify memory safety"},
+			},
+			rawPatterns: []langPattern{
+				{language.LanguageGo, regexp.MustCompile(`(?m)^import\s+"C"`), "cgo import detected"},
+				{language.LanguageGo, regexp.MustCompile(`//go:linkname`), "//go:linkname grants access to unexported runtime symbols"},
 			}},
 
 		// ---- Phase 4: secrets / crypto / transport ----
@@ -146,6 +150,8 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguagePython, regexp.MustCompile(`hashlib\.(?:md5|sha1)\s*\(`), "Weak hash function; verify it is not used for security"},
 				{language.LanguageJavaScript, regexp.MustCompile(`createHash\s*\(\s*["'](?:md5|sha1)["']`), "Weak hash function; verify it is not used for security"},
 				{language.LanguageTypeScript, regexp.MustCompile(`createHash\s*\(\s*["'](?:md5|sha1)["']`), "Weak hash function; verify it is not used for security"},
+				{language.LanguageJavaScript, regexp.MustCompile(`createDecipher\s*\(`), "Deprecated createDecipher without IV parameter"},
+				{language.LanguageTypeScript, regexp.MustCompile(`createDecipher\s*\(`), "Deprecated createDecipher without IV parameter"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "timing-unsafe-compare", severity: "medium",
@@ -271,7 +277,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			name: "container-privilege", severity: "high",
 			remediation: "Avoid privileged containers and host namespace/socket access.",
 			patterns: []langPattern{
-				{language.LanguageUnknown, regexp.MustCompile(`privileged:\s*true|--privileged\b|docker\.sock|hostPID:\s*true|hostNetwork:\s*true|cap_add:[^\n]*ALL|allowPrivilegeEscalation:\s*true`), "Privileged container or host access configuration"},
+				{language.LanguageUnknown, regexp.MustCompile(`privileged:\s*true|--privileged\b|docker\.sock|hostPID:\s*true|hostNetwork:\s*true|cap_add:[^\n]*ALL|allowPrivilegeEscalation:\s*true|runAsUser:\s*0\b|readOnlyRootFilesystem:\s*false`), "Privileged container or host access configuration"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "dockerfile-remote-add", severity: "medium",
@@ -300,7 +306,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Remove the credential, rotate it, and load secrets from environment or a secrets manager.",
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`[a-z][a-z0-9+.-]*://[^/\s:@]+:[^@\s]{6,}@`), "URL with embedded credentials"},
-				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AGE-SECRET-KEY-1|BEGIN PGP PRIVATE KEY|npm_[A-Za-z0-9]{30,}|pypi-AgEI|dckr_pat_|glpat-[A-Za-z0-9_-]{15,}|AIza[0-9A-Za-z_-]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{25,}|shpat_[a-fA-F0-9]{20,}|xapp-[A-Za-z0-9-]{10,}`), "Cloud/API credential material in source"},
+				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AGE-SECRET-KEY-1|BEGIN PGP PRIVATE KEY|npm_[A-Za-z0-9]{30,}|pypi-AgEI|dckr_pat_|glpat-[A-Za-z0-9_-]{15,}|AIza[0-9A-Za-z_-]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{25,}|shpat_[a-fA-F0-9]{20,}|xapp-[A-Za-z0-9-]{10,}|dop_v1_[a-f0-9]{30,}|lin_api_[A-Za-z0-9]{30,}|sq0csp-[A-Za-z0-9_-]{20,}`), "Cloud/API credential material in source"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			raw:         true,
@@ -441,6 +447,13 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguagePython, regexp.MustCompile(`app\.run\s*\([^)]*host\s*=\s*["']0\.0\.0\.0|HTTPServer\s*\(\s*["']0\.0\.0\.0`), "Server bound to all interfaces"},
 				{language.LanguageJavaScript, regexp.MustCompile(`\.listen\s*\([^)]{0,120}0\.0\.0\.0`), "Server bound to all interfaces"},
 				{language.LanguageTypeScript, regexp.MustCompile(`\.listen\s*\([^)]{0,120}0\.0\.0\.0`), "Server bound to all interfaces"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}, raw: true,
+			name: "cleartext-websocket", severity: "medium",
+			remediation: "Use wss:// for WebSocket connections outside localhost.",
+			patterns: []langPattern{
+				{language.LanguageJavaScript, regexp.MustCompile(`["'\x60]ws://`), "Cleartext WebSocket URL"},
+				{language.LanguageTypeScript, regexp.MustCompile(`["'\x60]ws://`), "Cleartext WebSocket URL"},
 			}},
 	}
 }
