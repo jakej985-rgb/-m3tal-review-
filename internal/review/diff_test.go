@@ -243,3 +243,21 @@ func TestParseDiffRemovedLinesStartingWithDashDash(t *testing.T) {
 		t.Errorf("AddedLines = %v, want [4]", fileDiffs[0].AddedLines)
 	}
 }
+
+func BenchmarkParseDiff(b *testing.B) {
+	diff := "diff --git a/main.go b/main.go\n" +
+		"--- a/main.go\n" +
+		"+++ b/main.go\n" +
+		"@@ -1,10 +1,12 @@\n" +
+		" package main\n" +
+		"+import \"fmt\"\n" +
+		" func foo() {\n" +
+		"+    fmt.Println(\"bar\")\n" +
+		" }\n"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ParseDiff(diff)
+	}
+}
