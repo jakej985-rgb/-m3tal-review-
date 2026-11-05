@@ -22,7 +22,9 @@ func (r TLSRule) Check(diff string) []Finding {
 		if !strings.EqualFold(path.Ext(fileDiff.Path), ".go") {
 			continue
 		}
-		blocks := diffSourceBlocksForFile(diff, fileDiff.Path)
+		// Performance optimization: Generate diff source blocks directly from fileDiff
+		// instead of re-parsing the entire diff and scanning for fileDiff.Path.
+		blocks := fileDiffSourceBlocks(fileDiff)
 		if source, err := readRuleSource(r.RepositoryRoot, fileDiff.Path, r.WorkingTree); err == nil {
 			blocks = []diffSourceBlock{fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)}
 		}
