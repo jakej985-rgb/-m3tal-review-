@@ -64,15 +64,15 @@ item demonstrates clear FP-safety. Remaining E–J items are marked deferred.
 
 ## Phase C — Engineering leftovers (feasible, non-detector)
 
-- [ ] C1: `history --format json` done; add `history show --format json`
-- [ ] C2: `explain <rule>` enrichment — pull live example from a fixture map
+- [x] C1: `history --format json` done; add `history show --format json`
+- [x] C2: `explain <rule>` enrichment — pull live example from a fixture map
 - [ ] C3: Audit cache v1 — *only if* per-file attribution can be added without
       destabilizing `analyzeWorkingTree`; otherwise document as deferred
-- [ ] C4: Golden-test expansion — one fixture per rule family (slop, secrets,
+- [x] C4: Golden-test expansion — one fixture per rule family (slop, secrets,
       injection) instead of single mega-fixture
-- [ ] C5: Benchmark CI guard — `go test -bench` smoke in a `make bench` target,
+- [x] C5: Benchmark CI guard — `go test -bench` smoke in a `make bench` target,
       optional `-benchtime` flag documented in README
-- [ ] C6: `--staged-only` path subset flag (include/exclude already exist —
+- [x] C6: `--staged-only` path subset flag (include/exclude already exist —
       verify overlap, add only if missing UX)
 
 ## Phase D — Explicitly deferred (do NOT implement without new requirements)

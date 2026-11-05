@@ -748,13 +748,24 @@ func executeWithArgs(command string, commandArgs []string) error {
 		// history show <run-id> / history <run-id> prints a stored report.
 		if len(commandArgs) >= 1 && (commandArgs[0] == "show" || !strings.HasPrefix(commandArgs[0], "-")) {
 			runID := commandArgs[0]
+			rest := commandArgs[1:]
 			if runID == "show" {
-				if len(commandArgs) < 2 {
-					return fmt.Errorf("usage: m3tal-review history show <run-id>")
+				if len(rest) < 1 {
+					return fmt.Errorf("usage: m3tal-review history show <run-id> [--format json]")
 				}
-				runID = commandArgs[1]
+				runID = rest[0]
+				rest = rest[1:]
 			}
-			return commandHistoryShow(repositoryRoot, runID)
+			format := "text"
+			for i := 0; i < len(rest); i++ {
+				if rest[i] == "--format" {
+					if i+1 >= len(rest) || rest[i+1] != "json" {
+						return fmt.Errorf("usage: m3tal-review history show <run-id> [--format json]")
+					}
+					format = "json"
+				}
+			}
+			return commandHistoryShowFormat(repositoryRoot, runID, format)
 		}
 
 		// Optional filters: history [--last N] [--status S] [--scope S] [--grep text] [--format json]
@@ -1401,10 +1412,20 @@ func printHelp() {
 	fmt.Println("    --include-ignored  Include ignored untracked files (bounded by scan limits)")
 	fmt.Println("    --max-files N      Set the maximum files to read (default 10000)")
 	fmt.Println("    --max-bytes N      Set the maximum total bytes to read (default 134217728)")
-	fmt.Println("  history")
+	fmt.Println("  history [--last N] [--status S] [--scope S] [--grep text] [--format json]")
+	fmt.Println("  history show <run-id> [--format json]")
 	fmt.Println("  show <run-id>")
+	fmt.Println("  diff <file.patch>   Review an arbitrary patch file")
+	fmt.Println("  stdin               Review a diff from stdin")
+	fmt.Println("  watch               Re-review when the staged diff changes")
+	fmt.Println("  doctor              Check git/repo/storage health")
+	fmt.Println("  list-rules          List all registered rules")
+	fmt.Println("  explain <rule>      Explain a rule with an example")
+	fmt.Println("  install-hook [--force]  Install a pre-commit hook")
+	fmt.Println("  completions <bash|zsh|fish>")
 	fmt.Println("  lint")
 	fmt.Println("  recover-history")
+	fmt.Println("  version [--json]")
 	fmt.Println("  help")
 }
 

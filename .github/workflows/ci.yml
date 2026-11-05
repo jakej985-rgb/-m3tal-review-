@@ -36,6 +36,9 @@ jobs:
       - name: Run tests with race detector
         run: go test -v -race ./...
 
+      - name: Benchmark smoke
+        run: go test ./internal/review/ -run XXX -bench . -benchtime 10x
+
       - name: Build binary
         run: go build -v ./cmd/m3tal-review
 

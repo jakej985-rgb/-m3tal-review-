@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,10 @@ import (
 // commandHistoryShow prints the full stored report for a run ID, including
 // findings and the new/resolved delta computed against the previous run.
 func commandHistoryShow(repositoryRoot, runID string) error {
+	return commandHistoryShowFormat(repositoryRoot, runID, "text")
+}
+
+func commandHistoryShowFormat(repositoryRoot, runID, format string) error {
 	if runID == "" || strings.ContainsAny(runID, `/\`) || runID == "." || runID == ".." {
 		return fmt.Errorf("invalid run ID %q", runID)
 	}
@@ -48,6 +53,15 @@ func commandHistoryShow(repositoryRoot, runID string) error {
 	report, err := review.ReadReport(path)
 	if err != nil {
 		return err
+	}
+
+	if format == "json" {
+		out, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(out))
+		return nil
 	}
 
 	fmt.Printf("Run %s\n", displayText(report.RunID))
