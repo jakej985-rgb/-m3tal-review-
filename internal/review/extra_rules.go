@@ -500,5 +500,14 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageTypeScript, regexp.MustCompile(`["'\x60](?:ftp|telnet|gopher|dict)://`), "Cleartext protocol URL"},
 				{language.LanguageUnknown, regexp.MustCompile(`["'\x60](?:ftp|telnet|gopher|dict)://`), "Cleartext protocol URL"},
 			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "spreadsheet-formula-injection", severity: "medium",
+			remediation: "Prefix spreadsheet-bound cells starting with =, +, -, @ with a quote or sanitize; spreadsheet apps evaluate them as formulas.",
+			patterns: []langPattern{
+				{language.LanguagePython, regexp.MustCompile(`\b(?:csv\.(?:writer|DictWriter)|writerow|writerows|DictWriter)\b[^\n]{0,160}?(?:request\.|\.args|\.form|user_input)`), "CSV export may include request-controlled cells (formula injection risk)"},
+				{language.LanguageJavaScript, regexp.MustCompile(`\b(?:csv-stringify|csvStringify|Papa\.(?:unparse|parse)|json2csv|toCsv|\.toCSV)\b[^;\n]{0,160}?(?:req\.|request\.)`), "CSV export may include request-controlled cells (formula injection risk)"},
+				{language.LanguageTypeScript, regexp.MustCompile(`\b(?:csv-stringify|csvStringify|Papa\.(?:unparse|parse)|json2csv|toCsv|\.toCSV)\b[^;\n]{0,160}?(?:req\.|request\.)`), "CSV export may include request-controlled cells (formula injection risk)"},
+				{language.LanguageGo, regexp.MustCompile(`csv\.NewWriter[\s\S]{0,300}?(?:\.FormValue|\.URL\.Query|r\.FormValue)`), "CSV writer used near request data (formula injection risk)"},
+			}},
 	}
 }

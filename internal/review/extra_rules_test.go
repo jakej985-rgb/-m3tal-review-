@@ -308,3 +308,23 @@ func TestPhaseADetectors(t *testing.T) {
 		})
 	}
 }
+
+func TestSpreadsheetFormulaInjection(t *testing.T) {
+	cases := []struct {
+		file string
+		body string
+	}{
+		{"export.py", "import csv, request\ndef f():\n    w = csv.writer(r)\n    w.writerow([request.args.get('name')])\n"},
+		{"export.js", "const out = csvStringify(rows.map(r => req.query.name))\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			diff := extraDiff(tc.file, tc.body)
+			for _, r := range rulesByName(t, "spreadsheet-formula-injection") {
+				if !hasFinding(r.Check(diff), "spreadsheet-formula-injection") {
+					t.Errorf("rule did not fire on %s", tc.file)
+				}
+			}
+		})
+	}
+}
