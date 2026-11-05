@@ -89,10 +89,10 @@ item demonstrates clear FP-safety. Remaining E–J items are marked deferred.
 
 ## Phase E — Documentation sweep (after A–C land)
 
-- [ ] E1: README detector table regenerated from `list-rules` output
-- [ ] E2: `docs/threat-model.md` — what the tool does/doesn't catch
-- [ ] E3: FP-tuning guide — how to use suppressions/policy/baseline effectively
-- [ ] E4: `CHANGELOG.md` or release-notes section summarizing the detector waves
+- [x] E1: README detector table regenerated from `list-rules` output
+- [x] E2: `docs/threat-model.md` — what the tool does/doesn't catch
+- [x] E3: FP-tuning guide — how to use suppressions/policy/baseline effectively
+- [x] E4: `CHANGELOG.md` or release-notes section summarizing the detector waves
 
 ---
 

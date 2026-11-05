@@ -18,7 +18,7 @@ type ruleDoc struct {
 
 var ruleCatalog = []ruleDoc{
 	{"code-slop", "Code-quality heuristics: redundant boolean comparisons, empty blocks, deep nesting, else-after-return, unreachable code, long functions, mutable defaults, duplicated blocks, lint suppressions, and more (see README for the full per-language list).", "if x == true { ... }"},
-	{"todo-leftover", "TODO/FIXME/XXX markers in comments and Markdown task headings.", "// TODO: handle this"},
+	{"todo-marker", "TODO/FIXME/XXX markers in comments and Markdown task headings.", "// TODO: handle this"},
 	{"debug-leftover", "Likely debug output: fmt.Print*, console.log, println, debugger, breakpoint, etc.", "fmt.Println(\"debug\")"},
 	{"hardcoded-credential", "Credential-looking name/value assignments in source.", "password = \"hunter2\""},
 	{"exposed-secret", "High-confidence secret formats: PEM private keys and provider tokens (AWS, GitHub, GitLab, Slack, OpenAI, Stripe, Google, npm).", "AKIA..."},

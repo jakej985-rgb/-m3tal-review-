@@ -36,6 +36,110 @@ Findings are assigned to `security`, `review`, `confidence`, `risk`, or `drift` 
 
 `risk_paths` adds informational findings that do not fail a run. `forbidden_paths` and `require_together` produce actionable drift findings. Patterns use `/` separators, `*` for one path segment, and `**` for any number of segments. The policy is read from the local working tree, so a local policy can govern a staged review even before the policy file is staged.
 
+### Detector Rules
+
+All findings come from deterministic heuristics; see `m3tal-review list-rules` for the live catalog and `m3tal-review explain <rule>` for per-rule detail.
+
+**Core review & policy**
+
+| Rule | Detects |
+| --- | --- |
+| `todo-marker` | TODO/FIXME/XXX markers in comments and Markdown task headings. |
+| `debug-leftover` | Likely debug output: fmt.Print*, console.log, println, debugger, breakpoint, etc. |
+| `review-risk` | Changed paths matching configured high-risk globs in .m3tal-review-policy.json. |
+| `review-policy` | Policy violations: forbidden paths and missing coupled changes. |
+| `code-slop` | Code-quality heuristics: redundant boolean comparisons, empty blocks, deep nesting, else-after-return, unre... |
+
+**Secrets, credentials & crypto**
+
+| Rule | Detects |
+| --- | --- |
+| `hardcoded-credential` | Credential-looking name/value assignments in source. |
+| `exposed-secret` | High-confidence secret formats: PEM private keys and provider tokens (AWS, GitHub, GitLab, Slack, OpenAI, S... |
+| `secret-file` | Committed files that look like secret material by name. |
+| `secret-material` | Credential material in source: URLs with passwords, cloud keys, tokens. |
+| `hardcoded-session-secret` | Session/JWT secrets hardcoded in source. |
+| `jwt-misuse` | JWT 'none' algorithm or disabled signature verification. |
+| `weak-cryptography` | MD5/SHA-1/DES/RC4 for security purposes; math/rand/random/Math.random for token-like values. |
+| `weak-crypto-params` | ECB mode, static IVs, weak hashes, deprecated ciphers. |
+| `timing-unsafe-compare` | Secret comparisons using ==/=== instead of constant-time functions. |
+| `insecure-randomness` | Non-CSPRNG randomness for security-sensitive values. |
+| `insecure-permissions` | World-readable/writable permissions on sensitive files. |
+| `weak-encoding-crypto` | Base64/hex used where encryption may be intended. |
+| `terraform-secret` | Literal credentials in .tf files. |
+| `k8s-committed-secret` | Kubernetes Secret manifests committed to the repo. |
+
+**Injection & code execution**
+
+| Rule | Detects |
+| --- | --- |
+| `path-traversal` | File APIs fed by request input or os.Args without sanitization. |
+| `sql-injection` | String-built SQL queries via fmt.Sprintf/concat/f-strings/template literals. |
+| `ssrf` | Server-side request forgery: HTTP clients fetching request-controlled URLs. |
+| `command-injection` | Shell/process execution built from request or interpolated data. |
+| `open-redirect` | Redirect targets derived from request parameters. |
+| `template-injection` | Templates rendered from user-controlled names or content. |
+| `prototype-pollution` | Object merges/assignments with user-controlled keys; __proto__ access. |
+| `archive-extraction` | Archive extraction without member path validation (zip-slip). |
+| `xxe` | XML parsing APIs without entity-expansion protection. |
+| `injection-other` | LDAP/XPath/header/mass-assignment injection variants. |
+| `nosql-injection` | MongoDB operators or queries built from request data. |
+| `graphql-injection` | GraphQL queries interpolated with user input. |
+| `email-header-injection` | Email/SMTP headers or commands built from request data. |
+| `spreadsheet-formula-injection` | CSV exports with request-controlled cells (=,+,-,@ formulas). |
+| `dangerous-eval` | eval/exec/new Function/string setTimeout/assert-style dynamic execution. |
+| `dynamic-code-loading` | Dynamic module/code loading from user-controlled names. |
+| `unsafe-deserialization` | pickle/marshal/yaml.load/unserialize/node-serialize of untrusted data. |
+| `deserialization-gadgets` | Polymorphic/unsafe deserialization gadget chains. |
+| `unsafe-code` | unsafe/cgo/syscall/native-interface usage needing review. |
+| `rust-unsafe` | unsafe blocks in Rust code. |
+| `unsafe-c-functions` | Unbounded C library functions (gets/strcpy/sprintf). |
+
+**Web & client-side**
+
+| Rule | Detects |
+| --- | --- |
+| `cross-site-scripting` | innerHTML/outerHTML/document.write/dangerouslySetInnerHTML and template bindings that render raw HTML. |
+| `xss-extra-sinks` | Additional HTML injection sinks incl. html/template typed strings. |
+| `postmessage-origin` | postMessage without origin validation or with '*' target. |
+| `web-storage-secrets` | Tokens stored in localStorage/sessionStorage (XSS-exfiltratable). |
+| `cookie-flags` | Session cookies missing Secure/HttpOnly/SameSite; remember-me policy. |
+| `cors-misconfig` | Wildcard CORS origin combined with credentials. |
+| `cleartext-websocket` | ws:// cleartext WebSocket URLs. |
+| `insecure-protocol` | Cleartext protocols: ftp/telnet/gopher/dict URLs. |
+| `js-common-mistakes` | for...in prototype iteration, parseInt without radix. |
+
+**Transport, availability & logging**
+
+| Rule | Detects |
+| --- | --- |
+| `insecure-tls-verification` | TLS certificate verification disabled (InsecureSkipVerify, VERIFY_NONE, NODE_TLS_REJECT_UNAUTHORIZED=0). |
+| `tls-verification` | TLS verification disabled or deprecated protocol versions. |
+| `server-timeouts` | HTTP servers/clients without timeout configuration. |
+| `client-timeouts` | HTTP clients without Timeout configured. |
+| `missing-timeout` | Outbound calls without explicit timeout (requests, TLS server). |
+| `unbounded-read` | Unbounded io.ReadAll on potentially large input. |
+| `bind-all-interfaces` | Servers bound to all interfaces. |
+| `env-passthrough` | Full environment passed to subprocesses. |
+| `log-injection` | User-controlled data written to logs (log forging). |
+| `sensitive-data-logging` | Tokens/secrets/passwords written to logs. |
+
+**Supply chain, CI & infrastructure**
+
+| Rule | Detects |
+| --- | --- |
+| `unpinned-action` | GitHub Actions pinned to mutable refs instead of SHAs. |
+| `pull-request-target` | pull_request_target trigger risks running untrusted code privileged. |
+| `actions-script-injection` | GitHub context interpolated into run: blocks. |
+| `pipe-to-shell` | curl|sh style install pipes and insecure curl flags. |
+| `unpinned-image` | Container images not pinned to digests. |
+| `ci-secret-exposure` | Secrets echoed or inherited in CI workflows. |
+| `container-privilege` | Privileged containers, host namespaces, root user, hostPath. |
+| `dockerfile-remote-add` | Remote ADD/git clone in Dockerfiles (non-reproducible). |
+| `dockerfile-user` | Dockerfile runs as root. |
+| `iac-exposure` | World-open CIDRs, public ACLs, wildcard IAM, unencrypted storage. |
+| `script-file` | Committed executable scripts (.bat/.ps1/.vbs/etc). |
+
 ### Slop Analyzer Coverage
 
 `internal/review/language/lang_checker.go` identifies source languages by file extension for rules that need language-specific behavior. The slop analyzer routes each file to its language-specific implementation. Findings are limited to added lines while each syntax-aware analyzer reads the full staged file (or working-tree file during `audit`) for context.
