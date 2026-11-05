@@ -321,5 +321,14 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageJavaScript, regexp.MustCompile(`parseInt\s*\(\s*[^,()]*\s*\)`), "parseInt without radix argument"},
 				{language.LanguageTypeScript, regexp.MustCompile(`parseInt\s*\(\s*[^,()]*\s*\)`), "parseInt without radix argument"},
 			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "dynamic-code-loading", severity: "high",
+			remediation: "Do not load code from user-controlled paths or module names.",
+			patterns: []langPattern{
+				{language.LanguageJavaScript, regexp.MustCompile(`\brequire\s*\(\s*[^'"\s][^)]{0,120}|import\s*\(\s*[^'"\s][^)]{0,120}`), "Dynamic require/import of non-literal specifier"},
+				{language.LanguageTypeScript, regexp.MustCompile(`\brequire\s*\(\s*[^'"\s][^)]{0,120}|import\s*\(\s*[^'"\s][^)]{0,120}`), "Dynamic require/import of non-literal specifier"},
+				{language.LanguagePython, regexp.MustCompile(`importlib\.(?:import_module|__import__)\s*\(|__import__\s*\(`), "Dynamic import of module name"},
+				{language.LanguageGo, regexp.MustCompile(`plugin\.Open\s*\(`), "plugin.Open loads code from a path; ensure it is trusted"},
+			}},
 	}
 }

@@ -67,3 +67,18 @@ func filterBaseline(findings []review.Finding, baseline map[string]bool) []revie
 	}
 	return out
 }
+
+// writeBaseline writes finding fingerprint IDs to path (JSON array).
+func writeBaseline(path string, findings []review.Finding) error {
+	ids := make([]string, 0, len(findings))
+	for _, f := range findings {
+		if f.ID != "" {
+			ids = append(ids, f.ID)
+		}
+	}
+	data, err := json.MarshalIndent(ids, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o600)
+}

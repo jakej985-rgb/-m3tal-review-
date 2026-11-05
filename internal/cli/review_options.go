@@ -2,24 +2,35 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
 type reviewOptions struct {
-	Profile   string
-	WithTools bool
-	Only      []string
-	Skip      []string
-	FailOn    string
-	Base      string
-	Baseline  string
-	Format    string
+	Profile       string
+	WithTools     bool
+	Only          []string
+	Skip          []string
+	FailOn        string
+	Base          string
+	Baseline      string
+	Format        string
+	WriteBaseline string
+	Include       []string
+	Exclude       []string
+	SortBy        string
+	SummaryOnly   bool
+	MaxFindings   int
+	MaxDiffSize   int64
+	Rule          string
 }
 
 func parseReviewOptions(args []string) (reviewOptions, error) {
-	options := reviewOptions{Profile: "fast", Format: "text"}
+	options := reviewOptions{Profile: "fast", Format: "text", MaxDiffSize: 64 << 20}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		value := ""
@@ -44,8 +55,8 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 			if err != nil {
 				return options, err
 			}
-			if v != "fast" && v != "full" {
-				return options, fmt.Errorf("invalid profile %q; expected fast or full", v)
+			if v != "fast" && v != "full" && v != "security" && v != "slop" && v != "ci" {
+				return options, fmt.Errorf("invalid profile %q; expected fast, full, security, slop, or ci", v)
 			}
 			options.Profile = v
 		case "--only":
@@ -75,6 +86,62 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 				return options, err
 			}
 			options.Baseline = v
+		case "--write-baseline":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.WriteBaseline = v
+		case "--include":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.Include = splitRuleList(v)
+		case "--exclude":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.Exclude = splitRuleList(v)
+		case "--sort-by":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			if v != "severity" && v != "file" && v != "rule" {
+				return options, fmt.Errorf("invalid --sort-by %q; expected severity, file, or rule", v)
+			}
+			options.SortBy = v
+		case "--summary-only":
+			options.SummaryOnly = true
+		case "--max-findings":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return options, fmt.Errorf("invalid --max-findings %q; expected a positive integer", v)
+			}
+			options.MaxFindings = n
+		case "--max-diff-size":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || n < 1 {
+				return options, fmt.Errorf("invalid --max-diff-size %q; expected bytes", v)
+			}
+			options.MaxDiffSize = n
+		case "--rule":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.Rule = v
+			options.Only = []string{v}
 		case "--base":
 			v, err := next()
 			if err != nil {
@@ -86,12 +153,24 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 			if err != nil {
 				return options, err
 			}
-			if v != "text" && v != "sarif" && v != "github" {
-				return options, fmt.Errorf("invalid --format %q; expected text, sarif, or github", v)
+			if v != "text" && v != "sarif" && v != "github" && v != "json" && v != "junit" && v != "codeclimate" {
+				return options, fmt.Errorf("invalid --format %q; expected text, sarif, github, json, junit, or codeclimate", v)
 			}
 			options.Format = v
 		default:
-			return options, fmt.Errorf("unknown review option %q; usage: m3tal-review review [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--base ref] [--baseline file] [--format text|sarif|github]", arg)
+			return options, fmt.Errorf("unknown review option %q; usage: m3tal-review review [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--base ref] [--baseline file] [--format text|sarif|github|json|junit|codeclimate]", arg)
+		}
+	}
+	// Profile presets restrict the rule set for common workflows (explicit
+	// --only/--rule flags take precedence).
+	if len(options.Only) == 0 {
+		switch options.Profile {
+		case "security":
+			options.Only = []string{"hardcoded-credential", "exposed-secret", "secret-file", "secret-material", "ssrf", "command-injection", "open-redirect", "template-injection", "prototype-pollution", "archive-extraction", "xxe", "injection-other", "unsafe-code", "jwt-misuse", "hardcoded-session-secret", "tls-verification", "weak-crypto-params", "timing-unsafe-compare", "insecure-randomness", "insecure-permissions", "cors-misconfig", "cookie-flags", "web-storage-secrets", "postmessage-origin", "xss-extra-sinks", "deserialization-gadgets", "weak-encoding-crypto", "websocket-origin", "path-traversal", "weak-cryptography", "unsafe-deserialization", "dangerous-eval", "cross-site-scripting", "sql-injection", "risky-shell-execution", "world-writable-file-mode", "insecure-tls-verification", "review-risk"}
+		case "slop":
+			options.Only = []string{"code-slop"}
+		case "ci":
+			options.Only = []string{"unpinned-action", "pull-request-target", "actions-script-injection", "pipe-to-shell", "unpinned-image", "ci-secret-exposure", "container-privilege", "dockerfile-remote-add", "dockerfile-user", "secret-file", "secret-material"}
 		}
 	}
 	return options, nil
@@ -218,4 +297,72 @@ func workingTreeRules(rules []review.Rule) []review.Rule {
 		}
 	}
 	return rules
+}
+
+// filterFindingsByPath keeps findings whose file matches any --include glob
+// and drops those matching any --exclude glob. Empty lists match everything.
+func filterFindingsByPath(findings []review.Finding, include, exclude []string) []review.Finding {
+	if len(include) == 0 && len(exclude) == 0 {
+		return findings
+	}
+	out := findings[:0]
+	for _, f := range findings {
+		if len(include) > 0 && !pathMatchesAny(include, f.File) {
+			continue
+		}
+		if len(exclude) > 0 && pathMatchesAny(exclude, f.File) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+func pathMatchesAny(globs []string, path string) bool {
+	for _, g := range globs {
+		if ok, _ := filepath.Match(g, path); ok {
+			return true
+		}
+		if ok, _ := filepath.Match(g, filepath.Base(path)); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// sortFindings orders findings deterministically by the requested key.
+func sortFindings(findings []review.Finding, sortBy string) []review.Finding {
+	if sortBy == "" {
+		return findings
+	}
+	sorted := make([]review.Finding, len(findings))
+	copy(sorted, findings)
+	switch sortBy {
+	case "severity":
+		sort.SliceStable(sorted, func(i, j int) bool {
+			ri, rj := severityRank(sorted[i].Severity), severityRank(sorted[j].Severity)
+			if ri != rj {
+				return ri > rj
+			}
+			if sorted[i].File != sorted[j].File {
+				return sorted[i].File < sorted[j].File
+			}
+			return sorted[i].Line < sorted[j].Line
+		})
+	case "file":
+		sort.SliceStable(sorted, func(i, j int) bool {
+			if sorted[i].File != sorted[j].File {
+				return sorted[i].File < sorted[j].File
+			}
+			return sorted[i].Line < sorted[j].Line
+		})
+	case "rule":
+		sort.SliceStable(sorted, func(i, j int) bool {
+			if sorted[i].Rule != sorted[j].Rule {
+				return sorted[i].Rule < sorted[j].Rule
+			}
+			return sorted[i].File < sorted[j].File
+		})
+	}
+	return sorted
 }

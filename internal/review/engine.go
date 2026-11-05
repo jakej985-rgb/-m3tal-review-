@@ -1,6 +1,8 @@
 package review
 
 import (
+	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -59,7 +61,17 @@ func categoryForRule(rule string) string {
 
 // ruleTimeout bounds a single rule's analysis; a hung rule on hostile input
 // yields a timeout finding instead of stalling the review forever.
-const ruleTimeout = 2 * time.Minute
+// M3TAL_RULE_TIMEOUT (a Go duration) overrides the default.
+var ruleTimeout = func() time.Duration {
+	if v := os.Getenv("M3TAL_RULE_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 2 * time.Minute
+}()
+
+var debugRules = os.Getenv("M3TAL_DEBUG") != ""
 
 // checkRuleSafely runs a rule and converts a panic or timeout into a
 // confidence finding so one buggy rule cannot crash or stall the review.
@@ -78,8 +90,12 @@ func checkRuleSafely(rule Rule, diff string) (findings []Finding) {
 		}()
 		result <- rule.Check(diff)
 	}()
+	start := time.Now()
 	select {
 	case findings = <-result:
+		if debugRules {
+			fmt.Fprintf(os.Stderr, "rule %-28s %s %d findings\n", rule.Name(), time.Since(start).Round(time.Millisecond), len(findings))
+		}
 		return findings
 	case <-time.After(ruleTimeout):
 		return []Finding{{

@@ -147,6 +147,10 @@ func execute(command string) error {
 func executeWithArgs(command string, commandArgs []string) error {
 	switch command {
 	case "version":
+		if len(commandArgs) > 0 && commandArgs[0] == "--json" {
+			fmt.Printf("{\"name\":\"%s\",\"version\":\"%s\",\"go\":\"%s\"}\n", appName, version, runtime.Version())
+			return nil
+		}
 		fmt.Println(appName)
 		fmt.Println("Version:", version)
 		fmt.Println("Go:", runtime.Version())
@@ -161,6 +165,15 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return fmt.Errorf("usage: m3tal-review explain <rule>")
 		}
 		return explainRule(commandArgs[0])
+
+	case "stdin":
+		return commandStdin()
+
+	case "diff":
+		return commandDiff(commandArgs)
+
+	case "doctor":
+		return commandDoctor()
 
 	case "install-hook":
 		force := len(commandArgs) > 0 && commandArgs[0] == "--force"
@@ -305,6 +318,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 			fmt.Println("No staged changes to review.")
 			return nil
 		}
+		if int64(len(diff)) > options.MaxDiffSize {
+			return fmt.Errorf("diff exceeds --max-diff-size (%d bytes); re-run with a larger limit or review a smaller change set", options.MaxDiffSize)
+		}
 
 		if options.Base == "" {
 			for file, status := range stagedStatuses {
@@ -365,6 +381,17 @@ func executeWithArgs(command string, commandArgs []string) error {
 				return err
 			}
 			findings = filterBaseline(findings, baseline)
+		}
+		findings = filterFindingsByPath(findings, options.Include, options.Exclude)
+		findings = sortFindings(findings, options.SortBy)
+		if options.MaxFindings > 0 && len(findings) > options.MaxFindings {
+			findings = findings[:options.MaxFindings]
+		}
+		if options.WriteBaseline != "" {
+			if err := writeBaseline(options.WriteBaseline, findings); err != nil {
+				return err
+			}
+			fmt.Println("Baseline written:", displayText(options.WriteBaseline))
 		}
 
 		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
@@ -438,7 +465,24 @@ func executeWithArgs(command string, commandArgs []string) error {
 			fmt.Println(out)
 		case "github":
 			fmt.Print(formatFindingsGitHub(report.Findings))
+		case "json":
+			out, err := formatFindingsJSON(report.Findings)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+		case "junit":
+			fmt.Print(formatFindingsJUnit(report.Findings))
+		case "codeclimate":
+			out, err := formatFindingsCodeClimate(report.Findings)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
 		default:
+			if options.SummaryOnly {
+				break
+			}
 			for _, finding := range report.Findings {
 				location := displayText(finding.File)
 				if finding.Line > 0 {

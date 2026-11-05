@@ -119,6 +119,20 @@ m3tal-review review --format sarif    # or: github (Actions annotations)
 m3tal-review list-rules
 m3tal-review explain code-slop
 m3tal-review install-hook [--force]
+
+# More workflow options
+m3tal-review review --profile security|slop|ci
+m3tal-review review --baseline known-findings.txt --write-baseline new-baseline.json
+m3tal-review review --include "*.go" --exclude "*_test.go" --sort-by severity --max-findings 100
+m3tal-review review --format json|junit|codeclimate
+m3tal-review review --summary-only --max-diff-size 33554432
+m3tal-review review --rule code-slop
+
+# Review arbitrary diffs or check the environment
+m3tal-review diff change.patch
+cat change.diff | m3tal-review stdin
+m3tal-review doctor
+m3tal-review version --json
 m3tal-review audit --with-tools
 ```
 
@@ -166,6 +180,11 @@ m3tal-review recover-history
 ```
 
 If multiple report files contain the same Run ID (e.g., from manual copies or backups), recovery deterministically selects the canonical `<run-id>.json` report (or newest timestamp if non-canonical), ensuring no duplicate entries are introduced.
+
+### Environment variables
+
+- `M3TAL_RULE_TIMEOUT` — per-rule analysis timeout (Go duration, default `2m`)
+- `M3TAL_DEBUG` — print per-rule timing and finding counts to stderr
 
 ## Storage & Durability
 
