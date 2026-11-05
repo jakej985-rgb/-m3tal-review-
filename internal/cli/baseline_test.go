@@ -172,3 +172,34 @@ func TestUserConfigAuditDefaults(t *testing.T) {
 		t.Fatalf("config not applied to audit: %+v", opts)
 	}
 }
+
+func TestAuditCacheRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("M3TAL_NO_AUDIT_CACHE", "")
+	rules := []review.Rule{review.TodoRule{}}
+	c := newAuditCache("/tmp/repo-a", rules, true)
+	if c == nil {
+		t.Skip("cache unavailable in this environment")
+	}
+	diff := "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -0,0 +1 @@\n+// TODO: fix\n"
+	findings := []review.Finding{{Rule: "todo-marker", Severity: "low", File: "x.go", Line: 1, Message: "m"}}
+	c.put(diff, findings)
+	c.flush()
+
+	c2 := newAuditCache("/tmp/repo-a", rules, true)
+	got, ok := c2.get(diff)
+	if !ok || len(got) != 1 || got[0].Message != "m" {
+		t.Fatalf("cache round-trip failed: %+v", got)
+	}
+	// Different rule set must miss.
+	c3 := newAuditCache("/tmp/repo-a", []review.Rule{review.DebugRule{}}, true)
+	if _, ok := c3.get(diff); ok {
+		t.Fatal("cache hit across different rule sets")
+	}
+	// Timeout findings must not be cached.
+	diff2 := diff + "diff --git a/y.go b/y.go\n"
+	c.put(diff2, []review.Finding{{Rule: "x-timeout"}})
+	if _, ok := c.get(diff2); ok {
+		t.Fatal("timeout finding was cached")
+	}
+}

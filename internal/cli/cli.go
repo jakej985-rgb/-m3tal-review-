@@ -1250,11 +1250,17 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 		}
 	}
 	engine := review.NewEngine(fileRules...)
+	cache := newAuditCache(repositoryRoot, fileRules, true)
+	defer cache.flush()
 	hash := sha256.New()
 	var findings []review.Finding
 	files, unanalyzed, err := walkWorkingTree(repositoryRoot, options, func(_ string, fileDiff string) {
 		_, _ = hash.Write([]byte(fileDiff))
-		fileFindings := engine.Run(fileDiff)
+		fileFindings, ok := cache.get(fileDiff)
+		if !ok {
+			fileFindings = engine.Run(fileDiff)
+			cache.put(fileDiff, fileFindings)
+		}
 		findings = append(findings, review.ApplyFindingFilters(fileDiff, fileFindings, repositoryRoot, true)...)
 	})
 	if err != nil {

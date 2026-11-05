@@ -66,8 +66,9 @@ item demonstrates clear FP-safety. Remaining E–J items are marked deferred.
 
 - [x] C1: `history --format json` done; add `history show --format json`
 - [x] C2: `explain <rule>` enrichment — pull live example from a fixture map
-- [ ] C3: Audit cache v1 — *only if* per-file attribution can be added without
-      destabilizing `analyzeWorkingTree`; otherwise document as deferred
+- [x] C3: Audit cache v1 — per-file findings cache in user cache dir,
+      keyed by fileDiff+rule-set+schema hash; timeout findings never cached;
+      M3TAL_NO_AUDIT_CACHE=1 disables
 - [x] C4: Golden-test expansion — one fixture per rule family (slop, secrets,
       injection) instead of single mega-fixture
 - [x] C5: Benchmark CI guard — `go test -bench` smoke in a `make bench` target,
