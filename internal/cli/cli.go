@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -751,8 +752,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return commandHistoryShow(repositoryRoot, runID)
 		}
 
-		// Optional filters: history [--last N] [--status S] [--scope S] [--grep text]
+		// Optional filters: history [--last N] [--status S] [--scope S] [--grep text] [--format json]
 		last, statusFilter, scopeFilter, grepFilter := 0, "", "", ""
+		formatJSON := false
 		for i := 0; i < len(commandArgs); i++ {
 			arg := commandArgs[i]
 			if i+1 >= len(commandArgs) {
@@ -773,13 +775,23 @@ func executeWithArgs(command string, commandArgs []string) error {
 				scopeFilter = v
 			case "--grep":
 				grepFilter = strings.ToLower(v)
+			case "--format":
+				if v != "json" {
+					return fmt.Errorf("invalid --format %q; expected json", v)
+				}
+				formatJSON = true
 			default:
 				return fmt.Errorf("unknown history option %q", arg)
 			}
 		}
 
 		shown := 0
-		fmt.Println("M3TAL Review History")
+		var jsonOut []review.HistoryEntry
+		if formatJSON {
+			jsonOut = []review.HistoryEntry{}
+		} else {
+			fmt.Println("M3TAL Review History")
+		}
 		// Entries are chronological; --last shows the most recent N.
 		for idx := len(entries) - 1; idx >= 0; idx-- {
 			entry := entries[idx]
@@ -799,6 +811,10 @@ func executeWithArgs(command string, commandArgs []string) error {
 				break
 			}
 			shown++
+			if formatJSON {
+				jsonOut = append(jsonOut, entry)
+				continue
+			}
 			fmt.Printf(
 				"[%s] %s | %s | findings: %d | %s\n",
 				displayText(entry.Status),
@@ -808,7 +824,13 @@ func executeWithArgs(command string, commandArgs []string) error {
 				displayText(entry.Summary),
 			)
 		}
-		if shown == 0 {
+		if formatJSON {
+			out, err := json.MarshalIndent(jsonOut, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(out))
+		} else if shown == 0 {
 			fmt.Println("No history entries match the filters.")
 		}
 

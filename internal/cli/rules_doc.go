@@ -40,9 +40,18 @@ var ruleCatalog = []ruleDoc{
 }
 
 func listRules() error {
+	docs := make(map[string]ruleDoc, len(ruleCatalog))
+	for _, d := range ruleCatalog {
+		docs[d.Name] = d
+	}
 	fmt.Println("M3TAL Review rules")
-	for _, rule := range ruleCatalog {
-		fmt.Printf("  %-32s %s\n", rule.Name, rule.Description)
+	for _, r := range defaultRules("") {
+		name := r.Name()
+		if d, ok := docs[name]; ok {
+			fmt.Printf("  %-32s %s\n", name, d.Description)
+		} else {
+			fmt.Printf("  %-32s %s\n", name, "Heuristic detector; see README coverage notes.")
+		}
 	}
 	fmt.Println()
 	fmt.Println("The code-slop rule covers many per-language checks; see README \"Slop Analyzer Coverage\" for details.")
@@ -55,6 +64,13 @@ func explainRule(name string) error {
 			fmt.Println(rule.Name)
 			fmt.Println("  ", rule.Description)
 			fmt.Println("   Example:", rule.Example)
+			return nil
+		}
+	}
+	for _, r := range defaultRules("") {
+		if r.Name() == name {
+			fmt.Println(name)
+			fmt.Println("  Heuristic detector; suppress with '// m3tal-review: ignore " + name + "' or disable via policy 'rules'.")
 			return nil
 		}
 	}
