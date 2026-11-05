@@ -127,6 +127,8 @@ func ExtraRules(repositoryRoot string) []Rule {
 			patterns: []langPattern{
 				{language.LanguageGo, regexp.MustCompile(`InsecureSkipVerify\s*:\s*true|InsecureIgnoreHostKey`), "TLS certificate verification disabled"},
 				{language.LanguagePython, regexp.MustCompile(`verify\s*=\s*False|CERT_NONE|_create_unverified_context`), "TLS certificate verification disabled"},
+				{language.LanguageJavaScript, regexp.MustCompile(`rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED`), "TLS certificate verification disabled"},
+				{language.LanguageTypeScript, regexp.MustCompile(`rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED`), "TLS certificate verification disabled"},
 				{language.LanguageJavaScript, regexp.MustCompile(`NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized\s*:\s*false`), "TLS certificate verification disabled"},
 				{language.LanguageTypeScript, regexp.MustCompile(`NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized\s*:\s*false`), "TLS certificate verification disabled"},
 			}},
@@ -278,7 +280,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			patterns: []langPattern{
 				{language.LanguageJava, regexp.MustCompile(`@type|defaultTyping|enableDefaultTyping|new Yaml\s*\(\s*\)|XMLDecoder|SnakeYAML|ObjectInputStream|readObject\s*\(`), "Polymorphic deserialization gadget risk"},
 				{language.LanguageJavaScript, regexp.MustCompile(`node-serialize|funcster|serialize-javascript`), "Unsafe JS deserialization library"},
-				{language.LanguagePython, regexp.MustCompile(`cloudpickle|joblib\.load|marshal\.loads?`), "Unsafe deserialization module"},
+				{language.LanguagePython, regexp.MustCompile(`cloudpickle|joblib\.load|marshal\.loads?|pickle\.loads?|yaml\.load\s*\(`), "Unsafe deserialization; verify the loader is safe (SafeLoader)"},
 				{language.LanguageCSharp, regexp.MustCompile(`BinaryFormatter|LosFormatter|ObjectStateFormatter|NetDataContractSerializer`), "Unsafe .NET deserialization formatter"},
 				{language.LanguagePHP, regexp.MustCompile(`\bunserialize\s*\(`), "PHP unserialize on data; verify it is trusted"},
 			}},
@@ -288,7 +290,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Remove the credential, rotate it, and load secrets from environment or a secrets manager.",
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`[a-z][a-z0-9+.-]*://[^/\s:@]+:[^@\s]{6,}@`), "URL with embedded credentials"},
-				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key`), "Cloud/API credential material in source"},
+				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}`), "Cloud/API credential material in source"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			raw:         true,

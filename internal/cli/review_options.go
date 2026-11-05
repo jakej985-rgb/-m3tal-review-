@@ -20,6 +20,8 @@ type reviewOptions struct {
 	Baseline      string
 	Format        string
 	WriteBaseline string
+	CheckRun      bool
+	CheckRunSHA   string
 	Include       []string
 	Exclude       []string
 	SortBy        string
@@ -86,6 +88,14 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 				return options, err
 			}
 			options.Baseline = v
+		case "--check-run":
+			options.CheckRun = true
+		case "--check-run-sha":
+			if i+1 >= len(args) {
+				return options, fmt.Errorf("--check-run-sha requires a value")
+			}
+			i++
+			options.CheckRunSHA = args[i]
 		case "--write-baseline":
 			v, err := next()
 			if err != nil {

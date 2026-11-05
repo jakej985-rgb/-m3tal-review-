@@ -49,3 +49,12 @@ func TestFilterBaseline(t *testing.T) {
 		t.Fatalf("out = %+v", out)
 	}
 }
+
+func TestPostCheckRunRequiresEnv(t *testing.T) {
+	for _, k := range []string{"GITHUB_TOKEN", "GH_TOKEN", "GITHUB_REPOSITORY", "GITHUB_SHA"} {
+		t.Setenv(k, "")
+	}
+	if err := postCheckRun(nil, ""); err == nil {
+		t.Fatal("expected error without GitHub env configuration")
+	}
+}

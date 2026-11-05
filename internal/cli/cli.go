@@ -402,6 +402,12 @@ func executeWithArgs(command string, commandArgs []string) error {
 			}
 			fmt.Println("Baseline written:", displayText(options.WriteBaseline))
 		}
+		if options.CheckRun {
+			if err := postCheckRun(findings, options.CheckRunSHA); err != nil {
+				return fmt.Errorf("post check run: %w", err)
+			}
+			fmt.Println("Check run posted.")
+		}
 
 		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
 		if err != nil {
@@ -567,6 +573,19 @@ func executeWithArgs(command string, commandArgs []string) error {
 		findings, reviewedFiles, unanalyzedFiles, snapshotHash, err := analyzeWorkingTree(repositoryRoot, options, rules)
 		if err != nil {
 			return err
+		}
+		if options.Baseline != "" {
+			baseline, err := loadBaseline(options.Baseline)
+			if err != nil {
+				return err
+			}
+			findings = filterBaseline(findings, baseline)
+		}
+		if options.WriteBaseline != "" {
+			if err := writeBaseline(options.WriteBaseline, findings); err != nil {
+				return err
+			}
+			fmt.Println("Baseline written:", displayText(options.WriteBaseline))
 		}
 		var confidenceChecks []review.CheckResult
 		if options.Profile == "full" {
@@ -952,6 +971,8 @@ type auditOptions struct {
 	Skip           []string
 	FailOn         string
 	Format         string
+	Baseline       string
+	WriteBaseline  string
 }
 
 func defaultAuditOptions() auditOptions {
@@ -970,6 +991,16 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 		switch {
 		case arg == "--include-ignored":
 			options.IncludeIgnored = true
+		case arg == "--baseline" || arg == "--write-baseline":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("%s requires a file path", arg)
+			}
+			i++
+			if arg == "--baseline" {
+				options.Baseline = args[i]
+			} else {
+				options.WriteBaseline = args[i]
+			}
 		case arg == "--only" || arg == "--skip" || arg == "--fail-on" || arg == "--format":
 			if i+1 >= len(args) {
 				return auditOptions{}, fmt.Errorf("%s requires a value", arg)
@@ -1035,7 +1066,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				options.MaxBytes = value
 			}
 		default:
-			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate]", arg)
+			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate] [--baseline file] [--write-baseline file]", arg)
 		}
 	}
 	return options, nil
