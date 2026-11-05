@@ -6,6 +6,17 @@ import (
 	"strings"
 )
 
+var slopDebugLeftoverPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`^debugger\s*;?\s*$`),
+	regexp.MustCompile(`^breakpoint\s*\(\s*\)`),
+	regexp.MustCompile(`^import\s+.*\bipdb\b|^import\s+pdb\b|set_trace\s*\(`),
+	regexp.MustCompile(`\bdbg!\s*\(`),
+	regexp.MustCompile(`\bruntime\.Breakpoint\s*\(`),
+	regexp.MustCompile(`\b(?:binding\.pry|debugger\b)`),
+	regexp.MustCompile(`\bvar_dump\s*\(|\bdd\s*\(\s*\$`),
+	regexp.MustCompile(`System\.out\.println|printStackTrace\s*\(`),
+}
+
 var slopSuppressionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^//+\s*(?:nolint\b|eslint-disable|noinspection|ts-ignore|ts-nocheck|ts-expect-error|revive:disable|staticcheck:ignore)`),
 	regexp.MustCompile(`^#+\s*(?:noinspection|pragma:\s*no\s*cover|fmt:\s*(?:off|on|skip)|isort:\s*(?:skip|off)|mypy:\s*ignore)`),
@@ -32,6 +43,38 @@ func checkSlopLineExtras(fd FileDiff) []Finding {
 		for _, pattern := range slopSuppressionPatterns {
 			if pattern.MatchString(trimmed) {
 				appendSlopFinding(&findings, seen, fd.Path, line, "Lint suppression without justification", "Suppressions hide findings; add a short justification or fix the underlying issue.")
+				break
+			}
+		}
+	}
+
+	// Line hygiene: trailing whitespace, long lines, mixed indentation,
+	// debug leftovers, and runs of blank lines.
+	blankRun := 0
+	for _, line := range lines {
+		raw := fd.AddedText[line]
+		trimmedRaw := strings.TrimRight(raw, " \t\r")
+		if trimmedRaw != raw {
+			appendSlopFinding(&findings, seen, fd.Path, line, "Trailing whitespace", "Remove trailing spaces or tabs.")
+		}
+		if len(raw) > 120 {
+			appendSlopFinding(&findings, seen, fd.Path, line, "Line exceeds 120 characters", "Consider wrapping the line for readability.")
+		}
+		indent := raw[:len(raw)-len(strings.TrimLeft(raw, " \t"))]
+		if strings.Contains(indent, " ") && strings.Contains(indent, "\t") {
+			appendSlopFinding(&findings, seen, fd.Path, line, "Mixed tabs and spaces in indentation", "Pick one indentation style consistently.")
+		}
+		if strings.TrimSpace(raw) == "" {
+			blankRun++
+			if blankRun == 3 {
+				appendSlopFinding(&findings, seen, fd.Path, line-2, "Excessive consecutive blank lines", "Collapse runs of blank lines to at most two.")
+			}
+		} else {
+			blankRun = 0
+		}
+		for _, pattern := range slopDebugLeftoverPatterns {
+			if pattern.MatchString(strings.TrimSpace(raw)) {
+				appendSlopFinding(&findings, seen, fd.Path, line, "Debug leftover statement", "Remove debugger/breakpoint statements before committing.")
 				break
 			}
 		}
@@ -192,4 +235,58 @@ func dupBlockSubstantive(lines []string) bool {
 		}
 	}
 	return letters >= 4 && operators >= 2
+}
+
+// crossFileDuplicateFindings extends duplicate-block detection across all
+// changed files in the diff: identical normalized 4-line sequences appearing
+// in different files are flagged once per extra file.
+func crossFileDuplicateFindings(fileDiffs []FileDiff) []Finding {
+	type ref struct {
+		file string
+		line int
+	}
+	firstSeen := make(map[string]ref)
+	seen := make(map[string]bool)
+	var findings []Finding
+	for _, fd := range fileDiffs {
+		if fd.ChangeType == FileDeleted || len(fd.AddedLines) == 0 {
+			continue
+		}
+		lines := make([]int, 0, len(fd.AddedLines))
+		for _, line := range fd.AddedLines {
+			lines = append(lines, line)
+		}
+		sort.Ints(lines)
+		// Contiguous runs of added lines.
+		var runs [][]int
+		var norms [][]string
+		for _, line := range lines {
+			if len(runs) == 0 || line != runs[len(runs)-1][len(runs[len(runs)-1])-1]+1 {
+				runs = append(runs, nil)
+				norms = append(norms, nil)
+			}
+			r := len(runs) - 1
+			runs[r] = append(runs[r], line)
+			norms[r] = append(norms[r], normalizeSlopLine(fd.AddedText[line]))
+		}
+		for r, run := range runs {
+			norm := norms[r]
+			for i := 0; i+4 <= len(norm); i++ {
+				gram := strings.Join(norm[i:i+4], "\n")
+				if !dupBlockSubstantive(norm[i:i+4]) || dupBlockAllComments(norm[i:i+4]) {
+					continue
+				}
+				if prev, ok := firstSeen[gram]; ok && prev.file != fd.Path {
+					appendSlopFinding(&findings, seen, fd.Path, run[i], "Code block duplicated across files", "The same block appears in "+prev.file+"; extract it into a shared helper.")
+					i += 3
+					continue
+				}
+				if _, ok := firstSeen[gram]; !ok {
+					firstSeen[gram] = ref{file: fd.Path, line: run[i]}
+				}
+			}
+			_ = r
+		}
+	}
+	return findings
 }

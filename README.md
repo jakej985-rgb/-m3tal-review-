@@ -12,7 +12,7 @@ It provides actionable findings, records review trails (history), and supports a
 - **Staged-Only Semantics**: `review` accurately inspects staged content from the Git index (`git show :<file>`). Working-tree modifications that have not been staged are ignored. Deleted files are classified and handled without invoking AST analysis or generating false errors.
 - **Working-Tree Audit**: `audit` checks tracked files present in the working tree, including unchanged files, plus non-ignored untracked files. Use `audit --include-ignored` to include ignored files such as `.env`. The scan defaults to 10,000 files and 128 MiB; files beyond either limit are reported as unanalyzed and make the run incomplete. Binary files, submodules, unreadable files, external symlinks, and common source languages without an analyzer are also reported as unanalyzed. The audit skips Git metadata and generated `.m3tal-review` data, and does not stage files or change the Git index.
 - **Analysis Error Reporting**: Syntax errors in staged Go code or git index retrieval errors produce distinct high-severity findings (`code-slop-analysis-error`), ensuring that analysis failures cannot result in a passing review.
-- **Security Checks**: Heuristic checks detect likely hardcoded credentials and exposed secrets (private key blocks, cloud/SCM/API tokens), world-writable file permissions, disabled Go TLS verification, risky shell APIs, request-controlled file paths, weak cryptography and non-cryptographic randomness for secrets, unsafe deserialization, dynamic code evaluation, DOM-based XSS sinks, and string-built SQL queries. These checks are not a general security review: they do not perform data-flow analysis, framework-specific analysis, or complete parsing of every supported language. A passing run means only that the configured checks found no findings; it does not establish that the code is secure.
+- **Security Checks**: Heuristic checks detect likely hardcoded credentials and exposed secrets (private key blocks, cloud/SCM/API tokens), committed secret files (.env, keys, credentials), world-writable file permissions, disabled TLS verification, risky shell APIs, request-controlled file paths and URLs (SSRF, command injection, open redirect), template injection, prototype pollution, unsafe archive extraction, XXE-prone XML parsing, weak cryptography and non-cryptographic randomness, ECB/static-IV cipher use, timing-unsafe secret comparisons, JWT `alg:none` and hardcoded session secrets, cookies without flags, credentials in web storage, missing postMessage origin checks, additional XSS sinks, CORS wildcard origins, unsafe deserialization, dynamic code evaluation, DOM-based XSS sinks, and string-built SQL/LDAP/XPath queries. Supply-chain checks flag unpinned GitHub Actions, `pull_request_target`, `${{ }}` script injection, curl|sh pipelines, unpinned images, CI secret exposure, privileged containers, and remote `ADD`/`git clone` in Dockerfiles. These checks are not a general security review: they do not perform data-flow analysis, framework-specific analysis, or complete parsing of every supported language. A passing run means only that the configured checks found no findings; it does not establish that the code is secure.
 - **Confidence Profile**: `review --profile full` and `audit --profile full` also run `gofmt`, `go vet`, and `go test ./...`, with a five-minute timeout per command. This runs the repository's tests, so use it when you want code execution as part of review. `fast` remains the default.
 - **Optional Local Scanners**: `--with-tools` runs installed `gitleaks`, `gosec`, and `osv-scanner` binaries using fixed command arguments and five-minute timeouts. Missing tools and execution failures are reported as incomplete checks. Gitleaks report output is redacted and only finding metadata is saved. OSV Scanner may need its local vulnerability database or network access, depending on its configuration. No scanner is invoked unless requested.
 - **Code Quality**: Identifies `TODO`/`FIXME`/`XXX` comments and Markdown task headings, plus likely debug output in source files. String literals and non-source artifacts are excluded.
@@ -108,6 +108,17 @@ Run additional installed local security scanners explicitly:
 
 ```bash
 m3tal-review review --with-tools
+
+# Filter rules, gate on severity, review against a base ref, or emit CI formats
+m3tal-review review --only code-slop,secret-file --skip debug-leftover
+m3tal-review review --fail-on high
+m3tal-review review --base origin/main
+m3tal-review review --format sarif    # or: github (Actions annotations)
+
+# List rules, explain one, or install a pre-commit hook
+m3tal-review list-rules
+m3tal-review explain code-slop
+m3tal-review install-hook [--force]
 m3tal-review audit --with-tools
 ```
 

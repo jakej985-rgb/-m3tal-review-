@@ -39,6 +39,7 @@ func (r SlopRule) Analyze(fileDiffs []FileDiff) []Finding {
 		findings = append(findings, r.checkFile(fd)...)
 		findings = append(findings, checkSlopLineExtras(fd)...)
 	}
+	findings = append(findings, crossFileDuplicateFindings(fileDiffs)...)
 
 	return findings
 }
@@ -484,6 +485,7 @@ func analyzeGoSourceAST(file string, content []byte, addedLines []int) []Finding
 					inspector.addFinding(findingLine, "Redundant boolean comparison", "Remove the explicit comparison to true/false. Use the boolean expression directly.")
 				}
 			}
+			inspector.checkDivBeforeMul(node)
 		case *ast.IfStmt:
 			inspector.checkEmptyBlock(node.Body)
 			if els, ok := node.Else.(*ast.BlockStmt); ok {
@@ -497,13 +499,29 @@ func analyzeGoSourceAST(file string, content []byte, addedLines []int) []Finding
 			inspector.checkIgnoredCallResult(node)
 		case *ast.FuncDecl:
 			inspector.checkFunctionSize(node)
+			inspector.checkResourceClose(node)
+			inspector.checkInitFunc(node)
+			inspector.checkCyclomatic(node)
 		case *ast.ForStmt:
 			// "for {}" is a deliberate infinite loop, not slop.
 			if node.Init != nil || node.Cond != nil || node.Post != nil {
 				inspector.checkEmptyBlock(node.Body)
 			}
+			inspector.checkStringConcatLoop(node)
+			inspector.checkDeferInLoop(node)
 		case *ast.RangeStmt:
 			inspector.checkEmptyBlock(node.Body)
+			inspector.checkStringConcatLoop(node)
+			inspector.checkDeferInLoop(node)
+		case *ast.ExprStmt:
+			inspector.checkIgnoredErrorCall(node)
+			inspector.checkUncheckedAssert(node)
+		case *ast.CallExpr:
+			if fn := inspector.enclosingFuncDecl(); fn != nil {
+				inspector.checkMustCompile(node)
+				inspector.checkFatalOutsideMain(fn, node)
+			}
+			inspector.checkSleep(node)
 		}
 
 		return true

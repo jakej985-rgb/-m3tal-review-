@@ -387,3 +387,99 @@ func StagedDiff(path string) (string, error) {
 
 	return string(output), nil
 }
+
+// WorkingTreeDiffAgainst returns the patch of working-tree changes relative to
+// a base ref (used by "review --base").
+func WorkingTreeDiffAgainst(path, ref string) (string, error) {
+	command := exec.Command(
+		"git",
+		"-c", "core.fsmonitor=false",
+		"-C",
+		path,
+		"diff",
+		ref,
+		"--no-ext-diff",
+		"--unified=0",
+	)
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf(
+			"get diff against %s: %s: %w",
+			ref,
+			strings.TrimSpace(string(output)),
+			err,
+		)
+	}
+
+	return string(output), nil
+}
+
+// ChangedFilesAgainst lists files differing between the working tree and ref.
+func ChangedFilesAgainst(path, ref string) ([]string, error) {
+	command := exec.Command(
+		"git",
+		"-c", "core.fsmonitor=false",
+		"-C",
+		path,
+		"diff",
+		"--name-only",
+		"-z",
+		ref,
+	)
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list files changed against %s: %s: %w",
+			ref,
+			strings.TrimSpace(string(output)),
+			err,
+		)
+	}
+
+	trimmed := strings.TrimRight(string(output), "\x00")
+	if trimmed == "" {
+		return nil, nil
+	}
+	files := strings.Split(trimmed, "\x00")
+	sort.Strings(files)
+	return files, nil
+}
+
+// BinaryFilesAgainst lists files that differ from ref and are binary.
+func BinaryFilesAgainst(path, ref string) ([]string, error) {
+	command := exec.Command(
+		"git",
+		"-c", "core.fsmonitor=false",
+		"-C",
+		path,
+		"diff",
+		"--numstat",
+		"-z",
+		ref,
+	)
+
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list binary files against %s: %s: %w",
+			ref,
+			strings.TrimSpace(string(output)),
+			err,
+		)
+	}
+
+	var files []string
+	for _, record := range strings.Split(string(output), "\x00") {
+		fields := strings.SplitN(record, "\t", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		if fields[0] == "-" && fields[1] == "-" {
+			files = append(files, fields[2])
+		}
+	}
+	sort.Strings(files)
+	return files, nil
+}

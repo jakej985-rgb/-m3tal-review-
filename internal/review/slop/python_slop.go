@@ -214,6 +214,9 @@ func analyzePythonSlop(file, source string, added map[int]bool) []Finding {
 	for _, finding := range pythonFStringBooleanFindings(file, source, added) {
 		appendSlopFinding(&findings, seen, file, finding.Line, finding.Message, finding.Remediation)
 	}
+	for _, finding := range pythonExtraFindings(file, source, added) {
+		appendSlopFinding(&findings, seen, file, finding.Line, finding.Message, finding.Remediation)
+	}
 	return findings
 }
 
@@ -533,4 +536,90 @@ func stripPythonComment(line string, tripleQuote *byte, tripleSize *int, normalQ
 	}
 	*normalQuote = continuedQuote
 	return string(clean)
+}
+
+var (
+	pythonTypeCompare  = regexp.MustCompile(`\btype\s*\(\s*[\w.]+\s*\)\s*={1,2}\s*[A-Z]\w*`)
+	pythonIsLiteral    = regexp.MustCompile(`\bis\s+(?:not\s+)?(?:\d|["'])`)
+	pythonGlobalStmt   = regexp.MustCompile(`^\s*global\s+\w+`)
+	pythonMutableClass = regexp.MustCompile(`^\s*([A-Za-z_]\w*)\s*=\s*(?:\[\s*\]|\{\s*\}|set\s*\(|list\s*\(|dict\s*\()`)
+	pythonDefHeader    = regexp.MustCompile(`^\s*(?:async\s+)?def\s+\w+`)
+	pythonClassHeader  = regexp.MustCompile(`^\s*class\s+\w+`)
+	pythonFinallyHdr   = regexp.MustCompile(`^\s*finally\s*:`)
+	pythonTerminating  = regexp.MustCompile(`^\s*(?:return\b|break\b|continue\b)`)
+)
+
+// pythonExtraFindings covers Python-specific style/correctness heuristics:
+// type()== comparisons, is-with-literals, global statements, mutable class
+// attributes, return/break/continue inside finally, and long functions.
+func pythonExtraFindings(file, source string, added map[int]bool) []Finding {
+	var findings []Finding
+	rawLines := strings.Split(source, "\n")
+	// Mutable class attributes: track class bodies; a plain `name = []/{}/()`
+	// at class-body indent is shared mutable state.
+	classIndent := -1
+	for i, raw := range rawLines {
+		lineNo := i + 1
+		code := strings.TrimSpace(raw)
+		indent := pythonIndent(raw)
+		if classIndent >= 0 && indent <= classIndent {
+			classIndent = -1
+		}
+		if m := pythonClassHeader.FindStringSubmatch(raw); m != nil {
+			classIndent = indent
+			continue
+		}
+		if classIndent >= 0 && indent == classIndent+4 {
+			if pythonMutableClass.MatchString(raw) {
+				if added[lineNo] {
+					findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: lineNo, Message: "Mutable class attribute", Remediation: "Move the mutable default into __init__ or use a tuple/immutable default."})
+				}
+			}
+		}
+		if added[lineNo] {
+			switch {
+			case pythonTypeCompare.MatchString(code):
+				findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: lineNo, Message: "type() comparison instead of isinstance()", Remediation: "Use isinstance(x, T) which also handles subclasses."})
+			case pythonIsLiteral.MatchString(code):
+				findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: lineNo, Message: "'is'/'is not' compared against a literal", Remediation: "Use == / != for value comparison; 'is' is for identity."})
+			case pythonGlobalStmt.MatchString(code):
+				findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: lineNo, Message: "global statement mutates module state", Remediation: "Pass state explicitly or refactor to avoid hidden global mutation."})
+			}
+		}
+	}
+	// return/break/continue inside finally swallows in-flight exceptions.
+	finallyIndent := -1
+	for i, raw := range rawLines {
+		lineNo := i + 1
+		indent := pythonIndent(raw)
+		if finallyIndent >= 0 && strings.TrimSpace(raw) != "" && indent <= finallyIndent {
+			finallyIndent = -1
+		}
+		if pythonFinallyHdr.MatchString(raw) {
+			finallyIndent = indent
+			continue
+		}
+		if finallyIndent >= 0 && indent > finallyIndent && pythonTerminating.MatchString(raw) && added[lineNo] {
+			findings = append(findings, Finding{Rule: "code-slop", Severity: "medium", File: file, Line: lineNo, Message: "Terminating statement inside finally", Remediation: "return/break/continue in finally suppresses in-flight exceptions; restructure error handling."})
+		}
+	}
+	// Long functions (>80 lines) measured by dedent.
+	for i, raw := range rawLines {
+		if !pythonDefHeader.MatchString(raw) || !added[i+1] {
+			continue
+		}
+		defIndent := pythonIndent(raw)
+		end := i + 1
+		for end < len(rawLines) {
+			next := strings.TrimSpace(rawLines[end])
+			if next != "" && pythonIndent(rawLines[end]) <= defIndent {
+				break
+			}
+			end++
+		}
+		if end-i-1 > 80 {
+			findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: i + 1, Message: "Function exceeds 80 lines", Remediation: "Consider splitting the function into smaller, focused helpers."})
+		}
+	}
+	return findings
 }

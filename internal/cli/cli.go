@@ -153,6 +153,19 @@ func executeWithArgs(command string, commandArgs []string) error {
 
 		return nil
 
+	case "list-rules":
+		return listRules()
+
+	case "explain":
+		if len(commandArgs) != 1 {
+			return fmt.Errorf("usage: m3tal-review explain <rule>")
+		}
+		return explainRule(commandArgs[0])
+
+	case "install-hook":
+		force := len(commandArgs) > 0 && commandArgs[0] == "--force"
+		return installHook(force)
+
 	case "check":
 		workingDir, err := os.Getwd()
 		if err != nil {
@@ -225,10 +238,11 @@ func executeWithArgs(command string, commandArgs []string) error {
 		return nil
 
 	case "review":
-		profile, withTools, err := parseReviewOptions(commandArgs)
+		options, err := parseReviewOptions(commandArgs)
 		if err != nil {
 			return err
 		}
+		profile, withTools := options.Profile, options.WithTools
 		workingDir, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get working directory: %w", err)
@@ -248,9 +262,43 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return err
 		}
 
-		diff, err := git.StagedDiff(repositoryRoot)
-		if err != nil {
-			return err
+		var diff string
+		var stagedFiles, unanalyzedFiles []string
+		var stagedStatuses map[string]string
+		if options.Base != "" {
+			diff, err = git.WorkingTreeDiffAgainst(repositoryRoot, options.Base)
+			if err != nil {
+				return err
+			}
+			stagedFiles, err = git.ChangedFilesAgainst(repositoryRoot, options.Base)
+			if err != nil {
+				return err
+			}
+			unanalyzedFiles, err = git.BinaryFilesAgainst(repositoryRoot, options.Base)
+			if err != nil {
+				return err
+			}
+			stagedStatuses = map[string]string{}
+			for _, file := range stagedFiles {
+				stagedStatuses[file] = "M"
+			}
+		} else {
+			diff, err = git.StagedDiff(repositoryRoot)
+			if err != nil {
+				return err
+			}
+			stagedFiles, err = git.StagedFiles(repositoryRoot)
+			if err != nil {
+				return err
+			}
+			unanalyzedFiles, err = git.StagedBinaryFiles(repositoryRoot)
+			if err != nil {
+				return err
+			}
+			stagedStatuses, err = git.StagedFileStatuses(repositoryRoot)
+			if err != nil {
+				return err
+			}
 		}
 
 		if diff == "" {
@@ -258,40 +306,30 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return nil
 		}
 
-		stagedFiles, err := git.StagedFiles(repositoryRoot)
-		if err != nil {
-			return err
-		}
-		unanalyzedFiles, err := git.StagedBinaryFiles(repositoryRoot)
-		if err != nil {
-			return err
-		}
-		stagedStatuses, err := git.StagedFileStatuses(repositoryRoot)
-		if err != nil {
-			return err
-		}
-		for file, status := range stagedStatuses {
-			if status != "D" && (language.CodeChecker{}).Language(file) == language.LanguageUnknown && language.IsLikelySourceFile(file) {
-				unanalyzedFiles = append(unanalyzedFiles, file)
+		if options.Base == "" {
+			for file, status := range stagedStatuses {
+				if status != "D" && (language.CodeChecker{}).Language(file) == language.LanguageUnknown && language.IsLikelySourceFile(file) {
+					unanalyzedFiles = append(unanalyzedFiles, file)
+				}
 			}
-		}
-		submoduleFiles, err := git.StagedSubmoduleFiles(repositoryRoot)
-		if err != nil {
-			return err
-		}
-		unanalyzedFiles = append(unanalyzedFiles, submoduleFiles...)
-		modeChangedFiles, err := git.StagedModeChangedFiles(repositoryRoot)
-		if err != nil {
-			return err
-		}
-		seenUnanalyzed := make(map[string]bool, len(unanalyzedFiles))
-		for _, file := range unanalyzedFiles {
-			seenUnanalyzed[file] = true
-		}
-		for _, file := range modeChangedFiles {
-			if !seenUnanalyzed[file] {
-				unanalyzedFiles = append(unanalyzedFiles, file)
+			submoduleFiles, err := git.StagedSubmoduleFiles(repositoryRoot)
+			if err != nil {
+				return err
+			}
+			unanalyzedFiles = append(unanalyzedFiles, submoduleFiles...)
+			modeChangedFiles, err := git.StagedModeChangedFiles(repositoryRoot)
+			if err != nil {
+				return err
+			}
+			seenUnanalyzed := make(map[string]bool, len(unanalyzedFiles))
+			for _, file := range unanalyzedFiles {
 				seenUnanalyzed[file] = true
+			}
+			for _, file := range modeChangedFiles {
+				if !seenUnanalyzed[file] {
+					unanalyzedFiles = append(unanalyzedFiles, file)
+					seenUnanalyzed[file] = true
+				}
 			}
 		}
 
@@ -300,7 +338,12 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return err
 		}
 
-		engine := review.NewEngine(defaultRules(repositoryRoot)...)
+		rules := defaultRules(repositoryRoot)
+		if options.Base != "" {
+			rules = workingTreeRules(rules)
+		}
+		rules = filterRules(rules, options.Only, options.Skip)
+		engine := review.NewEngine(rules...)
 
 		findings := engine.Run(diff)
 		var confidenceChecks []review.CheckResult
@@ -314,6 +357,8 @@ func executeWithArgs(command string, commandArgs []string) error {
 			findings = append(findings, toolFindings...)
 			confidenceChecks = append(confidenceChecks, results...)
 		}
+		workingTree := options.Base != ""
+		findings = review.ApplyFindingFilters(diff, findings, repositoryRoot, workingTree)
 
 		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
 		if err != nil {
@@ -377,21 +422,49 @@ func executeWithArgs(command string, commandArgs []string) error {
 			}
 		}
 
-		for _, finding := range report.Findings {
-			location := displayText(finding.File)
-			if finding.Line > 0 {
-				location = fmt.Sprintf("%s:%d", location, finding.Line)
+		switch options.Format {
+		case "sarif":
+			out, err := formatFindingsSarif(report.Findings)
+			if err != nil {
+				return err
 			}
-			fmt.Printf(
-				"[%s] %s: %s (%s)\n",
-				displayText(finding.Severity),
-				location,
-				displayText(finding.Message),
-				displayText(finding.Rule),
-			)
-			if finding.Remediation != "" {
-				fmt.Printf("  Remediation: %s\n", displayText(finding.Remediation))
+			fmt.Println(out)
+		case "github":
+			fmt.Print(formatFindingsGitHub(report.Findings))
+		default:
+			for _, finding := range report.Findings {
+				location := displayText(finding.File)
+				if finding.Line > 0 {
+					location = fmt.Sprintf("%s:%d", location, finding.Line)
+				}
+				fmt.Printf(
+					"[%s] %s: %s (%s)\n",
+					displayText(finding.Severity),
+					location,
+					displayText(finding.Message),
+					displayText(finding.Rule),
+				)
+				if finding.Remediation != "" {
+					fmt.Printf("  Remediation: %s\n", displayText(finding.Remediation))
+				}
 			}
+		}
+
+		if options.FailOn != "" {
+			threshold := severityRank(options.FailOn)
+			blocking := 0
+			for _, finding := range report.Findings {
+				if severityRank(finding.Severity) >= threshold {
+					blocking++
+				}
+			}
+			if blocking == 0 && len(report.UnanalyzedFiles) == 0 {
+				return nil
+			}
+			if len(report.UnanalyzedFiles) > 0 {
+				return fmt.Errorf("review found %d issue(s) at or above %s and could not analyze %d staged file(s)", blocking, options.FailOn, len(report.UnanalyzedFiles))
+			}
+			return fmt.Errorf("review found %d issue(s) at or above %s", blocking, options.FailOn)
 		}
 
 		if !report.Passed {
@@ -430,59 +503,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if err != nil {
 			return err
 		}
-		rules := defaultRules(repositoryRoot)
-		for i, rule := range rules {
-			switch typed := rule.(type) {
-			case review.TodoRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.RiskRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.PolicyRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.SlopRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.SecurityRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.ShellRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.TLSRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.PermissionsRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.DebugRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.SecretRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.TraversalRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.CryptoRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.DeserializationRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.EvalRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.XSSRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			case review.SQLiRule:
-				typed.WorkingTree = true
-				rules[i] = typed
-			}
-		}
+		rules := workingTreeRules(defaultRules(repositoryRoot))
 		findings, reviewedFiles, unanalyzedFiles, snapshotHash, err := analyzeWorkingTree(repositoryRoot, options, rules)
 		if err != nil {
 			return err
@@ -695,7 +716,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 // defaultRules returns the rules run by "review". Every staged-diff rule that
 // is advertised in the README must be listed here.
 func defaultRules(repositoryRoot string) []review.Rule {
-	return []review.Rule{
+	rules := []review.Rule{
 		review.TodoRule{RepositoryRoot: repositoryRoot},
 		review.DebugRule{RepositoryRoot: repositoryRoot},
 		review.RiskRule{RepositoryRoot: repositoryRoot},
@@ -713,6 +734,7 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.XSSRule{RepositoryRoot: repositoryRoot},
 		review.SQLiRule{RepositoryRoot: repositoryRoot},
 	}
+	return append(rules, review.ExtraRules(repositoryRoot)...)
 }
 
 func runGoConfidenceChecks(repositoryRoot string) ([]review.Finding, []review.CheckResult) {
@@ -787,37 +809,8 @@ func defaultAuditOptions() auditOptions {
 }
 
 func parseReviewProfile(args []string) (string, error) {
-	profile, _, err := parseReviewOptions(args)
-	return profile, err
-}
-
-func parseReviewOptions(args []string) (string, bool, error) {
-	profile := "fast"
-	withTools := false
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--with-tools" {
-			withTools = true
-			continue
-		}
-		var value string
-		if arg == "--profile" {
-			if i+1 >= len(args) {
-				return "", false, fmt.Errorf("--profile requires fast or full")
-			}
-			i++
-			value = args[i]
-		} else if strings.HasPrefix(arg, "--profile=") {
-			_, value, _ = strings.Cut(arg, "=")
-		} else {
-			return "", false, fmt.Errorf("unknown review option %q; usage: m3tal-review review [--profile fast|full] [--with-tools]", arg)
-		}
-		if value != "fast" && value != "full" {
-			return "", false, fmt.Errorf("invalid profile %q; expected fast or full", value)
-		}
-		profile = value
-	}
-	return profile, withTools, nil
+	options, err := parseReviewOptions(args)
+	return options.Profile, err
 }
 
 func parseAuditOptions(args []string) (auditOptions, error) {
@@ -984,7 +977,8 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 	var findings []review.Finding
 	files, unanalyzed, err := walkWorkingTree(repositoryRoot, options, func(_ string, fileDiff string) {
 		_, _ = hash.Write([]byte(fileDiff))
-		findings = append(findings, engine.Run(fileDiff)...)
+		fileFindings := engine.Run(fileDiff)
+		findings = append(findings, review.ApplyFindingFilters(fileDiff, fileFindings, repositoryRoot, true)...)
 	})
 	if err != nil {
 		return nil, nil, nil, "", err

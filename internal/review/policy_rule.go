@@ -14,9 +14,17 @@ import (
 const policyFileName = ".m3tal-review-policy.json"
 
 type reviewPolicy struct {
-	RiskPaths       []string       `json:"risk_paths,omitempty"`
-	ForbiddenPaths  []string       `json:"forbidden_paths,omitempty"`
-	RequireTogether []pathCoupling `json:"require_together,omitempty"`
+	RiskPaths       []string                    `json:"risk_paths,omitempty"`
+	ForbiddenPaths  []string                    `json:"forbidden_paths,omitempty"`
+	RequireTogether []pathCoupling              `json:"require_together,omitempty"`
+	Rules           map[string]policyRuleTuning `json:"rules,omitempty"`
+}
+
+// policyRuleTuning lets a repository disable a rule or override the severity
+// of its findings, e.g. {"rules": {"code-slop": {"severity": "info"}}}.
+type policyRuleTuning struct {
+	Enabled  *bool  `json:"enabled,omitempty"`
+	Severity string `json:"severity,omitempty"`
 }
 
 type pathCoupling struct {

@@ -1,5 +1,7 @@
 package review
 
+import "sync"
+
 type Engine struct {
 	rules []Rule
 }
@@ -11,10 +13,21 @@ func NewEngine(rules ...Rule) *Engine {
 }
 
 func (e *Engine) Run(diff string) []Finding {
-	var findings []Finding
+	// Rules are independent; run them concurrently but concatenate results
+	// in registration order so output stays deterministic.
+	results := make([][]Finding, len(e.rules))
+	var wg sync.WaitGroup
+	for i, rule := range e.rules {
+		wg.Add(1)
+		go func(i int, rule Rule) {
+			defer wg.Done()
+			results[i] = rule.Check(diff)
+		}(i, rule)
+	}
+	wg.Wait()
 
-	for _, rule := range e.rules {
-		ruleFindings := rule.Check(diff)
+	var findings []Finding
+	for _, ruleFindings := range results {
 		for i := range ruleFindings {
 			if ruleFindings[i].Category == "" {
 				ruleFindings[i].Category = categoryForRule(ruleFindings[i].Rule)

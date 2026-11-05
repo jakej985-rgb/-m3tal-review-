@@ -921,7 +921,10 @@ func TestCLIHelpCommand(t *testing.T) {
 }
 
 func TestParseReviewAndAuditOptions(t *testing.T) {
-	profile, withTools, err := parseReviewOptions([]string{"--profile", "full", "--with-tools"})
+	profile, withTools, err := func() (string, bool, error) {
+		opts, err := parseReviewOptions([]string{"--profile", "full", "--with-tools"})
+		return opts.Profile, opts.WithTools, err
+	}()
 	if err != nil || profile != "full" || !withTools {
 		t.Fatalf("parseReviewOptions = %q, %t, %v", profile, withTools, err)
 	}
