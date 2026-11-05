@@ -21,6 +21,11 @@
   per-rule timeout + panic isolation, fuzz tests, golden fixtures,
   benchmarks
 - User config: `~/.config/m3tal-review/config.json`
+- `audit --vuln-scan`: opt-in OSV API lookup for known CVEs in
+  go.mod/package.json/requirements.txt (`dependency-cve` findings)
+- `review --pr-comment`: post findings summary to the current PR via `gh`
+- Incremental audit cache (`~/.cache/m3tal-review`), `history show
+  --format json`, user config defaults for `audit`
 
 ### Notes
 - Detector rules are heuristic; see `docs/threat-model.md` for scope and

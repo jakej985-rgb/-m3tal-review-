@@ -427,6 +427,12 @@ func executeWithArgs(command string, commandArgs []string) error {
 			}
 			fmt.Println("Check run posted.")
 		}
+		if options.PRComment {
+			if err := postPRComment(repositoryRoot, findings); err != nil {
+				return fmt.Errorf("post pr comment: %w", err)
+			}
+			fmt.Println("PR comment posted.")
+		}
 
 		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
 		if err != nil {
@@ -597,6 +603,16 @@ func executeWithArgs(command string, commandArgs []string) error {
 		findings, reviewedFiles, unanalyzedFiles, snapshotHash, err := analyzeWorkingTree(repositoryRoot, options, rules)
 		if err != nil {
 			return err
+		}
+		if options.VulnScan {
+			vulnFindings, err := runVulnScan(repositoryRoot)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: vulnerability scan failed: %s\n", displayText(err.Error()))
+			} else if vulnFindings != nil {
+				if ruleAllowed(options.Only, options.Skip, "dependency-cve") {
+					findings = append(findings, vulnFindings...)
+				}
+			}
 		}
 		if options.Baseline != "" {
 			baseline, err := loadBaseline(options.Baseline)
@@ -1041,6 +1057,7 @@ type auditOptions struct {
 	Format         string
 	Baseline       string
 	WriteBaseline  string
+	VulnScan       bool
 	seen           map[string]bool
 }
 
@@ -1099,6 +1116,8 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 			}
 		case arg == "--with-tools":
 			options.WithTools = true
+		case arg == "--vuln-scan":
+			options.VulnScan = true
 		case arg == "--profile":
 			if i+1 >= len(args) {
 				return auditOptions{}, fmt.Errorf("--profile requires fast or full")
@@ -1140,7 +1159,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				options.MaxBytes = value
 			}
 		default:
-			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate] [--baseline file] [--write-baseline file]", arg)
+			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate] [--baseline file] [--write-baseline file]", arg)
 		}
 	}
 	return options, nil
@@ -1423,9 +1442,12 @@ func printHelp() {
 	fmt.Println("  review")
 	fmt.Println("    --profile fast|full  Add local Go format, vet, and test checks in full mode")
 	fmt.Println("    --with-tools        Run installed gitleaks, gosec, and osv-scanner binaries")
+	fmt.Println("    --check-run        Post a GitHub Check Run with annotations")
+	fmt.Println("    --pr-comment       Comment findings on the current PR via gh")
 	fmt.Println("  audit")
 	fmt.Println("    --profile fast|full  Add local Go format, vet, and test checks in full mode")
 	fmt.Println("    --with-tools        Run installed gitleaks, gosec, and osv-scanner binaries")
+	fmt.Println("    --vuln-scan        Query OSV for known CVEs in manifests (network)")
 	fmt.Println("    --include-ignored  Include ignored untracked files (bounded by scan limits)")
 	fmt.Println("    --max-files N      Set the maximum files to read (default 10000)")
 	fmt.Println("    --max-bytes N      Set the maximum total bytes to read (default 134217728)")

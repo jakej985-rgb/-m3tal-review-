@@ -240,11 +240,20 @@ m3tal-review version --json
 m3tal-review watch            # re-review whenever the staged diff changes
 m3tal-review completions bash # or zsh / fish
 m3tal-review audit --with-tools
+m3tal-review audit --vuln-scan   # query OSV for known CVEs in go.mod/package.json/requirements.txt (network)
+
+# Post results back to GitHub
+m3tal-review review --check-run          # Check Run with annotations (needs GITHUB_TOKEN + GITHUB_REPOSITORY)
+m3tal-review review --pr-comment         # comment on the current PR via the gh CLI
 ```
 
 `audit` also accepts `--only`, `--skip`, `--fail-on`, and `--format` like `review`. Policy files support per-path rule overrides via `"paths": {"<glob>": {"<rule>": {"enabled": false, "severity": "info"}}}`.
 
 `--with-tools` uses any installed `gitleaks`, `gosec`, and `osv-scanner`; each unavailable scanner makes the requested scan incomplete. OSV Scanner may need network access to obtain vulnerability data.
+
+`--vuln-scan` (audit only) parses `go.mod`, `package.json`, and `requirements.txt` at the repository root, queries the public [OSV API](https://osv.dev), and reports known vulnerabilities as `dependency-cve` findings with CVSS-derived severities. It performs a network request and is never enabled by default; results respect `--only`/`--skip`/`--baseline`.
+
+`--pr-comment` posts a findings summary table to the pull request for the current branch using the `gh` CLI — `gh` must be installed and authenticated, and the checkout must be inside a PR. `--check-run` instead publishes a GitHub Check Run with per-line annotations; it requires `GITHUB_TOKEN`/`GH_TOKEN`, `GITHUB_REPOSITORY`, and `GITHUB_SHA` (or `--check-run-sha`).
 
 The report and history entry record the `working-tree` scope. Audit reads current file contents, does not stage changes, and marks the run incomplete when any in-scope file cannot be analyzed.
 
@@ -293,6 +302,37 @@ If multiple report files contain the same Run ID (e.g., from manual copies or ba
 
 - `M3TAL_RULE_TIMEOUT` — per-rule analysis timeout (Go duration, default `2m`)
 - `M3TAL_DEBUG` — print per-rule timing and finding counts to stderr
+
+## CI Integration
+
+Three ways to surface findings in GitHub:
+
+**Check Run with annotations** (built-in, needs `GITHUB_TOKEN` + `GITHUB_REPOSITORY`):
+
+```yaml
+- run: m3tal-review review --check-run --check-run-sha ${{ github.sha }}
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+**PR comment** (uses the `gh` CLI, no extra token handling):
+
+```yaml
+- run: m3tal-review review --pr-comment
+```
+
+**SARIF upload to code scanning** (the code-scanning API needs a token with `security_events: write`, so upload via the official action instead):
+
+```yaml
+- run: m3tal-review review --format sarif > m3tal-review.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: m3tal-review.sarif
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+The SARIF output follows schema 2.1.0 (`tool.driver` + `results` with `physicalLocation`/`ruleId`), so it is accepted by `upload-sarif` and most SARIF consumers.
 
 ## Storage & Durability
 

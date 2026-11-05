@@ -78,9 +78,14 @@ item demonstrates clear FP-safety. Remaining E–J items are marked deferred.
 
 ## Phase D — Explicitly deferred (do NOT implement without new requirements)
 
-- [ ] D1: CVE/vuln-DB lookups — needs network + data source + freshness policy
-- [ ] D2: GitHub PR review-comment posting — needs API-token + repo-permission design
-- [ ] D3: SARIF upload to code-scanning — same auth surface as D2
+- [x] D1: CVE/vuln-DB lookups — implemented as opt-in `audit --vuln-scan`
+      querying the public OSV API for go.mod/package.json/requirements.txt
+      (network required; never enabled by default)
+- [x] D2: GitHub PR review-comment posting — implemented as `review
+      --pr-comment` via the `gh` CLI (no token handling in this tool)
+- [x] D3: SARIF upload to code-scanning — documented workflow snippet in
+      README (upload-sarif action); direct API upload remains deferred
+      pending a `security_events` token design
 - [ ] D4: Real JS/TS parsing (tree-sitter dep) — architectural change; revisit
       only if pattern FPs become untenable
 - [ ] D5: Semantic/cross-file analysis, ML detection — out of scope for a
