@@ -34,6 +34,13 @@ func Run(args []string) error {
 		commandArgs = args[1:]
 	}
 
+	switch command {
+	case "-h", "--help", "-help":
+		command = "help"
+	case "-v", "--version", "-version":
+		command = "version"
+	}
+
 	if command == "show" {
 		if len(args) < 2 {
 			return fmt.Errorf("usage: m3tal-review show <run-id>")
