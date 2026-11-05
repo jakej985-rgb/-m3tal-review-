@@ -203,3 +203,27 @@ func TestUnstagedReadyDetectors(t *testing.T) {
 		})
 	}
 }
+
+func TestWave7Detectors(t *testing.T) {
+	cases := []struct {
+		rule string
+		file string
+		body string
+	}{
+		{"unsafe-c-functions", "util.c", "#include <stdio.h>\nvoid f(char *p) {\n    char b[16];\n    strcpy(b, p);\n}\n"},
+		{"iac-exposure", "main.tf", "resource \"aws_security_group\" \"x\" {\n  ingress {\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n"},
+		{"postmessage-origin", "app.js", "window.postMessage(data, '*')\n"},
+		{"dynamic-code-loading", "app.php", "<?php\ncall_user_func($_GET['fn']);\n"},
+		{"secret-material", "keys.txt", "AGE-SECRET-KEY-1QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.rule+"/"+tc.file, func(t *testing.T) {
+			diff := extraDiff(tc.file, tc.body)
+			for _, r := range rulesByName(t, tc.rule) {
+				if !hasFinding(r.Check(diff), tc.rule) {
+					t.Errorf("rule %s did not fire on %s", tc.rule, tc.file)
+				}
+			}
+		})
+	}
+}

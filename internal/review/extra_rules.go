@@ -202,7 +202,11 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Validate event.origin before handling postMessage data; check the sender too.",
 			patterns: []langPattern{
 				{language.LanguageJavaScript, regexp.MustCompile(`addEventListener\s*\(\s*["'\x60]message["'\x60]`), "postMessage listener; verify event.origin is checked"},
+				{language.LanguageJavaScript, regexp.MustCompile(`\.postMessage\s*\([^)]{0,120},\s*["'\x60]?\*`), "postMessage with wildcard target origin leaks data to any origin"},
+				{language.LanguageTypeScript, regexp.MustCompile(`\.postMessage\s*\([^)]{0,120},\s*["'\x60]?\*`), "postMessage with wildcard target origin leaks data to any origin"},
 				{language.LanguageTypeScript, regexp.MustCompile(`addEventListener\s*\(\s*["'\x60]message["'\x60]`), "postMessage listener; verify event.origin is checked"},
+				{language.LanguageJavaScript, regexp.MustCompile(`\.postMessage\s*\([^)]{0,120},\s*["'\x60]?\*`), "postMessage with wildcard target origin leaks data to any origin"},
+				{language.LanguageTypeScript, regexp.MustCompile(`\.postMessage\s*\([^)]{0,120},\s*["'\x60]?\*`), "postMessage with wildcard target origin leaks data to any origin"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "xss-extra-sinks", severity: "high",
@@ -290,7 +294,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Remove the credential, rotate it, and load secrets from environment or a secrets manager.",
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`[a-z][a-z0-9+.-]*://[^/\s:@]+:[^@\s]{6,}@`), "URL with embedded credentials"},
-				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}`), "Cloud/API credential material in source"},
+				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AGE-SECRET-KEY-1|BEGIN PGP PRIVATE KEY|npm_[A-Za-z0-9]{30,}|pypi-AgEI|dckr_pat_|glpat-[A-Za-z0-9_-]{15,}|AIza[0-9A-Za-z_-]{30,}`), "Cloud/API credential material in source"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			raw:         true,
@@ -339,6 +343,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageGo, regexp.MustCompile(`plugin\.Open\s*\(`), "plugin.Open loads code from a path; ensure it is trusted"},
 				{language.LanguagePHP, regexp.MustCompile(`(?:include|include_once|require|require_once)\s*\(?[^;\n]{0,120}?\$_(?:GET|POST|REQUEST|COOKIE)`), "Dynamic include/require of request-controlled path"},
 				{language.LanguagePHP, regexp.MustCompile(`\bextract\s*\(\s*\$_`), "extract() on request data enables variable overwrite"},
+				{language.LanguagePHP, regexp.MustCompile(`\bcall_user_func(?:_array)?\s*\(\s*\$_`), "Dynamic function dispatch on request data"},
 				{language.LanguageJava, regexp.MustCompile(`ScriptEngine|Nashorn|GraalVM.*eval|\.eval\s*\([^)]{0,120}(?:getParameter|request)`), "Script engine evaluation of dynamic code"},
 				{language.LanguagePython, regexp.MustCompile(`\bcode\.(?:InteractiveConsole|compile_command|interact)\b|codeop\.`), "Interactive code execution API"},
 			}},
@@ -407,6 +412,20 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Review environment passthrough to subprocesses; it can leak secrets to child processes.",
 			patterns: []langPattern{
 				{language.LanguageGo, regexp.MustCompile(`\.Env\s*[:=]\s*(?:os\.Environ|append\(os\.Environ)`), "Full environment passed to subprocess"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "unsafe-c-functions", severity: "high",
+			remediation: "Replace unsafe C functions with bounded alternatives (snprintf, strncpy_s, fgets).",
+			patterns: []langPattern{
+				{language.LanguageC, regexp.MustCompile(`\b(?:gets|strcpy|strcat|sprintf|vsprintf|scanf)\s*\(`), "Unbounded/unsafe C library function"},
+				{language.LanguageCpp, regexp.MustCompile(`\b(?:gets|strcpy|strcat|sprintf|vsprintf|scanf)\s*\(`), "Unbounded/unsafe C library function"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}, raw: true,
+			name: "iac-exposure", severity: "low",
+			remediation: "Verify public exposure is intentional; restrict CIDRs, disable public ACLs, scope IAM resources.",
+			patterns: []langPattern{
+				{language.LanguageUnknown, regexp.MustCompile(`0\.0\.0\.0/0|::/0`), "World-open CIDR in infrastructure config"},
+				{language.LanguageUnknown, regexp.MustCompile(`publicly_accessible\s*=\s*true|acl\s*=\s*["']public-read|resources\s*=\s*["']\*`), "Publicly accessible resource or wildcard IAM policy"},
 			}},
 	}
 }
