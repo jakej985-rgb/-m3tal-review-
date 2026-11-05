@@ -4,6 +4,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 )
 
 type diffSourceBlock struct {
@@ -221,7 +222,21 @@ func apostropheString(ext string) bool {
 	}
 }
 
+// maskCache memoizes maskNonCode per (file, source); every rule masks the
+// same blocks, so caching avoids O(rules × source-size) rescans.
+var maskCache sync.Map // string -> []byte
+
 func maskNonCode(file, source string) []byte {
+	key := file + "\x00" + source
+	if cached, ok := maskCache.Load(key); ok {
+		return cached.([]byte)
+	}
+	masked := maskNonCodeUncached(file, source)
+	maskCache.Store(key, masked)
+	return masked
+}
+
+func maskNonCodeUncached(file, source string) []byte {
 	masked := []byte(source)
 	code := sourceCodeMask(file, source)
 	for i := range masked {
@@ -234,7 +249,25 @@ func maskNonCode(file, source string) []byte {
 
 // sourceBlocks returns the diff hunks for every file in diff, preferring the
 // full repository source when it can be read so rules see complete context.
+// sourceBlockCache memoizes sourceBlocks per (diff, root, workingTree);
+// rules share identical inputs within a run.
+var sourceBlockCache sync.Map // string -> []diffSourceBlock
+
 func sourceBlocks(diff, repositoryRoot string, workingTree bool) []diffSourceBlock {
+	wt := "0"
+	if workingTree {
+		wt = "1"
+	}
+	key := diff + "\x00" + repositoryRoot + "\x00" + wt
+	if cached, ok := sourceBlockCache.Load(key); ok {
+		return cached.([]diffSourceBlock)
+	}
+	blocks := sourceBlocksUncached(diff, repositoryRoot, workingTree)
+	sourceBlockCache.Store(key, blocks)
+	return blocks
+}
+
+func sourceBlocksUncached(diff, repositoryRoot string, workingTree bool) []diffSourceBlock {
 	var blocks []diffSourceBlock
 	for _, fileDiff := range ParseDiff(diff) {
 		fileBlocks := diffSourceBlocksForFile(diff, fileDiff.Path)

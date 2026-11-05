@@ -312,5 +312,14 @@ func ExtraRules(repositoryRoot string) []Rule {
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`(?m)^\s*USER\s+(?:root|0)(?:\s|$)`), "Container runs as root"},
 			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "js-common-mistakes", severity: "low",
+			remediation: "Use Object.keys/Object.entries or guard with hasOwnProperty; always pass a radix to parseInt.",
+			patterns: []langPattern{
+				{language.LanguageJavaScript, regexp.MustCompile(`for\s*\(\s*(?:var\s+|let\s+|const\s+)?[\w$]+\s+in\s+`), "for...in iterates the prototype chain; use Object.keys or hasOwnProperty"},
+				{language.LanguageTypeScript, regexp.MustCompile(`for\s*\(\s*(?:var\s+|let\s+|const\s+)?[\w$]+\s+in\s+`), "for...in iterates the prototype chain; use Object.keys or hasOwnProperty"},
+				{language.LanguageJavaScript, regexp.MustCompile(`parseInt\s*\(\s*[^,()]*\s*\)`), "parseInt without radix argument"},
+				{language.LanguageTypeScript, regexp.MustCompile(`parseInt\s*\(\s*[^,()]*\s*\)`), "parseInt without radix argument"},
+			}},
 	}
 }

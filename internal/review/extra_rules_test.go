@@ -119,6 +119,7 @@ func TestExtraRulesDetections(t *testing.T) {
 		{"weak-encoding-crypto", "crypt.py", "import base64\ndef f(d):\n    return base64.b64encode(d)\n"},
 		{"websocket-origin", "ws.go", "package main\nfunc h(c *websocket.Conn) {\n\tupgrader.CheckOrigin = func(r *http.Request) bool { return true }\n}\n"},
 		{"dockerfile-user", "Dockerfile", "FROM alpine:3.19\nUSER root\nCMD [\"sh\"]\n"},
+		{"js-common-mistakes", "app.js", "function f(o) {\n  for (k in o) { console.log(k) }\n  return parseInt(o.n)\n}\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.rule, func(t *testing.T) {

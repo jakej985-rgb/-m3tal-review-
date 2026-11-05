@@ -14,6 +14,7 @@ type reviewOptions struct {
 	Skip      []string
 	FailOn    string
 	Base      string
+	Baseline  string
 	Format    string
 }
 
@@ -68,6 +69,12 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 				return options, fmt.Errorf("invalid --fail-on %q; expected info, low, medium, high, or critical", v)
 			}
 			options.FailOn = v
+		case "--baseline":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.Baseline = v
 		case "--base":
 			v, err := next()
 			if err != nil {
@@ -84,7 +91,7 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 			}
 			options.Format = v
 		default:
-			return options, fmt.Errorf("unknown review option %q; usage: m3tal-review review [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--base ref] [--format text|sarif|github]", arg)
+			return options, fmt.Errorf("unknown review option %q; usage: m3tal-review review [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--base ref] [--baseline file] [--format text|sarif|github]", arg)
 		}
 	}
 	return options, nil

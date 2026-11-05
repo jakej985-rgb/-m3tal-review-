@@ -558,6 +558,7 @@ func pythonExtraFindings(file, source string, added map[int]bool) []Finding {
 	// Mutable class attributes: track class bodies; a plain `name = []/{}/()`
 	// at class-body indent is shared mutable state.
 	classIndent := -1
+	funcIndent := -1
 	for i, raw := range rawLines {
 		lineNo := i + 1
 		code := strings.TrimSpace(raw)
@@ -567,7 +568,15 @@ func pythonExtraFindings(file, source string, added map[int]bool) []Finding {
 		}
 		if m := pythonClassHeader.FindStringSubmatch(raw); m != nil {
 			classIndent = indent
+			funcIndent = -1
 			continue
+		}
+		if pythonDefHeader.MatchString(raw) {
+			funcIndent = indent
+			continue
+		}
+		if funcIndent >= 0 && indent <= funcIndent {
+			funcIndent = -1
 		}
 		if classIndent >= 0 && indent == classIndent+4 {
 			if pythonMutableClass.MatchString(raw) {
@@ -584,6 +593,8 @@ func pythonExtraFindings(file, source string, added map[int]bool) []Finding {
 				findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: lineNo, Message: "'is'/'is not' compared against a literal", Remediation: "Use == / != for value comparison; 'is' is for identity."})
 			case pythonGlobalStmt.MatchString(code):
 				findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: lineNo, Message: "global statement mutates module state", Remediation: "Pass state explicitly or refactor to avoid hidden global mutation."})
+			case funcIndent >= 0 && indent > funcIndent && (strings.HasPrefix(code, "import ") || strings.HasPrefix(code, "from ")):
+				findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: lineNo, Message: "Import inside function body", Remediation: "Move imports to module level unless lazy loading is intentional."})
 			}
 		}
 	}

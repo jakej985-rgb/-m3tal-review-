@@ -1,6 +1,9 @@
 package review
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type Engine struct {
 	rules []Rule
@@ -54,18 +57,36 @@ func categoryForRule(rule string) string {
 	}
 }
 
-// checkRuleSafely runs a rule and converts a panic into a confidence finding
-// so one buggy or hostile-input-triggering rule cannot crash the review.
+// ruleTimeout bounds a single rule's analysis; a hung rule on hostile input
+// yields a timeout finding instead of stalling the review forever.
+const ruleTimeout = 2 * time.Minute
+
+// checkRuleSafely runs a rule and converts a panic or timeout into a
+// confidence finding so one buggy rule cannot crash or stall the review.
 func checkRuleSafely(rule Rule, diff string) (findings []Finding) {
-	defer func() {
-		if r := recover(); r != nil {
-			findings = []Finding{{
-				Rule:        rule.Name() + "-error",
-				Severity:    "medium",
-				Message:     "Rule " + rule.Name() + " failed during analysis",
-				Remediation: "Report this as a bug; the rule may have hit an unhandled edge case.",
-			}}
-		}
+	result := make(chan []Finding, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				result <- []Finding{{
+					Rule:        rule.Name() + "-error",
+					Severity:    "medium",
+					Message:     "Rule " + rule.Name() + " failed during analysis",
+					Remediation: "Report this as a bug; the rule may have hit an unhandled edge case.",
+				}}
+			}
+		}()
+		result <- rule.Check(diff)
 	}()
-	return rule.Check(diff)
+	select {
+	case findings = <-result:
+		return findings
+	case <-time.After(ruleTimeout):
+		return []Finding{{
+			Rule:        rule.Name() + "-timeout",
+			Severity:    "medium",
+			Message:     "Rule " + rule.Name() + " exceeded the analysis time limit",
+			Remediation: "Report this as a bug; the rule may be stuck on pathological input.",
+		}}
+	}
 }

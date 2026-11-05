@@ -359,6 +359,13 @@ func executeWithArgs(command string, commandArgs []string) error {
 		}
 		workingTree := options.Base != ""
 		findings = review.ApplyFindingFilters(diff, findings, repositoryRoot, workingTree)
+		if options.Baseline != "" {
+			baseline, err := loadBaseline(options.Baseline)
+			if err != nil {
+				return err
+			}
+			findings = filterBaseline(findings, baseline)
+		}
 
 		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
 		if err != nil {
