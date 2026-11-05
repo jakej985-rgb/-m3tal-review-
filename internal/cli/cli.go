@@ -739,6 +739,18 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return nil
 		}
 
+		// history show <run-id> / history <run-id> prints a stored report.
+		if len(commandArgs) >= 1 && (commandArgs[0] == "show" || !strings.HasPrefix(commandArgs[0], "-")) {
+			runID := commandArgs[0]
+			if runID == "show" {
+				if len(commandArgs) < 2 {
+					return fmt.Errorf("usage: m3tal-review history show <run-id>")
+				}
+				runID = commandArgs[1]
+			}
+			return commandHistoryShow(repositoryRoot, runID)
+		}
+
 		// Optional filters: history [--last N] [--status S] [--scope S] [--grep text]
 		last, statusFilter, scopeFilter, grepFilter := 0, "", "", ""
 		for i := 0; i < len(commandArgs); i++ {

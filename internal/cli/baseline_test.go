@@ -73,3 +73,32 @@ func TestSarifOutputHasRequiredFields(t *testing.T) {
 		}
 	}
 }
+
+func TestHistoryShowFindsReport(t *testing.T) {
+	dir := t.TempDir()
+	reports := filepath.Join(dir, ".m3tal-review", "reports")
+	if err := os.MkdirAll(reports, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rep := review.Report{
+		RunID:     "abc123",
+		Scope:     "review",
+		Branch:    "main",
+		CommitSHA: "deadbeef",
+		Passed:    true,
+		Findings:  []review.Finding{{Rule: "r", Severity: "low", File: "a.go", Line: 1, Message: "m"}},
+	}
+	if err := review.WriteReport(filepath.Join(reports, "abc123.json"), rep); err != nil {
+		t.Fatal(err)
+	}
+	// Prefix lookup resolves the full ID.
+	if err := commandHistoryShow(dir, "abc"); err != nil {
+		t.Fatalf("history show failed: %v", err)
+	}
+	if err := commandHistoryShow(dir, "zzz"); err == nil {
+		t.Fatal("expected error for unknown run ID")
+	}
+	if err := commandHistoryShow(dir, "../etc"); err == nil {
+		t.Fatal("expected error for path traversal run ID")
+	}
+}
