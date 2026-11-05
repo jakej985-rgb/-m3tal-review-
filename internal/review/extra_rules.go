@@ -49,6 +49,8 @@ func ExtraRules(repositoryRoot string) []Rule {
 			patterns: []langPattern{
 				{language.LanguagePython, regexp.MustCompile(`\b(?:render_template_string|Template|from_string|Environment\(\)\.from_string)\s*\([^)]{0,120}?(?:request\.|\.args|\.form|user_input)`), "Template rendered from user-controlled data"},
 				{language.LanguageJavaScript, regexp.MustCompile(`\b(?:res\.render|template)\s*\([^)]{0,120}?req\.(?:query|params|body)`), "Template rendered with request-controlled name"},
+				{language.LanguageTypeScript, regexp.MustCompile(`\b(?:res\.render|template)\s*\([^)]{0,120}?req\.(?:query|params|body)`), "Template rendered with request-controlled name"},
+				{language.LanguagePHP, regexp.MustCompile(`->(?:render|display)\s*\([^)]{0,160}?\$_(?:GET|POST|REQUEST|COOKIE)`), "Template rendered with request-controlled name"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "prototype-pollution", severity: "high",
@@ -85,6 +87,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageGo, regexp.MustCompile(`(?:Header\(\)\.(?:Set|Add)|w\.Header\(\)\.(?:Set|Add))\s*\([^)]{0,120}?(?:\.URL\b|\.FormValue|request\.)`), "HTTP header set from request-controlled data (check CRLF)"},
 				{language.LanguagePython, regexp.MustCompile(`assert\s+[^=][^\n]{0,120}?(?:request\.|input\s*\(|sys\.argv)`), "assert used for input validation; asserts are stripped under python -O"},
 				{language.LanguagePython, regexp.MustCompile(`\b(?:Object\.assign|\w+\s*=\s*)[^\n]{0,80}?(?:request\.(?:form|args|values|json|data))[^\n]{0,80}?(?:save|create|update|insert)`), "Mass assignment pattern: request data bound to model fields"},
+				{language.LanguagePHP, regexp.MustCompile(`\bheader\s*\([^)]{0,160}?\$_(?:GET|POST|REQUEST|COOKIE|SERVER)`), "HTTP header built with request data (check CRLF)"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "unsafe-code", severity: "medium",
@@ -133,7 +136,8 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageGo, regexp.MustCompile(`InsecureSkipVerify\s*:\s*true|InsecureIgnoreHostKey`), "TLS certificate verification disabled"},
 				{language.LanguagePython, regexp.MustCompile(`verify\s*=\s*False|CERT_NONE|_create_unverified_context`), "TLS certificate verification disabled"},
 				{language.LanguageJavaScript, regexp.MustCompile(`rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED`), "TLS certificate verification disabled"},
-				{language.LanguagePython, regexp.MustCompile(`check_hostname\s*=\s*False|PROTOCOL_SSLv|PROTOCOL_TLSv1\b`), "Deprecated TLS protocol or hostname check disabled"},
+				{language.LanguagePython, regexp.MustCompile(`check_hostname\s*=\s*False|PROTOCOL_SSLv|PROTOCOL_TLSv1\b|ssl\.wrap_socket`), "Deprecated TLS protocol or hostname check disabled"},
+				{language.LanguageGo, regexp.MustCompile(`MinVersion\s*:\s*tls\.Version(?:SSL30|TLS10|TLS11)`), "Deprecated TLS minimum version"},
 				{language.LanguageTypeScript, regexp.MustCompile(`rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED`), "TLS certificate verification disabled"},
 				{language.LanguageJavaScript, regexp.MustCompile(`NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized\s*:\s*false`), "TLS certificate verification disabled"},
 				{language.LanguageTypeScript, regexp.MustCompile(`NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized\s*:\s*false`), "TLS certificate verification disabled"},
@@ -198,6 +202,9 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguagePython, regexp.MustCompile(`set_cookie\s*\([^)]{0,160}?(?:session|auth|token)`), "Session cookie set; verify Secure/HttpOnly/SameSite flags"},
 				{language.LanguageJavaScript, regexp.MustCompile(`document\.cookie\s*=[^;]{0,120}?(?:session|auth|token)`), "Cookie set via document.cookie; verify flags and XSS exposure"},
 				{language.LanguageTypeScript, regexp.MustCompile(`document\.cookie\s*=[^;]{0,120}?(?:session|auth|token)`), "Cookie set via document.cookie; verify flags and XSS exposure"},
+				{language.LanguagePython, regexp.MustCompile(`set_cookie\s*\([^)]{0,160}?remember`), "Remember-me cookie; verify expiry and rotation policy"},
+				{language.LanguageJavaScript, regexp.MustCompile(`document\.cookie\s*=[^;]{0,120}?remember`), "Remember-me cookie; verify expiry and rotation policy"},
+				{language.LanguageTypeScript, regexp.MustCompile(`document\.cookie\s*=[^;]{0,120}?remember`), "Remember-me cookie; verify expiry and rotation policy"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "web-storage-secrets", severity: "high",
@@ -226,6 +233,8 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageJavaScript, regexp.MustCompile(`document\.write(?:ln)?\s*\(|insertAdjacentHTML|createContextualFragment|\.srcdoc\s*=|v-html|\{\{\{[^}]{1,80}\}\}\}|\|\s*(?:safe|raw)\s*\|`), "Additional HTML injection sink"},
 				{language.LanguageTypeScript, regexp.MustCompile(`document\.write(?:ln)?\s*\(|insertAdjacentHTML|createContextualFragment|\.srcdoc\s*=|v-html|\{\{\{[^}]{1,80}\}\}\}|\|\s*(?:safe|raw)\s*\|`), "Additional HTML injection sink"},
 				{language.LanguagePython, regexp.MustCompile(`\|\s*(?:safe|raw)\s*\}`), "Template autoescape bypass filter"},
+				{language.LanguageGo, regexp.MustCompile(`\btemplate\.(?:HTML|JS|URL|CSS|HTMLAttr|JSStr)\s*\(`), "html/template typed string bypasses contextual escaping"},
+				{language.LanguagePHP, regexp.MustCompile(`\{!![^}\n]{1,80}!!\}`), "Blade unescaped output tag"},
 			}},
 
 		// ---- Phase 5: supply chain & CI ----
@@ -258,6 +267,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Download scripts to a file, verify a checksum/signature, then execute.",
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`(?:curl|wget)[^\n|]{0,120}?\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b`), "Remote script piped directly to a shell"},
+				{language.LanguageUnknown, regexp.MustCompile(`curl\b[^\n|]{0,140}?(?:\s-k\b|--insecure\b|--proto[=\s]+"?-?all)`), "Insecure curl flags may disable TLS verification"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "unpinned-image", severity: "medium",
@@ -306,7 +316,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Remove the credential, rotate it, and load secrets from environment or a secrets manager.",
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`[a-z][a-z0-9+.-]*://[^/\s:@]+:[^@\s]{6,}@`), "URL with embedded credentials"},
-				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AGE-SECRET-KEY-1|BEGIN PGP PRIVATE KEY|npm_[A-Za-z0-9]{30,}|pypi-AgEI|dckr_pat_|glpat-[A-Za-z0-9_-]{15,}|AIza[0-9A-Za-z_-]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{25,}|shpat_[a-fA-F0-9]{20,}|xapp-[A-Za-z0-9-]{10,}|dop_v1_[a-f0-9]{30,}|lin_api_[A-Za-z0-9]{30,}|sq0csp-[A-Za-z0-9_-]{20,}`), "Cloud/API credential material in source"},
+				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AGE-SECRET-KEY-1|BEGIN PGP PRIVATE KEY|npm_[A-Za-z0-9]{30,}|pypi-AgEI|dckr_pat_|glpat-[A-Za-z0-9_-]{15,}|AIza[0-9A-Za-z_-]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{25,}|shpat_[a-fA-F0-9]{20,}|xapp-[A-Za-z0-9-]{10,}|dop_v1_[a-f0-9]{30,}|lin_api_[A-Za-z0-9]{30,}|sq0csp-[A-Za-z0-9_-]{20,}|DefaultEndpointsProtocol|SharedAccessSignature=|Endpoint=sb://|(?m)^\s*machine\s+\S[^\n]*\b(?:login|password|account)\s+\S`), "Cloud/API credential material in source"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			raw:         true,
@@ -393,6 +403,8 @@ func ExtraRules(repositoryRoot string) []Rule {
 			patterns: []langPattern{
 				{language.LanguagePython, regexp.MustCompile(`(?:Subject|To|From|Cc|Bcc)["'\]\)]*\s*[:=][^\n]{0,120}?(?:request\.|\.format\s*\(|f["'])`), "Email header built with interpolation or request data"},
 				{language.LanguageGo, regexp.MustCompile(`(?:Subject|To|From)\s*[:=][^\n]{0,120}?(?:\.FormValue|request\.)`), "Email header built with request data"},
+				{language.LanguagePython, regexp.MustCompile(`\b(?:smtplib|imaplib)\b[^\n]{0,160}?(?:request\.|\.format\s*\(|f["'])`), "Mail command built with interpolation or request data"},
+				{language.LanguageGo, regexp.MustCompile(`smtp\.(?:SendMail|PlainAuth)[^\n]{0,160}?(?:\.FormValue|request\.)`), "SMTP call uses request-controlled data"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "unbounded-read", severity: "low",
@@ -454,6 +466,39 @@ func ExtraRules(repositoryRoot string) []Rule {
 			patterns: []langPattern{
 				{language.LanguageJavaScript, regexp.MustCompile(`["'\x60]ws://`), "Cleartext WebSocket URL"},
 				{language.LanguageTypeScript, regexp.MustCompile(`["'\x60]ws://`), "Cleartext WebSocket URL"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}, raw: true,
+			filePattern: regexp.MustCompile(`\.tf$`),
+			name:        "terraform-secret", severity: "medium",
+			remediation: "Move secrets to Terraform variables marked sensitive or a secrets manager; never commit literal credentials.",
+			patterns: []langPattern{
+				{language.LanguageUnknown, regexp.MustCompile(`(?i)(?:password|passwd|secret|token|private_key|access_key|client_secret)\s*=\s*"[^"\n]{8,}"`), "Literal credential in Terraform configuration"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}, raw: true,
+			filePattern: regexp.MustCompile(`\.ya?ml$`),
+			name:        "k8s-committed-secret", severity: "medium",
+			remediation: "Do not commit Kubernetes Secrets; use Sealed Secrets, External Secrets, or a secrets manager.",
+			patterns: []langPattern{
+				{language.LanguageUnknown, regexp.MustCompile(`(?s)kind:\s*["']?Secret["']?[\s\S]{0,600}?(?:data|stringData)\s*:`), "Kubernetes Secret manifest committed to the repository"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}, raw: true,
+			name: "sensitive-data-logging", severity: "medium",
+			remediation: "Do not log credentials, tokens, or secrets; redact or omit sensitive fields.",
+			patterns: []langPattern{
+				{language.LanguageGo, regexp.MustCompile(`\blog\.(?:Print\w*|Fatal\w*|Panic\w*)\s*\([^)]{0,160}?(?:token|secret|password|api_?key|credential|private_?key)`), "Sensitive data written to logs"},
+				{language.LanguagePython, regexp.MustCompile(`\b(?:logging\.\w+|logger\.\w+|print)\s*\([^)]{0,160}?(?:token|secret|password|api_?key|credential)`), "Sensitive data written to logs"},
+				{language.LanguageJavaScript, regexp.MustCompile(`console\.\w+\s*\([^)]{0,160}?(?:token|secret|password|api_?key|credential)`), "Sensitive data written to logs"},
+				{language.LanguageTypeScript, regexp.MustCompile(`console\.\w+\s*\([^)]{0,160}?(?:token|secret|password|api_?key|credential)`), "Sensitive data written to logs"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}, raw: true,
+			name: "insecure-protocol", severity: "medium",
+			remediation: "Use HTTPS/WSS instead of cleartext protocols.",
+			patterns: []langPattern{
+				{language.LanguageGo, regexp.MustCompile(`["'\x60](?:ftp|telnet|gopher|dict)://`), "Cleartext protocol URL"},
+				{language.LanguagePython, regexp.MustCompile(`["'\x60](?:ftp|telnet|gopher|dict)://`), "Cleartext protocol URL"},
+				{language.LanguageJavaScript, regexp.MustCompile(`["'\x60](?:ftp|telnet|gopher|dict)://`), "Cleartext protocol URL"},
+				{language.LanguageTypeScript, regexp.MustCompile(`["'\x60](?:ftp|telnet|gopher|dict)://`), "Cleartext protocol URL"},
+				{language.LanguageUnknown, regexp.MustCompile(`["'\x60](?:ftp|telnet|gopher|dict)://`), "Cleartext protocol URL"},
 			}},
 	}
 }

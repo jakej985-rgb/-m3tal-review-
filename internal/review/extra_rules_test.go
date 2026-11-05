@@ -276,3 +276,35 @@ func TestWave910Detectors(t *testing.T) {
 		})
 	}
 }
+
+func TestPhaseADetectors(t *testing.T) {
+	cases := []struct {
+		rule string
+		file string
+		body string
+	}{
+		{"xss-extra-sinks", "v.go", "package main\nimport \"html/template\"\nfunc f() template.HTML {\n\treturn template.HTML(\"<b>\")\n}\n"},
+		{"xss-extra-sinks", "v.blade.php", "<div>{!! $userInput !!}</div>\n"},
+		{"template-injection", "v.php", "<?php\n$tpl->render($_GET['page']);\n"},
+		{"email-header-injection", "m.py", "import smtplib, request\ndef f():\n    smtplib.SMTP('h').sendmail('a@b.c', request.args.get('t'), 'x')\n"},
+		{"secret-material", ".netrc", "machine example.com login deploy password hunter2abc\n"},
+		{"terraform-secret", "main.tf", "resource \"aws_db_instance\" \"db\" {\n  password = \"Sup3rSecretValue\"\n}\n"},
+		{"k8s-committed-secret", "sec.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: creds\ndata:\n  password: aHVudGVyMg==\n"},
+		{"tls-verification", "c.go", "package main\nimport \"crypto/tls\"\nvar c = &tls.Config{MinVersion: tls.VersionTLS10}\n"},
+		{"pipe-to-shell", "fetch.sh", "#!/bin/sh\ncurl -k https://x.test/i.sh | sh\n"},
+		{"cookie-flags", "app.py", "def f(r):\n    r.set_cookie('session', t, remember=True)\n"},
+		{"sensitive-data-logging", "main.go", "package main\nimport \"log\"\nfunc f(t string) {\n\tlog.Printf(\"token=%s\", t)\n}\n"},
+		{"insecure-protocol", "cfg.py", "URL = \"ftp://files.example.com/pub\"\n"},
+		{"injection-other", "h.php", "<?php\nheader('Location: ' . $_GET['next']);\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.rule+"/"+tc.file, func(t *testing.T) {
+			diff := extraDiff(tc.file, tc.body)
+			for _, r := range rulesByName(t, tc.rule) {
+				if !hasFinding(r.Check(diff), tc.rule) {
+					t.Errorf("rule %s did not fire on %s", tc.rule, tc.file)
+				}
+			}
+		})
+	}
+}
