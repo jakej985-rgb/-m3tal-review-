@@ -30,16 +30,20 @@ type reviewOptions struct {
 	MaxFindings   int
 	MaxDiffSize   int64
 	Rule          string
+	// seen records which flags were explicitly passed, so user config
+	// defaults only fill in flags the user did not set.
+	seen map[string]bool
 }
 
 func parseReviewOptions(args []string) (reviewOptions, error) {
-	options := reviewOptions{Profile: "fast", Format: "text", MaxDiffSize: 64 << 20}
+	options := reviewOptions{Profile: "fast", Format: "text", MaxDiffSize: 64 << 20, seen: map[string]bool{}}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		value := ""
 		if idx := strings.Index(arg, "="); idx >= 0 && strings.HasPrefix(arg, "--") {
 			arg, value = arg[:idx], arg[idx+1:]
 		}
+		options.seen[arg] = true
 		next := func() (string, error) {
 			if value != "" {
 				return value, nil

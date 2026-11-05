@@ -265,6 +265,11 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if err != nil {
 			return err
 		}
+		cfg, cfgErr := loadUserConfig()
+		if cfgErr != nil {
+			return cfgErr
+		}
+		applyUserConfig(&options, cfg)
 		profile, withTools := options.Profile, options.WithTools
 		workingDir, err := os.Getwd()
 		if err != nil {

@@ -102,3 +102,44 @@ func TestHistoryShowFindsReport(t *testing.T) {
 		t.Fatal("expected error for path traversal run ID")
 	}
 }
+
+func TestUserConfigDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfgDir := filepath.Join(dir, "m3tal-review")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgJSON := `{"profile":"security","fail_on":"high","format":"json","skip":["slop"],"only":["ssrf"]}`
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(cfgJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadUserConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, err := parseReviewOptions(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyUserConfig(&opts, cfg)
+	if opts.Profile != "security" || opts.FailOn != "high" || opts.Format != "json" {
+		t.Fatalf("config not applied: %+v", opts)
+	}
+	if len(opts.Only) != 1 || opts.Only[0] != "ssrf" || len(opts.Skip) != 1 || opts.Skip[0] != "slop" {
+		t.Fatalf("rule filters not applied: %+v", opts)
+	}
+
+	// Explicit CLI flags override config.
+	opts2, err := parseReviewOptions([]string{"--profile", "slop", "--format", "text"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyUserConfig(&opts2, cfg)
+	if opts2.Profile != "slop" || opts2.Format != "text" {
+		t.Fatalf("CLI flags did not override config: %+v", opts2)
+	}
+	if opts2.FailOn != "high" {
+		t.Fatalf("unset flag should take config value, got %q", opts2.FailOn)
+	}
+}
