@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -434,6 +433,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 		rules := defaultRules(repositoryRoot)
 		for i, rule := range rules {
 			switch typed := rule.(type) {
+			case review.TodoRule:
+				typed.WorkingTree = true
+				rules[i] = typed
 			case review.RiskRule:
 				typed.WorkingTree = true
 				rules[i] = typed
@@ -456,6 +458,27 @@ func executeWithArgs(command string, commandArgs []string) error {
 				typed.WorkingTree = true
 				rules[i] = typed
 			case review.DebugRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.SecretRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.TraversalRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.CryptoRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.DeserializationRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.EvalRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.XSSRule:
+				typed.WorkingTree = true
+				rules[i] = typed
+			case review.SQLiRule:
 				typed.WorkingTree = true
 				rules[i] = typed
 			}
@@ -600,14 +623,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 
 		fmt.Println("Checking Go formatting...")
 
-		formatCmd := exec.Command(
-			"gofmt",
-			"-l",
-			".",
-		)
-		formatCmd.Dir = repositoryRoot
-
-		formatOutput, err := formatCmd.CombinedOutput()
+		formatOutput, err := runCommand(context.Background(), repositoryRoot, "gofmt", "-l", ".")
 		if err != nil {
 			return fmt.Errorf("run gofmt: %w\n%s", err, displayText(string(formatOutput)))
 		}
@@ -623,10 +639,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		fmt.Println("Formatting passed.")
 
 		fmt.Println("Running go vet...")
-		vetCmd := exec.Command("go", "vet", "./...")
-		vetCmd.Dir = repositoryRoot
-
-		vetOutput, err := vetCmd.CombinedOutput()
+		vetOutput, err := runCommand(context.Background(), repositoryRoot, "go", "vet", "./...")
 		if err != nil {
 			return fmt.Errorf("go vet failed: %w\n%s", err, displayText(string(vetOutput)))
 		}
@@ -683,7 +696,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 // is advertised in the README must be listed here.
 func defaultRules(repositoryRoot string) []review.Rule {
 	return []review.Rule{
-		review.TodoRule{},
+		review.TodoRule{RepositoryRoot: repositoryRoot},
 		review.DebugRule{RepositoryRoot: repositoryRoot},
 		review.RiskRule{RepositoryRoot: repositoryRoot},
 		review.PolicyRule{RepositoryRoot: repositoryRoot},
@@ -692,6 +705,13 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.TLSRule{RepositoryRoot: repositoryRoot},
 		review.PermissionsRule{RepositoryRoot: repositoryRoot},
 		review.SlopRule{RepositoryRoot: repositoryRoot},
+		review.SecretRule{RepositoryRoot: repositoryRoot},
+		review.TraversalRule{RepositoryRoot: repositoryRoot},
+		review.CryptoRule{RepositoryRoot: repositoryRoot},
+		review.DeserializationRule{RepositoryRoot: repositoryRoot},
+		review.EvalRule{RepositoryRoot: repositoryRoot},
+		review.XSSRule{RepositoryRoot: repositoryRoot},
+		review.SQLiRule{RepositoryRoot: repositoryRoot},
 	}
 }
 
@@ -708,9 +728,7 @@ func runGoConfidenceChecks(repositoryRoot string) ([]review.Finding, []review.Ch
 	results := make([]review.CheckResult, 0, len(commands))
 	for _, item := range commands {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		command := exec.CommandContext(ctx, item.args[0], item.args[1:]...)
-		command.Dir = repositoryRoot
-		output, err := command.CombinedOutput()
+		output, err := runCommand(ctx, repositoryRoot, item.args...)
 		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		if err != nil {
@@ -914,7 +932,10 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, visit func(str
 			fileSet[file] = true
 			continue
 		}
-		contentInfo, contentStatErr := os.Stat(fullPath)
+		// Stat and read the already-resolved target rather than fullPath so a
+		// symlink swapped after EvalSymlinks cannot redirect the read outside
+		// the repository.
+		contentInfo, contentStatErr := os.Stat(target)
 		if contentStatErr != nil {
 			unanalyzedSet[file] = true
 			fileSet[file] = true
@@ -925,7 +946,7 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, visit func(str
 			fileSet[file] = true
 			continue
 		}
-		content, readErr := os.ReadFile(fullPath)
+		content, readErr := os.ReadFile(target)
 		fileSet[file] = true
 		if readErr != nil || !contentInfo.Mode().IsRegular() || strings.IndexByte(string(content), 0) >= 0 {
 			unanalyzedSet[file] = true

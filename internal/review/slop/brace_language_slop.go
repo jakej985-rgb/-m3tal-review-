@@ -222,6 +222,7 @@ func analyzeBraceLanguage(file, source string, added map[int]bool, cfg braceLang
 			appendSlopFinding(&findings, seen, file, findingLine, message, remediation)
 		}
 	}
+	findings = append(findings, braceFlowFindings(file, cfg.name, tokens, added)...)
 	return findings
 }
 

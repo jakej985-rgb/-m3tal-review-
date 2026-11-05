@@ -466,6 +466,9 @@ func analyzeBraceSlop(file, language, source string, added map[int]bool) []Findi
 			appendSlopFinding(&findings, seen, file, findingLine, "Redundant boolean comparison", "Remove the explicit comparison to true/false. Use the boolean expression directly.")
 		}
 	}
+	findings = append(findings, braceFlowFindings(file, language, analysisTokens, added)...)
+	findings = append(findings, braceNonStrictEqualityFindings(file, "Use === / !== instead; loose equality coerces types and hides bugs. The == null idiom is exempt.", analysisTokens, added)...)
+	findings = append(findings, braceSwallowedExceptionFindings(file, analysisTokens, added)...)
 	return findings
 }
 

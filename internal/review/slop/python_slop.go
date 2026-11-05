@@ -110,6 +110,8 @@ func analyzePythonSlop(file, source string, added map[int]bool) []Finding {
 		lines = append(lines, pythonSourceLine{number: lineNo + 1, code: line, indent: pythonIndent(line)})
 	}
 	var stack []pythonBlock
+	headerKind := make(map[int]string)
+	lastTerminated := make(map[int]bool)
 	for i := 0; i < len(lines); {
 		trimmed := strings.TrimSpace(lines[i].code)
 		if trimmed == "" {
@@ -121,6 +123,17 @@ func analyzePythonSlop(file, source string, added map[int]bool) []Finding {
 			stack = stack[:len(stack)-1]
 		}
 		logical, end := pythonLogicalStatement(lines, i)
+		for key := range lastTerminated {
+			if key > indent {
+				delete(lastTerminated, key)
+			}
+		}
+		if lastTerminated[indent] {
+			if added[lines[i].number] {
+				appendSlopFinding(&findings, seen, file, lines[i].number, "Unreachable code after terminating statement", "Remove the dead code or restructure the control flow.")
+			}
+			lastTerminated[indent] = false
+		}
 		isSuite := strings.HasSuffix(strings.TrimSpace(logical), ":")
 		isControl := isSuite && pythonControlHeader.MatchString(strings.TrimSpace(logical))
 		isScope := isSuite && pythonScopeHeader.MatchString(strings.TrimSpace(logical))
@@ -142,6 +155,20 @@ func analyzePythonSlop(file, source string, added map[int]bool) []Finding {
 			}
 		}
 		if isControl {
+			kind := strings.Fields(trimmed)
+			kindName := ""
+			if len(kind) > 0 {
+				kindName = strings.TrimSuffix(kind[0], ":")
+				if kindName == "async" && len(kind) > 1 {
+					kindName = strings.TrimSuffix(kind[1], ":")
+				}
+			}
+			if (kindName == "else" || kindName == "elif") && (headerKind[indent] == "if" || headerKind[indent] == "elif") && pythonSuiteEndsWithTerminator(lines, i) {
+				if added[lines[i].number] {
+					appendSlopFinding(&findings, seen, file, lines[i].number, "Else branch after a terminating statement", "Dedent the else body; it can follow the if directly because the if body always exits.")
+				}
+			}
+			headerKind[indent] = kindName
 			depth := pythonControlDepth(stack) + 1
 			if added[lines[i].number] && depth >= 4 {
 				appendSlopFinding(&findings, seen, file, lines[i].number, "Excessive syntax nesting depth (4+ levels)", "Refactor to reduce nesting depth. Consider using early returns or breaking logic into smaller functions.")
@@ -151,6 +178,16 @@ func analyzePythonSlop(file, source string, added map[int]bool) []Finding {
 			}
 			stack = append(stack, pythonBlock{indent: indent, control: true})
 		} else if isScope {
+			if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "async def ") {
+				if pythonMutableDefaultArg(logical) {
+					for lineIndex := i; lineIndex <= end; lineIndex++ {
+						if added[lines[lineIndex].number] {
+							appendSlopFinding(&findings, seen, file, lines[lineIndex].number, "Mutable default argument", "Mutable defaults are shared across calls; use None and create the value inside the function.")
+							break
+						}
+					}
+				}
+			}
 			stack = append(stack, pythonBlock{indent: indent, scope: true})
 		} else if isCase && added[lines[i].number] && pythonPassOnlySuite(lines, i) {
 			appendSlopFinding(&findings, seen, file, lines[i].number, "Empty block", "Remove the empty block or replace pass with meaningful behavior.")
@@ -163,6 +200,15 @@ func analyzePythonSlop(file, source string, added map[int]bool) []Finding {
 				}
 			}
 		}
+		if len(pythonBoolOperator.FindAllString(logical, -1)) >= 5 {
+			for lineIndex := i; lineIndex <= end; lineIndex++ {
+				if added[lines[lineIndex].number] {
+					appendSlopFinding(&findings, seen, file, lines[lineIndex].number, "Long boolean operator chain (5+ operators)", "Extract the condition into a named variable or split it into smaller checks.")
+					break
+				}
+			}
+		}
+		lastTerminated[indent] = isPythonTerminatorStatement(logical)
 		i = end + 1
 	}
 	for _, finding := range pythonFStringBooleanFindings(file, source, added) {
@@ -369,11 +415,57 @@ func pythonPassOnlySuite(lines []pythonSourceLine, header int) bool {
 	return foundPass
 }
 
+// pythonSuiteEndsWithTerminator reports whether the suite preceding the
+// control header at index header ends with a return/raise/break/continue.
+func pythonSuiteEndsWithTerminator(lines []pythonSourceLine, header int) bool {
+	for i := header - 1; i >= 0; i-- {
+		code := strings.TrimSpace(lines[i].code)
+		if code == "" {
+			continue
+		}
+		return isPythonTerminatorStatement(code)
+	}
+	return false
+}
+
+// pythonMutableDefaultArg reports whether a def signature assigns a mutable
+// literal or empty-call default, e.g. "def f(x=[], y={})".
+func pythonMutableDefaultArg(header string) bool {
+	for i := 0; i < len(header); i++ {
+		if header[i] != '=' {
+			continue
+		}
+		if i > 0 && strings.ContainsRune("=!<>:", rune(header[i-1])) {
+			continue
+		}
+		if i+1 < len(header) && header[i+1] == '=' {
+			continue
+		}
+		j := i + 1
+		for j < len(header) && (header[j] == ' ' || header[j] == '\t') {
+			j++
+		}
+		if j >= len(header) {
+			continue
+		}
+		if header[j] == '[' || header[j] == '{' {
+			return true
+		}
+		for _, call := range []string{"set(", "list(", "dict("} {
+			if strings.HasPrefix(header[j:], call) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 var (
 	pythonControlHeader  = regexp.MustCompile(`^(?:(?:async\s+)?(?:if|elif|else|for|while|try|except|finally|with|match))\b`)
 	pythonScopeHeader    = regexp.MustCompile(`^(?:async\s+)?(?:def|class)\b`)
 	pythonBoolComparison = regexp.MustCompile(`(?:==|!=)\s*\(*\s*(?:True|False)\b|\b(?:True|False)\s*\)*\s*(?:==|!=)`)
 	pythonCaseHeader     = regexp.MustCompile(`^case\b`)
+	pythonBoolOperator   = regexp.MustCompile(`\b(?:and|or)\b`)
 )
 
 func pythonIndent(line string) int {

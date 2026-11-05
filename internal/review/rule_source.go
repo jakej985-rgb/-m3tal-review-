@@ -11,8 +11,8 @@ func readRuleSource(repositoryRoot, file string, workingTree bool) ([]byte, erro
 	if repositoryRoot == "" {
 		return nil, os.ErrNotExist
 	}
-	// Defend against path traversal: ensure file path is a valid local relative path
-	// within the repository root before accessing the filesystem or git index.
+	// Reviewed repositories are untrusted: never let a diff path escape the
+	// repository root (absolute paths, ".." segments, or empty paths).
 	if !filepath.IsLocal(file) || file == "." {
 		return nil, os.ErrInvalid
 	}

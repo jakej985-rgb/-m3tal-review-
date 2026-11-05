@@ -8,7 +8,7 @@ import (
 
 // StagedFileContent retrieves the staged content of a file from the git index.
 func StagedFileContent(repo string, file string) ([]byte, error) {
-	cmd := exec.Command("git", "show", ":"+file)
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "show", ":"+file)
 	cmd.Dir = repo
 
 	var out bytes.Buffer

@@ -37,6 +37,7 @@ func (r SlopRule) Analyze(fileDiffs []FileDiff) []Finding {
 		}
 
 		findings = append(findings, r.checkFile(fd)...)
+		findings = append(findings, checkSlopLineExtras(fd)...)
 	}
 
 	return findings
@@ -488,6 +489,14 @@ func analyzeGoSourceAST(file string, content []byte, addedLines []int) []Finding
 			if els, ok := node.Else.(*ast.BlockStmt); ok {
 				inspector.checkEmptyBlock(els)
 			}
+			inspector.checkElseAfterTerminator(node)
+		case *ast.BlockStmt:
+			inspector.checkDeadCode(node)
+			inspector.checkBooleanIfReturn(node)
+		case *ast.AssignStmt:
+			inspector.checkIgnoredCallResult(node)
+		case *ast.FuncDecl:
+			inspector.checkFunctionSize(node)
 		case *ast.ForStmt:
 			// "for {}" is a deliberate infinite loop, not slop.
 			if node.Init != nil || node.Cond != nil || node.Post != nil {
@@ -501,4 +510,183 @@ func analyzeGoSourceAST(file string, content []byte, addedLines []int) []Finding
 	})
 
 	return inspector.findings
+}
+
+func boolLiteralValue(e ast.Expr) (bool, bool) {
+	switch value := e.(type) {
+	case *ast.Ident:
+		if value.Name == "true" {
+			return true, true
+		}
+		if value.Name == "false" {
+			return false, true
+		}
+	case *ast.ParenExpr:
+		return boolLiteralValue(value.X)
+	}
+	return false, false
+}
+
+// singleBoolReturn reports whether the block consists of a single return of a
+// boolean literal, returning the literal's value.
+func singleBoolReturn(b *ast.BlockStmt) (bool, bool) {
+	if b == nil || len(b.List) != 1 {
+		return false, false
+	}
+	ret, ok := b.List[0].(*ast.ReturnStmt)
+	if !ok || len(ret.Results) != 1 {
+		return false, false
+	}
+	return boolLiteralValue(ret.Results[0])
+}
+
+// blockEndsWithTerminator reports whether the block's last statement always
+// exits the enclosing flow (return, break, continue, or goto).
+func blockEndsWithTerminator(b *ast.BlockStmt) bool {
+	if b == nil || len(b.List) == 0 {
+		return false
+	}
+	switch stmt := b.List[len(b.List)-1].(type) {
+	case *ast.ReturnStmt:
+		return true
+	case *ast.BranchStmt:
+		return stmt.Tok != token.FALLTHROUGH
+	}
+	return false
+}
+
+func (v *slopInspector) checkElseAfterTerminator(node *ast.IfStmt) {
+	if node.Else == nil || !blockEndsWithTerminator(node.Body) {
+		return
+	}
+	line := v.fset.Position(node.Else.Pos()).Line
+	if v.lineMap[line] {
+		v.addFinding(line, "Else branch after a terminating statement", "Dedent the else body; it can follow the if directly because the if body always exits.")
+	}
+}
+
+// checkDeadCode flags the first statement that follows a terminating
+// statement within the same block.
+func (v *slopInspector) checkDeadCode(b *ast.BlockStmt) {
+	terminated := false
+	for _, stmt := range b.List {
+		if terminated {
+			line := v.fset.Position(stmt.Pos()).Line
+			if v.lineMap[line] {
+				v.addFinding(line, "Unreachable code after terminating statement", "Remove the dead code or restructure the control flow.")
+			}
+			return
+		}
+		switch s := stmt.(type) {
+		case *ast.ReturnStmt:
+			terminated = true
+		case *ast.BranchStmt:
+			terminated = s.Tok != token.FALLTHROUGH
+		case *ast.ExprStmt:
+			if call, ok := s.X.(*ast.CallExpr); ok {
+				if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "panic" {
+					terminated = true
+				}
+			}
+		}
+	}
+}
+
+// checkBooleanIfReturn flags if/else (or if followed by return) patterns that
+// only return boolean literals and can be a single return expression.
+func (v *slopInspector) checkBooleanIfReturn(b *ast.BlockStmt) {
+	for i, stmt := range b.List {
+		ifs, ok := stmt.(*ast.IfStmt)
+		if !ok {
+			continue
+		}
+		thenVal, thenOK := singleBoolReturn(ifs.Body)
+		if !thenOK {
+			continue
+		}
+		var elseVal bool
+		var elseOK bool
+		line := v.fset.Position(ifs.Pos()).Line
+		if els, ok := ifs.Else.(*ast.BlockStmt); ok {
+			elseVal, elseOK = singleBoolReturn(els)
+		} else if ifs.Else == nil && i+1 < len(b.List) {
+			if ret, ok := b.List[i+1].(*ast.ReturnStmt); ok && len(ret.Results) == 1 {
+				elseVal, elseOK = boolLiteralValue(ret.Results[0])
+			}
+		}
+		if !elseOK || elseVal == thenVal {
+			continue
+		}
+		if v.lineMap[line] {
+			v.addFinding(line, "If/else returns boolean literals", "Return the condition (or its negation) directly instead of branching on boolean literals.")
+		}
+	}
+}
+
+// checkIgnoredCallResult flags assignments that discard every result of a
+// call expression via blank identifiers, e.g. "_ = f()" or "_, _ = g()".
+func (v *slopInspector) checkIgnoredCallResult(node *ast.AssignStmt) {
+	if len(node.Lhs) == 0 {
+		return
+	}
+	for _, lhs := range node.Lhs {
+		id, ok := lhs.(*ast.Ident)
+		if !ok || id.Name != "_" {
+			return
+		}
+	}
+	hasCall := false
+	for _, rhs := range node.Rhs {
+		if containsCallExpr(rhs) {
+			hasCall = true
+			break
+		}
+	}
+	if !hasCall {
+		return
+	}
+	line := v.fset.Position(node.Pos()).Line
+	if v.lineMap[line] {
+		v.addFinding(line, "Call result discarded with blank identifier", "Handle the returned error or check whether discarding the result is intentional.")
+	}
+}
+
+func containsCallExpr(e ast.Expr) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if _, ok := n.(*ast.CallExpr); ok {
+			found = true
+			return false
+		}
+		return !found
+	})
+	return found
+}
+
+// checkFunctionSize flags very long functions and functions with many
+// parameters.
+func (v *slopInspector) checkFunctionSize(node *ast.FuncDecl) {
+	if node.Body == nil {
+		return
+	}
+	line := v.fset.Position(node.Pos()).Line
+	if !v.lineMap[line] {
+		return
+	}
+	if span := v.fset.Position(node.Body.End()).Line - line; span > 80 {
+		v.addFinding(line, "Function exceeds 80 lines", "Consider splitting the function into smaller, focused helpers.")
+	}
+	params := 0
+	if node.Type.Params != nil {
+		for _, field := range node.Type.Params.List {
+			if len(field.Names) == 0 {
+				params++
+			} else {
+				params += len(field.Names)
+			}
+		}
+	}
+	if params > 6 {
+		v.addFinding(line, "Function has many parameters ("+strconv.Itoa(params)+")", "Consider grouping related parameters into a struct or options type.")
+	}
 }

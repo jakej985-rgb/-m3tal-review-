@@ -118,6 +118,11 @@ func readReviewPolicy(repositoryRoot string, workingTree bool) (reviewPolicy, er
 		return reviewPolicy{}, nil
 	}
 	file := path.Join(repositoryRoot, policyFileName)
+	// The policy file is repo-controlled input; refuse to follow a symlink
+	// that could redirect the read outside the repository.
+	if info, statErr := os.Lstat(file); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return reviewPolicy{}, fmt.Errorf("%s must not be a symbolic link", policyFileName)
+	}
 	var data []byte
 	var err error
 	if workingTree {
@@ -171,29 +176,44 @@ func (p reviewPolicy) patterns() []string {
 	return patterns
 }
 
+// matchMemo bounds the recursive glob matcher. Policy files are repo-controlled
+// input, so patterns like "**/**/**" against deep paths could otherwise cause
+// combinatorial backtracking.
+type matchMemo map[[2]int]bool
+
+func (m matchMemo) match(patternParts, fileParts []string, pi, fi int) bool {
+	key := [2]int{pi, fi}
+	if result, ok := m[key]; ok {
+		return result
+	}
+	result := m.matchUncached(patternParts, fileParts, pi, fi)
+	m[key] = result
+	return result
+}
+
+func (m matchMemo) matchUncached(patternParts, fileParts []string, pi, fi int) bool {
+	if pi == len(patternParts) {
+		return fi == len(fileParts)
+	}
+	if patternParts[pi] == "**" {
+		for next := fi; next <= len(fileParts); next++ {
+			if m.match(patternParts, fileParts, pi+1, next) {
+				return true
+			}
+		}
+		return false
+	}
+	if fi == len(fileParts) {
+		return false
+	}
+	matched, err := path.Match(patternParts[pi], fileParts[fi])
+	return err == nil && matched && m.match(patternParts, fileParts, pi+1, fi+1)
+}
+
 func matchesRepoPath(pattern, file string) bool {
 	patternParts := strings.Split(pattern, "/")
 	fileParts := strings.Split(file, "/")
-	var match func(int, int) bool
-	match = func(pi, fi int) bool {
-		if pi == len(patternParts) {
-			return fi == len(fileParts)
-		}
-		if patternParts[pi] == "**" {
-			for next := fi; next <= len(fileParts); next++ {
-				if match(pi+1, next) {
-					return true
-				}
-			}
-			return false
-		}
-		if fi == len(fileParts) {
-			return false
-		}
-		matched, err := path.Match(patternParts[pi], fileParts[fi])
-		return err == nil && matched && match(pi+1, fi+1)
-	}
-	return match(0, 0)
+	return matchMemo{}.match(patternParts, fileParts, 0, 0)
 }
 
 func policyErrorFinding(err error) []Finding {

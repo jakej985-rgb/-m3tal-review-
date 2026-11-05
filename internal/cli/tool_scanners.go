@@ -65,9 +65,7 @@ func runGitleaks(ctx context.Context, repositoryRoot string) ([]review.Finding, 
 		return nil, err
 	}
 	defer cleanup()
-	command := exec.CommandContext(ctx, "gitleaks", "dir", "--no-banner", "--redact=100", "--report-format", "json", "--report-path", reportPath, ".")
-	command.Dir = repositoryRoot
-	_, runErr := command.CombinedOutput()
+	_, runErr := runCommand(ctx, repositoryRoot, "gitleaks", "dir", "--no-banner", "--redact=100", "--report-format", "json", "--report-path", reportPath, ".")
 	data, readErr := os.ReadFile(reportPath)
 	if readErr != nil {
 		return nil, toolCommandError(runErr, readErr)
@@ -98,9 +96,7 @@ func runGosec(ctx context.Context, repositoryRoot string) ([]review.Finding, err
 		return nil, err
 	}
 	defer cleanup()
-	command := exec.CommandContext(ctx, "gosec", "-fmt=json", "-out="+reportPath, "./...")
-	command.Dir = repositoryRoot
-	_, runErr := command.CombinedOutput()
+	_, runErr := runCommand(ctx, repositoryRoot, "gosec", "-fmt=json", "-out="+reportPath, "./...")
 	data, readErr := os.ReadFile(reportPath)
 	if readErr != nil {
 		return nil, toolCommandError(runErr, readErr)
@@ -130,9 +126,7 @@ func runGosec(ctx context.Context, repositoryRoot string) ([]review.Finding, err
 }
 
 func runOSVScanner(ctx context.Context, repositoryRoot string) ([]review.Finding, error) {
-	command := exec.CommandContext(ctx, "osv-scanner", "scan", "source", "--recursive", "--format", "json", ".")
-	command.Dir = repositoryRoot
-	output, runErr := command.Output()
+	output, runErr := runCommandOutput(ctx, repositoryRoot, "osv-scanner", "scan", "source", "--recursive", "--format", "json", ".")
 	if runErr != nil && len(output) == 0 {
 		return nil, fmt.Errorf("run osv-scanner: %w", runErr)
 	}

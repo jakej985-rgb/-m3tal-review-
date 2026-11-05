@@ -68,6 +68,23 @@ func TestDebugRuleIgnoresUnchangedLines(t *testing.T) {
 	}
 }
 
+func TestDebugRuleIgnoresCLIOutputAndPatchFiles(t *testing.T) {
+	diff := `diff --git a/internal/cli/cli.go b/internal/cli/cli.go
+--- a/internal/cli/cli.go
++++ b/internal/cli/cli.go
+@@ -0,0 +1 @@
++fmt.Println("M3TAL Review Report")
+diff --git a/change.patch b/change.patch
+--- /dev/null
++++ b/change.patch
+@@ -0,0 +1 @@
++fmt.Println("debug")
+`
+	if findings := (DebugRule{}).Check(diff); len(findings) != 0 {
+		t.Fatalf("findings = %+v; want none for normal CLI output and patch text", findings)
+	}
+}
+
 func TestDebugRuleName(t *testing.T) {
 	if got := (DebugRule{}).Name(); got != "debug-leftover" {
 		t.Errorf("Name() = %q, want %q", got, "debug-leftover")

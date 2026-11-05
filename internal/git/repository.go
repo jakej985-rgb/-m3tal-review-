@@ -9,7 +9,7 @@ import (
 )
 
 func RepositoryRoot(path string) (string, error) {
-	command := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "rev-parse", "--show-toplevel")
 
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -35,7 +35,7 @@ func Available() error {
 }
 
 func IsClean(path string) (bool, error) {
-	command := exec.Command("git", "-C", path, "status", "--porcelain")
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "status", "--porcelain")
 
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -50,7 +50,7 @@ func IsClean(path string) (bool, error) {
 }
 
 func CurrentBranch(path string) (string, error) {
-	command := exec.Command("git", "-C", path, "branch", "--show-current")
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "branch", "--show-current")
 
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -63,7 +63,7 @@ func CurrentBranch(path string) (string, error) {
 
 	branch := strings.TrimSpace(string(output))
 	if branch == "" {
-		command := exec.Command("git", "-C", path, "rev-parse", "--short", "HEAD")
+		command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "rev-parse", "--short", "HEAD")
 		output, err := command.CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("get detached HEAD commit: %s: %w", strings.TrimSpace(string(output)), err)
@@ -75,15 +75,15 @@ func CurrentBranch(path string) (string, error) {
 }
 
 func ChangedFiles(path string) ([]string, error) {
-	command := exec.Command("git", "-C", path, "diff", "--name-only", "-z", "HEAD")
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "diff", "--name-only", "-z", "HEAD")
 
 	output, err := command.CombinedOutput()
 	if err != nil {
 		// A repository without commits has no HEAD to diff against. In that case,
 		// report the staged paths, which are the tracked changes in the unborn tree.
-		headCommand := exec.Command("git", "-C", path, "rev-parse", "--verify", "HEAD")
+		headCommand := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "rev-parse", "--verify", "HEAD")
 		if _, headErr := headCommand.CombinedOutput(); headErr != nil {
-			stagedCommand := exec.Command("git", "-C", path, "diff", "--cached", "--name-only", "-z")
+			stagedCommand := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "diff", "--cached", "--name-only", "-z")
 			stagedOutput, stagedErr := stagedCommand.CombinedOutput()
 			if stagedErr == nil {
 				output = stagedOutput
@@ -104,7 +104,7 @@ func ChangedFiles(path string) ([]string, error) {
 }
 
 func StagedFiles(path string) ([]string, error) {
-	command := exec.Command("git", "-C", path, "diff", "--cached", "--name-only", "-z")
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "diff", "--cached", "--name-only", "-z")
 
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -174,7 +174,7 @@ func ParseStagedFileStatuses(output []byte) (map[string]string, error) {
 
 // StagedFileStatuses returns a map of staged file paths to their git status (e.g. A, M, D, R).
 func StagedFileStatuses(path string) (map[string]string, error) {
-	command := exec.Command("git", "-C", path, "diff", "--cached", "--name-status", "-z")
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "diff", "--cached", "--name-status", "-z")
 
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -222,7 +222,7 @@ func ParseBinaryFilesFromNumstat(output []byte) ([]string, error) {
 
 // StagedBinaryFiles lists staged paths represented as binary in Git's numstat output.
 func StagedBinaryFiles(path string) ([]string, error) {
-	command := exec.Command("git", "-C", path, "diff", "--cached", "--diff-filter=ACMRTUXB", "--numstat", "-z")
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "diff", "--cached", "--diff-filter=ACMRTUXB", "--numstat", "-z")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("get staged binary files: %s: %w", strings.TrimSpace(string(output)), err)
@@ -240,7 +240,7 @@ func StagedSubmoduleFiles(path string) ([]string, error) {
 	for _, file := range staged {
 		stagedSet[file] = true
 	}
-	command := exec.Command("git", "-C", path, "ls-files", "--stage", "-z")
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "ls-files", "--stage", "-z")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("get staged index modes: %s: %w", strings.TrimSpace(string(output)), err)
@@ -267,7 +267,7 @@ func StagedSubmoduleFiles(path string) ([]string, error) {
 // StagedModeChangedFiles lists staged paths whose Git mode changed without
 // treating ordinary additions and deletions as mode-only review gaps.
 func StagedModeChangedFiles(path string) ([]string, error) {
-	command := exec.Command("git", "-C", path, "diff", "--cached", "--raw", "-z", "--no-abbrev")
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "diff", "--cached", "--raw", "-z", "--no-abbrev")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("get staged mode changes: %s: %w", strings.TrimSpace(string(output)), err)
@@ -314,7 +314,7 @@ func ParseModeChangedFiles(output []byte) ([]string, error) {
 
 func UntrackedFiles(path string) ([]string, error) {
 	command := exec.Command(
-		"git", "-C", path,
+		"git", "-c", "core.fsmonitor=false", "-C", path,
 		"ls-files", "--others", "--exclude-standard", "-z",
 	)
 
@@ -344,7 +344,7 @@ func WorkingTreeFiles(path string) ([]string, error) {
 // WorkingTreeFilesWithIgnored lists tracked paths and untracked paths. When
 // includeIgnored is false, Git ignore rules filter untracked paths.
 func WorkingTreeFilesWithIgnored(path string, includeIgnored bool) ([]string, error) {
-	args := []string{"-C", path, "ls-files", "--cached", "--others"}
+	args := []string{"-c", "core.fsmonitor=false", "-C", path, "ls-files", "--cached", "--others"}
 	if !includeIgnored {
 		args = append(args, "--exclude-standard")
 	}
@@ -367,6 +367,7 @@ func WorkingTreeFilesWithIgnored(path string, includeIgnored bool) ([]string, er
 func StagedDiff(path string) (string, error) {
 	command := exec.Command(
 		"git",
+		"-c", "core.fsmonitor=false",
 		"-C",
 		path,
 		"diff",

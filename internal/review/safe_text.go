@@ -13,7 +13,8 @@ func isCommentOnlyLine(file, text string) bool {
 		return true
 	}
 	switch strings.ToLower(path.Ext(file)) {
-	case ".py", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env":
+	case ".py", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env",
+		".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf", ".hcl", ".graphql", ".gql", ".fish":
 		return strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";")
 	case ".php", ".phtml":
 		return strings.HasPrefix(trimmed, "#")

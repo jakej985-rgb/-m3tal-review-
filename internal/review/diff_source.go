@@ -67,7 +67,8 @@ func sourceCodeMask(file, source string) []bool {
 	ext := strings.ToLower(path.Ext(file))
 	python := extIs(ext, ".py")
 	php := extIs(ext, ".php", ".phtml")
-	hashComments := python || php || extIs(ext, ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env")
+	hashComments := python || php || extIs(ext, ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env",
+		".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf", ".hcl", ".graphql", ".gql", ".fish")
 	lineComment, blockComment := false, false
 	var quote byte
 	triple := false
@@ -120,7 +121,7 @@ func sourceCodeMask(file, source string) []bool {
 			lineComment = true
 			continue
 		}
-		if c == '\'' || c == '"' || c == '`' {
+		if c == '"' || c == '`' || (c == '\'' && apostropheString(ext)) {
 			quote = c
 			triple = python && i+2 < len(source) && source[i+1] == c && source[i+2] == c
 			if triple {
@@ -141,12 +142,20 @@ func offsetInComment(file, source string, offset int) bool {
 		offset = len(source)
 	}
 	ext := strings.ToLower(path.Ext(file))
-	hashComments := extIs(ext, ".py", ".php", ".phtml", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env")
+	hashComments := extIs(ext, ".py", ".php", ".phtml", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env",
+		".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf", ".hcl", ".graphql", ".gql", ".fish")
 	var quote byte
 	triple := false
+	lineComment := false
 	blockComment := false
 	for i := 0; i < offset; i++ {
 		c := source[i]
+		if lineComment {
+			if c == '\n' {
+				lineComment = false
+			}
+			continue
+		}
 		if blockComment {
 			if c == '*' && i+1 < offset && source[i+1] == '/' {
 				i++
@@ -172,7 +181,9 @@ func offsetInComment(file, source string, offset int) bool {
 		}
 		if c == '/' && i+1 < offset {
 			if source[i+1] == '/' {
-				return true
+				lineComment = true
+				i++
+				continue
 			}
 			if source[i+1] == '*' {
 				blockComment = true
@@ -181,9 +192,10 @@ func offsetInComment(file, source string, offset int) bool {
 			}
 		}
 		if hashComments && c == '#' || extIs(ext, ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env") && c == ';' {
-			return true
+			lineComment = true
+			continue
 		}
-		if c == '\'' || c == '"' || c == '`' {
+		if c == '"' || c == '`' || (c == '\'' && apostropheString(ext)) {
 			quote = c
 			triple = ext == ".py" && i+2 < offset && source[i+1] == c && source[i+2] == c
 			if triple {
@@ -191,7 +203,22 @@ func offsetInComment(file, source string, offset int) bool {
 			}
 		}
 	}
-	return blockComment
+	return lineComment || blockComment
+}
+
+// apostropheString reports whether ' delimits a string or character literal
+// for the given extension. Languages such as Rust ('a lifetimes), Julia (the
+// adjoint operator), Lisp-family quote forms, Haskell identifier primes, R
+// (no ' strings), and Terraform/HCL use ' for non-string syntax, so treating
+// it as a quote opener would hide real comments from offsetInComment.
+func apostropheString(ext string) bool {
+	switch ext {
+	case ".rs", ".jl", ".hs", ".lhs", ".clj", ".cljs", ".cljc",
+		".erl", ".hrl", ".nim", ".ml", ".mli", ".r", ".tf", ".hcl":
+		return false
+	default:
+		return true
+	}
 }
 
 func maskNonCode(file, source string) []byte {
@@ -203,6 +230,20 @@ func maskNonCode(file, source string) []byte {
 		}
 	}
 	return masked
+}
+
+// sourceBlocks returns the diff hunks for every file in diff, preferring the
+// full repository source when it can be read so rules see complete context.
+func sourceBlocks(diff, repositoryRoot string, workingTree bool) []diffSourceBlock {
+	var blocks []diffSourceBlock
+	for _, fileDiff := range ParseDiff(diff) {
+		fileBlocks := diffSourceBlocksForFile(diff, fileDiff.Path)
+		if source, err := readRuleSource(repositoryRoot, fileDiff.Path, workingTree); err == nil {
+			fileBlocks = []diffSourceBlock{fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)}
+		}
+		blocks = append(blocks, fileBlocks...)
+	}
+	return blocks
 }
 
 func extIs(ext string, values ...string) bool {
