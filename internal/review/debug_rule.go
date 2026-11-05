@@ -34,7 +34,9 @@ var debugPatterns = []struct {
 func (r DebugRule) Check(diff string) []Finding {
 	var findings []Finding
 	for _, fileDiff := range ParseDiff(diff) {
-		blocks := diffSourceBlocksForFile(diff, fileDiff.Path)
+		// Performance optimization: Generate diff source blocks directly from fileDiff
+		// instead of re-parsing the entire diff and scanning for fileDiff.Path.
+		blocks := fileDiffSourceBlocks(fileDiff)
 		if source, err := readRuleSource(r.RepositoryRoot, fileDiff.Path, r.WorkingTree); err == nil {
 			blocks = []diffSourceBlock{fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)}
 		}

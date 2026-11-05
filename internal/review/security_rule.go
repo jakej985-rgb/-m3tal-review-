@@ -89,7 +89,9 @@ func (r SecurityRule) Check(diff string) []Finding {
 		if len(fileDiff.AddedLines) == 0 {
 			continue
 		}
-		blocks := diffSourceBlocksForFile(diff, fileDiff.Path)
+		// Performance optimization: Generate diff source blocks directly from fileDiff
+		// instead of re-parsing the entire diff and scanning for fileDiff.Path.
+		blocks := fileDiffSourceBlocks(fileDiff)
 		if source, err := readRuleSource(r.RepositoryRoot, fileDiff.Path, r.WorkingTree); err == nil {
 			blocks = []diffSourceBlock{fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)}
 		}
@@ -139,13 +141,12 @@ func (r SecurityRule) Check(diff string) []Finding {
 }
 
 func diffSourceBlocksForFile(diff, file string) []diffSourceBlock {
-	var blocks []diffSourceBlock
-	for _, block := range diffSourceBlocks(diff) {
-		if block.file == file {
-			blocks = append(blocks, block)
+	for _, fileDiff := range ParseDiff(diff) {
+		if fileDiff.Path == file {
+			return fileDiffSourceBlocks(fileDiff)
 		}
 	}
-	return blocks
+	return nil
 }
 
 func credentialValueFromMatch(text string, match []int) string {
