@@ -21,7 +21,7 @@ func (e *Engine) Run(diff string) []Finding {
 		wg.Add(1)
 		go func(i int, rule Rule) {
 			defer wg.Done()
-			results[i] = rule.Check(diff)
+			results[i] = checkRuleSafely(rule, diff)
 		}(i, rule)
 	}
 	wg.Wait()
@@ -52,4 +52,20 @@ func categoryForRule(rule string) string {
 	default:
 		return "review"
 	}
+}
+
+// checkRuleSafely runs a rule and converts a panic into a confidence finding
+// so one buggy or hostile-input-triggering rule cannot crash the review.
+func checkRuleSafely(rule Rule, diff string) (findings []Finding) {
+	defer func() {
+		if r := recover(); r != nil {
+			findings = []Finding{{
+				Rule:        rule.Name() + "-error",
+				Severity:    "medium",
+				Message:     "Rule " + rule.Name() + " failed during analysis",
+				Remediation: "Report this as a bug; the rule may have hit an unhandled edge case.",
+			}}
+		}
+	}()
+	return rule.Check(diff)
 }

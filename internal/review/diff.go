@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type FileChangeType string
@@ -84,9 +85,23 @@ func parseGitDiffHeaderPaths(line string) (string, string) {
 	return cleanOld, cleanNew
 }
 
+// diffParseCache memoizes ParseDiff results: every rule re-parses the same
+// diff string, so caching avoids O(rules × diff-size) parsing work. The CLI
+// is one-shot, so entries never go stale.
+var diffParseCache sync.Map // string -> []FileDiff
+
 // ParseDiff parses a unified git diff into individual file diffs with classifications
 // (added, modified, deleted, renamed) and their corresponding added line numbers.
 func ParseDiff(diff string) []FileDiff {
+	if cached, ok := diffParseCache.Load(diff); ok {
+		return cached.([]FileDiff)
+	}
+	parsed := parseDiff(diff)
+	diffParseCache.Store(diff, parsed)
+	return parsed
+}
+
+func parseDiff(diff string) []FileDiff {
 	var fileDiffs []FileDiff
 	var current *FileDiff
 

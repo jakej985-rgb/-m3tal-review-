@@ -114,6 +114,11 @@ func TestExtraRulesDetections(t *testing.T) {
 		{"pipe-to-shell", "install.sh", "#!/bin/sh\ncurl -fsSL https://x.test/i.sh | sh\n"},
 		{"container-privilege", "docker-compose.yml", "services:\n  app:\n    privileged: true\n"},
 		{"dockerfile-remote-add", "Dockerfile", "FROM alpine:3.19\nADD https://x.test/a.tar /a\n"},
+		{"deserialization-gadgets", "Parser.java", "class P {\n  void f(String s) throws Exception {\n    Object o = new XMLDecoder(new ByteArrayInputStream(s.getBytes())).readObject();\n  }\n}\n"},
+		{"secret-material", "deploy.sh", "DATABASE_URL=postgres://admin:hunter2secret@db.internal:5432/app\n"},
+		{"weak-encoding-crypto", "crypt.py", "import base64\ndef f(d):\n    return base64.b64encode(d)\n"},
+		{"websocket-origin", "ws.go", "package main\nfunc h(c *websocket.Conn) {\n\tupgrader.CheckOrigin = func(r *http.Request) bool { return true }\n}\n"},
+		{"dockerfile-user", "Dockerfile", "FROM alpine:3.19\nUSER root\nCMD [\"sh\"]\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.rule, func(t *testing.T) {

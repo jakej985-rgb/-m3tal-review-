@@ -33,3 +33,16 @@ func TestEngineWithNoRules(t *testing.T) {
 		t.Fatalf("expected no findings, got %d", len(findings))
 	}
 }
+
+func TestEngineRulePanicBecomesFinding(t *testing.T) {
+	engine := NewEngine(panicRule{})
+	findings := engine.Run("diff --git a/x b/x\n")
+	if len(findings) != 1 || findings[0].Rule != "panic-rule-error" {
+		t.Fatalf("findings = %+v", findings)
+	}
+}
+
+type panicRule struct{}
+
+func (panicRule) Name() string           { return "panic-rule" }
+func (panicRule) Check(string) []Finding { panic("boom") }

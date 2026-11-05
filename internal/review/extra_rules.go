@@ -25,7 +25,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Avoid building shell commands from untrusted input; pass arguments as separate parameters or use an allowlist.",
 			patterns: []langPattern{
 				{language.LanguageGo, regexp.MustCompile(`\bexec\.Command(?:Context)?\s*\(\s*"(?:ba)?sh"[^)]{0,200}?(?:\.URL\b|\.FormValue|os\.Args|request\.)`), "Shell command built with request-controlled data"},
-				{language.LanguagePython, regexp.MustCompile(`\b(?:os\.system|subprocess\.(?:call|run|Popen|check_output|getoutput))\s*\([^)]{0,160}?(?:request\.|shell\s*=\s*True|os\.environ)`), "Command execution with shell or request-controlled data"},
+				{language.LanguagePython, regexp.MustCompile(`\b(?:os\.(?:system|popen|spawn\w*|exec\w*)|commands\.(?:getoutput|getstatusoutput)|pty\.spawn|subprocess\.(?:call|run|Popen|check_output|getoutput))\s*\([^)]{0,160}?(?:request\.|shell\s*=\s*True|os\.environ)`), "Command execution with shell or request-controlled data"},
 				{language.LanguageJavaScript, regexp.MustCompile(`\bchild_process\.(?:exec|execSync|spawn)\s*\([^)]{0,160}?(?:req\.(?:query|params|body)|` + "`" + `[^` + "`" + `]*\$\{)`), "Command execution with request-controlled data"},
 				{language.LanguageTypeScript, regexp.MustCompile(`\bchild_process\.(?:exec|execSync|spawn)\s*\([^)]{0,160}?(?:req\.(?:query|params|body)|` + "`" + `[^` + "`" + `]*\$\{)`), "Command execution with request-controlled data"},
 			}},
@@ -66,7 +66,8 @@ func ExtraRules(repositoryRoot string) []Rule {
 			name: "xxe", severity: "high",
 			remediation: "Disable DTDs and external entities when parsing untrusted XML (disallow-doctype-decl, resolve_entities=False).",
 			patterns: []langPattern{
-				{language.LanguageJava, regexp.MustCompile(`(?:DocumentBuilderFactory|SAXParserFactory|XMLInputFactory|TransformerFactory)\.newInstance\s*\(`), "XML parser factory without visible secure-processing flags"},
+				{language.LanguageJava, regexp.MustCompile(`(?:DocumentBuilderFactory|SAXParserFactory|XMLInputFactory|TransformerFactory|XMLDecoder|Unmarshaller)\b`), "XML parser without visible secure-processing flags"},
+				{language.LanguagePython, regexp.MustCompile(`simplexml_load_string|xml\.etree\.iterparse|XMLStreamReader`), "XML parsing API; verify entity expansion is disabled"},
 				{language.LanguagePython, regexp.MustCompile(`\b(?:xml\.etree\.ElementTree|xml\.dom|minidom|lxml)\b[^)]{0,160}?(?:parse|fromstring|XML)`), "XML parsing without defusedxml; verify entity expansion is disabled"},
 				{language.LanguageGo, regexp.MustCompile(`\bencoding/xml\b`), "encoding/xml detected; it does not process external entities by default but review usage"},
 			}},
@@ -103,7 +104,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			patterns: []langPattern{
 				{language.LanguagePython, regexp.MustCompile(`["']alg["']\s*:\s*["']none["']|jwt\.decode\s*\([^)]*algorithms\s*=\s*\[[^\]]*none`), "JWT 'none' algorithm accepted"},
 				{language.LanguageJavaScript, regexp.MustCompile(`["']alg["']\s*:\s*["']none["']|algorithms\s*:\s*\[[^\]]*none`), "JWT 'none' algorithm accepted"},
-				{language.LanguageGo, regexp.MustCompile(`["']alg["']\s*:\s*["']none["']|SigningMethodNone`), "JWT 'none' algorithm accepted"},
+				{language.LanguageGo, regexp.MustCompile(`["']alg["']\s*:\s*["']none["']|SigningMethodNone|ParseUnverified`), "JWT 'none' algorithm accepted"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "hardcoded-session-secret", severity: "high",
@@ -119,7 +120,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			name: "tls-verification", severity: "high",
 			remediation: "Keep TLS certificate verification enabled; pin certificates explicitly when needed.",
 			patterns: []langPattern{
-				{language.LanguageGo, regexp.MustCompile(`InsecureSkipVerify\s*:\s*true`), "TLS certificate verification disabled"},
+				{language.LanguageGo, regexp.MustCompile(`InsecureSkipVerify\s*:\s*true|InsecureIgnoreHostKey`), "TLS certificate verification disabled"},
 				{language.LanguagePython, regexp.MustCompile(`verify\s*=\s*False|CERT_NONE|_create_unverified_context`), "TLS certificate verification disabled"},
 				{language.LanguageJavaScript, regexp.MustCompile(`NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized\s*:\s*false`), "TLS certificate verification disabled"},
 				{language.LanguageTypeScript, regexp.MustCompile(`NODE_TLS_REJECT_UNAUTHORIZED|rejectUnauthorized\s*:\s*false`), "TLS certificate verification disabled"},
@@ -264,6 +265,52 @@ func ExtraRules(repositoryRoot string) []Rule {
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`(?m)^\s*ADD\s+https?://`), "Remote URL in ADD is non-reproducible"},
 				{language.LanguageUnknown, regexp.MustCompile(`(?m)^\s*RUN\s+git\s+clone`), "git clone in RUN is non-reproducible"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			raw:  true,
+			name: "deserialization-gadgets", severity: "high",
+			remediation: "Avoid polymorphic deserialization of untrusted data; use allowlisted types or safe formats (JSON schema, protobuf).",
+			patterns: []langPattern{
+				{language.LanguageJava, regexp.MustCompile(`@type|defaultTyping|enableDefaultTyping|new Yaml\s*\(\s*\)|XMLDecoder|SnakeYAML`), "Polymorphic deserialization gadget risk"},
+				{language.LanguageJavaScript, regexp.MustCompile(`node-serialize|funcster|serialize-javascript`), "Unsafe JS deserialization library"},
+				{language.LanguagePython, regexp.MustCompile(`cloudpickle|joblib\.load|marshal\.loads?`), "Unsafe deserialization module"},
+				{language.LanguageCSharp, regexp.MustCompile(`BinaryFormatter|LosFormatter|ObjectStateFormatter|NetDataContractSerializer`), "Unsafe .NET deserialization formatter"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			raw:  true,
+			name: "secret-material", severity: "critical",
+			remediation: "Remove the credential, rotate it, and load secrets from environment or a secrets manager.",
+			patterns: []langPattern{
+				{language.LanguageUnknown, regexp.MustCompile(`[a-z][a-z0-9+.-]*://[^/\s:@]+:[^@\s]{6,}@`), "URL with embedded credentials"},
+				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key`), "Cloud/API credential material in source"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			raw:         true,
+			anyLanguage: true,
+			name:        "weak-encoding-crypto", severity: "low",
+			remediation: "Base64/hex encoding is not encryption; use a real cipher for confidentiality.",
+			patterns: []langPattern{
+				{language.LanguageUnknown, regexp.MustCompile(`\b(?:btoa|atob|base64\.b64encode|base64\.b64decode)\b`), "Encoding used where encryption may be intended"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			raw:  true,
+			name: "server-timeouts", severity: "medium",
+			remediation: "Configure ReadHeaderTimeout/IdleTimeout/WriteTimeout to mitigate Slowloris.",
+			patterns: []langPattern{
+				{language.LanguageGo, regexp.MustCompile(`http\.ListenAndServe\s*\(|http\.Server\s*\{[^}]{0,200}`), "HTTP server without visible timeout configuration"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "websocket-origin", severity: "high",
+			remediation: "Validate the Origin header in CheckOrigin; returning true accepts cross-site WebSocket connections.",
+			patterns: []langPattern{
+				{language.LanguageGo, regexp.MustCompile(`(?s)CheckOrigin.{0,300}?return\s+true`), "WebSocket CheckOrigin accepts any origin"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "dockerfile-user", severity: "medium",
+			remediation: "Run containers as a non-root user; avoid USER root or USER 0.",
+			filePattern: regexp.MustCompile(`(?:^|/)Dockerfile[^/]*$|.*\.dockerfile$`),
+			patterns: []langPattern{
+				{language.LanguageUnknown, regexp.MustCompile(`(?m)^\s*USER\s+(?:root|0)(?:\s|$)`), "Container runs as root"},
 			}},
 	}
 }
