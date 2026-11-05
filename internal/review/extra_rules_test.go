@@ -161,3 +161,25 @@ func TestUnpinnedActionSkipsSHA(t *testing.T) {
 		t.Fatal("pinned SHA action flagged")
 	}
 }
+
+func TestMissingTimeoutAndEnvPassthrough(t *testing.T) {
+	cases := []struct {
+		rule string
+		file string
+		body string
+	}{
+		{"missing-timeout", "app.py", "import requests\ndef f(u):\n    return requests.get(u)\n"},
+		{"missing-timeout", "main.go", "package main\nimport \"net/http\"\nfunc s() {\n\thttp.ListenAndServeTLS(\":443\", \"c\", \"k\", nil)\n}\n"},
+		{"env-passthrough", "main.go", "package main\nimport \"os/exec\"\nfunc f() {\n\tcmd := exec.Command(\"ls\")\n\tcmd.Env = os.Environ()\n}\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.rule+"/"+tc.file, func(t *testing.T) {
+			diff := extraDiff(tc.file, tc.body)
+			for _, r := range rulesByName(t, tc.rule) {
+				if !hasFinding(r.Check(diff), tc.rule) {
+					t.Errorf("rule %s did not fire on %s", tc.rule, tc.file)
+				}
+			}
+		})
+	}
+}

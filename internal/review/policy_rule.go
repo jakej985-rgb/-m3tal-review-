@@ -18,6 +18,9 @@ type reviewPolicy struct {
 	ForbiddenPaths  []string                    `json:"forbidden_paths,omitempty"`
 	RequireTogether []pathCoupling              `json:"require_together,omitempty"`
 	Rules           map[string]policyRuleTuning `json:"rules,omitempty"`
+	// Paths maps a repo-path glob to per-rule tuning, e.g.
+	// {"paths": {"*_test.go": {"code-slop": {"severity": "info"}}}}.
+	Paths map[string]map[string]policyRuleTuning `json:"paths,omitempty"`
 }
 
 // policyRuleTuning lets a repository disable a rule or override the severity

@@ -41,7 +41,23 @@ func ApplyFindingFilters(diff string, findings []Finding, repositoryRoot string,
 	out := make([]Finding, 0, len(findings))
 	for _, f := range findings {
 		if policy != nil {
-			if override, ok := policy.Rules[f.Rule]; ok {
+			override, ok := policy.Rules[f.Rule]
+			if !ok && len(policy.Paths) > 0 {
+				// Per-path overrides: globs evaluated in sorted order so the
+				// first match wins deterministically.
+				globs := make([]string, 0, len(policy.Paths))
+				for glob := range policy.Paths {
+					globs = append(globs, glob)
+				}
+				sort.Strings(globs)
+				for _, glob := range globs {
+					if matchesRepoPath(glob, f.File) {
+						override, ok = policy.Paths[glob][f.Rule]
+						break
+					}
+				}
+			}
+			if ok {
 				if override.Enabled != nil && !*override.Enabled {
 					continue
 				}

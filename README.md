@@ -133,8 +133,12 @@ m3tal-review diff change.patch
 cat change.diff | m3tal-review stdin
 m3tal-review doctor
 m3tal-review version --json
+m3tal-review watch            # re-review whenever the staged diff changes
+m3tal-review completions bash # or zsh / fish
 m3tal-review audit --with-tools
 ```
+
+`audit` also accepts `--only`, `--skip`, `--fail-on`, and `--format` like `review`. Policy files support per-path rule overrides via `"paths": {"<glob>": {"<rule>": {"enabled": false, "severity": "info"}}}`.
 
 `--with-tools` uses any installed `gitleaks`, `gosec`, and `osv-scanner`; each unavailable scanner makes the requested scan incomplete. OSV Scanner may need network access to obtain vulnerability data.
 

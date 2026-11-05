@@ -280,6 +280,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageJavaScript, regexp.MustCompile(`node-serialize|funcster|serialize-javascript`), "Unsafe JS deserialization library"},
 				{language.LanguagePython, regexp.MustCompile(`cloudpickle|joblib\.load|marshal\.loads?`), "Unsafe deserialization module"},
 				{language.LanguageCSharp, regexp.MustCompile(`BinaryFormatter|LosFormatter|ObjectStateFormatter|NetDataContractSerializer`), "Unsafe .NET deserialization formatter"},
+				{language.LanguagePHP, regexp.MustCompile(`\bunserialize\s*\(`), "PHP unserialize on data; verify it is trusted"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			raw:  true,
@@ -336,6 +337,8 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageGo, regexp.MustCompile(`plugin\.Open\s*\(`), "plugin.Open loads code from a path; ensure it is trusted"},
 				{language.LanguagePHP, regexp.MustCompile(`(?:include|include_once|require|require_once)\s*\(?[^;\n]{0,120}?\$_(?:GET|POST|REQUEST|COOKIE)`), "Dynamic include/require of request-controlled path"},
 				{language.LanguagePHP, regexp.MustCompile(`\bextract\s*\(\s*\$_`), "extract() on request data enables variable overwrite"},
+				{language.LanguageJava, regexp.MustCompile(`ScriptEngine|Nashorn|GraalVM.*eval|\.eval\s*\([^)]{0,120}(?:getParameter|request)`), "Script engine evaluation of dynamic code"},
+				{language.LanguagePython, regexp.MustCompile(`\bcode\.(?:InteractiveConsole|compile_command|interact)\b|codeop\.`), "Interactive code execution API"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "log-injection", severity: "low",
@@ -389,6 +392,19 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Review unsafe blocks carefully; prefer safe abstractions.",
 			patterns: []langPattern{
 				{language.LanguageRust, regexp.MustCompile(`\bunsafe\s*\{`), "unsafe block usage"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "missing-timeout", severity: "low",
+			remediation: "Pass an explicit timeout to outbound calls to avoid hanging on unresponsive servers.",
+			patterns: []langPattern{
+				{language.LanguagePython, regexp.MustCompile(`\brequests\.(?:get|post|put|delete|patch|head|options|request)\s*\([^)]{0,200}`), "requests call without visible timeout= parameter"},
+				{language.LanguageGo, regexp.MustCompile(`http\.ListenAndServeTLS\s*\(`), "TLS HTTP server without visible timeout configuration"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "env-passthrough", severity: "low",
+			remediation: "Review environment passthrough to subprocesses; it can leak secrets to child processes.",
+			patterns: []langPattern{
+				{language.LanguageGo, regexp.MustCompile(`\.Env\s*[:=]\s*(?:os\.Environ|append\(os\.Environ)`), "Full environment passed to subprocess"},
 			}},
 	}
 }

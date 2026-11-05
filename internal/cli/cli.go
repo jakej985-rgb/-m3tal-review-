@@ -175,6 +175,15 @@ func executeWithArgs(command string, commandArgs []string) error {
 	case "doctor":
 		return commandDoctor()
 
+	case "watch":
+		return commandWatch(3 * time.Second)
+
+	case "completions":
+		if len(commandArgs) != 1 {
+			return fmt.Errorf("usage: m3tal-review completions <bash|zsh|fish>")
+		}
+		return commandCompletions(commandArgs[0])
+
 	case "install-hook":
 		force := len(commandArgs) > 0 && commandArgs[0] == "--force"
 		return installHook(force)
@@ -554,7 +563,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if err != nil {
 			return err
 		}
-		rules := workingTreeRules(defaultRules(repositoryRoot))
+		rules := filterRules(workingTreeRules(defaultRules(repositoryRoot)), options.Only, options.Skip)
 		findings, reviewedFiles, unanalyzedFiles, snapshotHash, err := analyzeWorkingTree(repositoryRoot, options, rules)
 		if err != nil {
 			return err
@@ -609,12 +618,50 @@ func executeWithArgs(command string, commandArgs []string) error {
 		fmt.Println("Security checks are heuristic; see README for coverage and limitations.")
 		fmt.Println("Run ID:", displayText(runID))
 		fmt.Println("Report:", displayText(reportPath))
-		for _, finding := range report.Findings {
-			location := displayText(finding.File)
-			if finding.Line > 0 {
-				location = fmt.Sprintf("%s:%d", location, finding.Line)
+		switch options.Format {
+		case "sarif":
+			out, err := formatFindingsSarif(report.Findings)
+			if err != nil {
+				return err
 			}
-			fmt.Printf("[%s] %s: %s (%s)\n", displayText(finding.Severity), location, displayText(finding.Message), displayText(finding.Rule))
+			fmt.Println(out)
+		case "github":
+			fmt.Print(formatFindingsGitHub(report.Findings))
+		case "json":
+			out, err := formatFindingsJSON(report.Findings)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+		case "junit":
+			fmt.Print(formatFindingsJUnit(report.Findings))
+		case "codeclimate":
+			out, err := formatFindingsCodeClimate(report.Findings)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
+		default:
+			for _, finding := range report.Findings {
+				location := displayText(finding.File)
+				if finding.Line > 0 {
+					location = fmt.Sprintf("%s:%d", location, finding.Line)
+				}
+				fmt.Printf("[%s] %s: %s (%s)\n", displayText(finding.Severity), location, displayText(finding.Message), displayText(finding.Rule))
+			}
+		}
+		if options.FailOn != "" {
+			threshold := severityRank(options.FailOn)
+			blocking := 0
+			for _, finding := range report.Findings {
+				if severityRank(finding.Severity) >= threshold {
+					blocking++
+				}
+			}
+			if blocking > 0 || len(report.UnanalyzedFiles) > 0 {
+				return fmt.Errorf("audit found %d issue(s) at or above %s", blocking, options.FailOn)
+			}
+			return nil
 		}
 		if len(report.UnanalyzedFiles) > 0 {
 			fmt.Println("Unanalyzed files:")
@@ -901,10 +948,14 @@ type auditOptions struct {
 	MaxFiles       int
 	MaxBytes       int64
 	Profile        string
+	Only           []string
+	Skip           []string
+	FailOn         string
+	Format         string
 }
 
 func defaultAuditOptions() auditOptions {
-	return auditOptions{MaxFiles: 10000, MaxBytes: 128 << 20, Profile: "fast"}
+	return auditOptions{MaxFiles: 10000, MaxBytes: 128 << 20, Profile: "fast", Format: "text"}
 }
 
 func parseReviewProfile(args []string) (string, error) {
@@ -919,6 +970,28 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 		switch {
 		case arg == "--include-ignored":
 			options.IncludeIgnored = true
+		case arg == "--only" || arg == "--skip" || arg == "--fail-on" || arg == "--format":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			v := args[i]
+			switch arg {
+			case "--only":
+				options.Only = splitRuleList(v)
+			case "--skip":
+				options.Skip = splitRuleList(v)
+			case "--fail-on":
+				if !validSeverityName(v) {
+					return auditOptions{}, fmt.Errorf("invalid --fail-on %q", v)
+				}
+				options.FailOn = v
+			case "--format":
+				if v != "text" && v != "sarif" && v != "github" && v != "json" && v != "junit" && v != "codeclimate" {
+					return auditOptions{}, fmt.Errorf("invalid --format %q", v)
+				}
+				options.Format = v
+			}
 		case arg == "--with-tools":
 			options.WithTools = true
 		case arg == "--profile":
@@ -962,7 +1035,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				options.MaxBytes = value
 			}
 		default:
-			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools]", arg)
+			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate]", arg)
 		}
 	}
 	return options, nil
