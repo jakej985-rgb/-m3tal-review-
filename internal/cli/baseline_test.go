@@ -143,3 +143,32 @@ func TestUserConfigDefaults(t *testing.T) {
 		t.Fatalf("unset flag should take config value, got %q", opts2.FailOn)
 	}
 }
+
+func TestUserConfigAuditDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfgDir := filepath.Join(dir, "m3tal-review")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgJSON := `{"profile":"security","fail_on":"medium","format":"json","skip":["slop"]}`
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(cfgJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadUserConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, err := parseAuditOptions(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyUserConfigAudit(&opts, cfg)
+	// security profile is review-only; audit keeps its own default.
+	if opts.Profile != "fast" {
+		t.Fatalf("review-only profile leaked into audit: %q", opts.Profile)
+	}
+	if opts.FailOn != "medium" || opts.Format != "json" || len(opts.Skip) != 1 {
+		t.Fatalf("config not applied to audit: %+v", opts)
+	}
+}

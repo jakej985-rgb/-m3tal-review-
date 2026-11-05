@@ -569,6 +569,11 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if err != nil {
 			return err
 		}
+		cfg, cfgErr := loadUserConfig()
+		if cfgErr != nil {
+			return cfgErr
+		}
+		applyUserConfigAudit(&options, cfg)
 		workingDir, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get working directory: %w", err)
@@ -1036,10 +1041,11 @@ type auditOptions struct {
 	Format         string
 	Baseline       string
 	WriteBaseline  string
+	seen           map[string]bool
 }
 
 func defaultAuditOptions() auditOptions {
-	return auditOptions{MaxFiles: 10000, MaxBytes: 128 << 20, Profile: "fast", Format: "text"}
+	return auditOptions{MaxFiles: 10000, MaxBytes: 128 << 20, Profile: "fast", Format: "text", seen: map[string]bool{}}
 }
 
 func parseReviewProfile(args []string) (string, error) {
@@ -1051,6 +1057,11 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 	options := defaultAuditOptions()
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		flag := arg
+		if idx := strings.Index(flag, "="); idx > 0 {
+			flag = flag[:idx]
+		}
+		options.seen[flag] = true
 		switch {
 		case arg == "--include-ignored":
 			options.IncludeIgnored = true

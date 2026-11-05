@@ -83,3 +83,23 @@ func applyUserConfig(options *reviewOptions, cfg userConfig) {
 		options.Skip = append(cfg.Skip, options.Skip...)
 	}
 }
+
+// applyUserConfigAudit fills audit options the user did not explicitly set.
+func applyUserConfigAudit(options *auditOptions, cfg userConfig) {
+	// audit only supports fast|full profiles; review-only profiles are ignored.
+	if !options.seen["--profile"] && (cfg.Profile == "fast" || cfg.Profile == "full") {
+		options.Profile = cfg.Profile
+	}
+	if !options.seen["--fail-on"] && cfg.FailOn != "" {
+		options.FailOn = cfg.FailOn
+	}
+	if !options.seen["--format"] && cfg.Format != "" {
+		options.Format = cfg.Format
+	}
+	if !options.seen["--only"] && len(cfg.Only) > 0 {
+		options.Only = cfg.Only
+	}
+	if len(cfg.Skip) > 0 {
+		options.Skip = append(cfg.Skip, options.Skip...)
+	}
+}
