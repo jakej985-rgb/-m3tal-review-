@@ -227,3 +227,28 @@ func TestWave7Detectors(t *testing.T) {
 		})
 	}
 }
+
+func TestWave8Detectors(t *testing.T) {
+	cases := []struct {
+		rule string
+		file string
+		body string
+	}{
+		{"weak-crypto-params", "h.py", "import hashlib\ndef f(d):\n    return hashlib.md5(d).hexdigest()\n"},
+		{"jwt-misuse", "auth.py", "import jwt\ndef f(t):\n    return jwt.decode(t, key, options={\"verify_signature\": False})\n"},
+		{"deserialization-gadgets", "P.java", "class P {\n  void f(String s) {\n    XStream xs = new XStream();\n  }\n}\n"},
+		{"secret-material", "k.txt", "sk-ant-api03-aaaaaaaaaaaaaaaaaaaaaaaa\n"},
+		{"tls-verification", "c.py", "import ssl\nctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1)\nctx.check_hostname = False\n"},
+		{"bind-all-interfaces", "srv.go", "package main\nimport \"net\"\nfunc f() {\n\tnet.Listen(\"tcp\", \":8080\")\n}\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.rule+"/"+tc.file, func(t *testing.T) {
+			diff := extraDiff(tc.file, tc.body)
+			for _, r := range rulesByName(t, tc.rule) {
+				if !hasFinding(r.Check(diff), tc.rule) {
+					t.Errorf("rule %s did not fire on %s", tc.rule, tc.file)
+				}
+			}
+		})
+	}
+}
