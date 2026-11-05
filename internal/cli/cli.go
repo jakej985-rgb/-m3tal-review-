@@ -304,6 +304,19 @@ func executeWithArgs(command string, commandArgs []string) error {
 			for _, file := range stagedFiles {
 				stagedStatuses[file] = "M"
 			}
+		} else if options.Unstaged {
+			diff, err = git.UnstagedDiff(repositoryRoot)
+			if err != nil {
+				return err
+			}
+			stagedFiles, err = git.UnstagedFiles(repositoryRoot)
+			if err != nil {
+				return err
+			}
+			stagedStatuses = map[string]string{}
+			for _, file := range stagedFiles {
+				stagedStatuses[file] = "M"
+			}
 		} else {
 			diff, err = git.StagedDiff(repositoryRoot)
 			if err != nil {

@@ -183,3 +183,23 @@ func TestMissingTimeoutAndEnvPassthrough(t *testing.T) {
 		})
 	}
 }
+
+func TestUnstagedReadyDetectors(t *testing.T) {
+	cases := []struct {
+		rule string
+		file string
+		body string
+	}{
+		{"xss-extra-sinks", "app.js", "function f(h) {\n  document.write(h)\n}\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.rule, func(t *testing.T) {
+			diff := extraDiff(tc.file, tc.body)
+			for _, r := range rulesByName(t, tc.rule) {
+				if !hasFinding(r.Check(diff), tc.rule) {
+					t.Errorf("rule %s did not fire on %s", tc.rule, tc.file)
+				}
+			}
+		})
+	}
+}

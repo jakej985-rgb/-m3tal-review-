@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
@@ -56,5 +57,19 @@ func TestPostCheckRunRequiresEnv(t *testing.T) {
 	}
 	if err := postCheckRun(nil, ""); err == nil {
 		t.Fatal("expected error without GitHub env configuration")
+	}
+}
+
+func TestSarifOutputHasRequiredFields(t *testing.T) {
+	out, err := formatFindingsSarif([]review.Finding{
+		{Rule: "r1", Severity: "high", Category: "security", File: "a.go", Line: 3, Message: "m", Remediation: "fix"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"2.1.0"`, `"tool"`, `"driver"`, `"results"`, `"physicalLocation"`, `"ruleId"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("SARIF output missing %s", want)
+		}
 	}
 }

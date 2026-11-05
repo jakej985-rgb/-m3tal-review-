@@ -140,7 +140,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageGo, regexp.MustCompile(`cipher\.NewCBCEncrypter`), "CBC mode with caller-supplied IV; ensure IV is random per message"},
 				{language.LanguagePython, regexp.MustCompile(`\b(?:ECB|MODE_ECB)\b|iv\s*=\s*["']?[0-9a-fA-F\s]{8,}`), "ECB mode or static IV detected"},
 				{language.LanguagePython, regexp.MustCompile(`pbkdf2_hmac\([^)]*iterations\s*=\s*\d{3,4}\b`), "Low PBKDF2 iteration count"},
-				{language.LanguageJavaScript, regexp.MustCompile(`createCipheriv?\s*\([^)]*['"](?:des|rc2|bf|cast)['"]|['"]ecb['"]`), "Weak cipher or ECB mode"},
+				{language.LanguageJavaScript, regexp.MustCompile(`createCipher(?:iv)?\s*\([^)]*['"](?:des|rc2|bf|cast)['"]|['"]ecb['"]`), "Weak cipher or ECB mode"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "timing-unsafe-compare", severity: "medium",
@@ -208,8 +208,8 @@ func ExtraRules(repositoryRoot string) []Rule {
 			name: "xss-extra-sinks", severity: "high",
 			remediation: "Avoid HTML sinks with dynamic content; sanitize with a vetted library or use textContent.",
 			patterns: []langPattern{
-				{language.LanguageJavaScript, regexp.MustCompile(`insertAdjacentHTML|createContextualFragment|\.srcdoc\s*=|v-html|\{\{\{[^}]{1,80}\}\}\}|\|\s*(?:safe|raw)\s*\|`), "Additional HTML injection sink"},
-				{language.LanguageTypeScript, regexp.MustCompile(`insertAdjacentHTML|createContextualFragment|\.srcdoc\s*=|v-html|\{\{\{[^}]{1,80}\}\}\}|\|\s*(?:safe|raw)\s*\|`), "Additional HTML injection sink"},
+				{language.LanguageJavaScript, regexp.MustCompile(`document\.write(?:ln)?\s*\(|insertAdjacentHTML|createContextualFragment|\.srcdoc\s*=|v-html|\{\{\{[^}]{1,80}\}\}\}|\|\s*(?:safe|raw)\s*\|`), "Additional HTML injection sink"},
+				{language.LanguageTypeScript, regexp.MustCompile(`document\.write(?:ln)?\s*\(|insertAdjacentHTML|createContextualFragment|\.srcdoc\s*=|v-html|\{\{\{[^}]{1,80}\}\}\}|\|\s*(?:safe|raw)\s*\|`), "Additional HTML injection sink"},
 				{language.LanguagePython, regexp.MustCompile(`\|\s*(?:safe|raw)\s*\}`), "Template autoescape bypass filter"},
 			}},
 

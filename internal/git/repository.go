@@ -388,6 +388,37 @@ func StagedDiff(path string) (string, error) {
 	return string(output), nil
 }
 
+// UnstagedDiff returns the patch for tracked changes not yet staged.
+func UnstagedDiff(path string) (string, error) {
+	command := exec.Command(
+		"git",
+		"-c", "core.fsmonitor=false",
+		"-C", path,
+		"diff",
+		"--no-ext-diff",
+		"--unified=0",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("get unstaged diff: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return string(output), nil
+}
+
+// UnstagedFiles returns tracked files with unstaged modifications.
+func UnstagedFiles(path string) ([]string, error) {
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "diff", "--name-only", "-z")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("get unstaged files: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	files := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+	if len(files) == 1 && files[0] == "" {
+		return []string{}, nil
+	}
+	return files, nil
+}
+
 // WorkingTreeDiffAgainst returns the patch of working-tree changes relative to
 // a base ref (used by "review --base").
 func WorkingTreeDiffAgainst(path, ref string) (string, error) {

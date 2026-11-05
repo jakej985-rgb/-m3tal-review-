@@ -22,6 +22,7 @@ type reviewOptions struct {
 	WriteBaseline string
 	CheckRun      bool
 	CheckRunSHA   string
+	Unstaged      bool
 	Include       []string
 	Exclude       []string
 	SortBy        string
@@ -88,6 +89,8 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 				return options, err
 			}
 			options.Baseline = v
+		case "--unstaged":
+			options.Unstaged = true
 		case "--check-run":
 			options.CheckRun = true
 		case "--check-run-sha":
