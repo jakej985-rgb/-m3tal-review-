@@ -38,22 +38,22 @@ test, or is explicitly deferred with a one-line reason in this file.
 
 ## Phase B — Detector long-tail, wave 12 (last planned wave; items E–J remainder)
 
-- [ ] B1: Go — `//go:build` constraint surprises (`// +build` ignore),
+- [x] B1: Go — `//go:build` constraint surprises (`// +build` ignore),
       `reflect.Value.Method`/`Call` on user input, `plugin.Open` (done),
       `syscall.Exec`/`RawSyscall`, `ioutil.` deprecations (slop-level),
       `time.After` in loops (timer leak), `context.Background()` in request handlers
-- [ ] B2: Python — `__import__`/`importlib` dynamic (done partially),
+- [x] B2: Python — `__import__`/`importlib` dynamic (done partially),
       `getattr(obj, user_input)` chains, `subprocess` `shell=True` variants,
       `os.chmod`/`os.chown` on user paths, `tempfile.mktemp` (insecure),
       `assert` in security paths (done), `pickle` protocol 0, `marshal` (done)
-- [ ] B3: JS/TS — `import()`/`require()` dynamic (done), `ServiceWorker` scope
+- [x] B3: JS/TS — `import()`/`require()` dynamic (done), `ServiceWorker` scope
       abuse, `WebSocket` auth gaps, `postMessage` structured-clone gadgets,
       `Array.prototype.sort` comparator injection, `RegExp` catastrophic
       backtracking literals (ReDoS heuristics), `JSON.parse` reviver abuse
-- [ ] B4: JVM/.NET/Ruby-ish — `Runtime.exec` variants done; add `ProcessImpl`,
+- [x] B4: JVM/.NET/Ruby-ish — `Runtime.exec` variants done; add `ProcessImpl`,
       `ScriptEngineManager`, `PowerShell` invocation, `WScript.Shell`,
       `.vbs`/`.bat` in repo flagged by filenameRule
-- [ ] B5: IaC round 2 — K8s `hostPath` volumes, `privileged` done, add
+- [x] B5: IaC round 2 — K8s `hostPath` volumes, `privileged` done, add
       `serviceAccountName: default` + automount, `readOnlyRootFilesystem` done,
       Terraform `aws_iam_policy` wildcard actions, `0.0.0.0/0` done,
       unencrypted `aws_ebs_volume`/`aws_s3_bucket` `server_side_encryption`,

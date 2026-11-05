@@ -328,3 +328,31 @@ func TestSpreadsheetFormulaInjection(t *testing.T) {
 		})
 	}
 }
+
+func TestPhaseBDetectors(t *testing.T) {
+	cases := []struct {
+		rule string
+		file string
+		body string
+	}{
+		{"dynamic-code-loading", "d.go", "package main\nimport \"net/http\"\nfunc f(w http.ResponseWriter, r *http.Request) {\n\t_ = r.FormValue(\"x\")\n\tm := reflect.ValueOf(1).MethodByName(r.FormValue(\"m\"))\n\t_ = m\n}\n"},
+		{"unsafe-code", "s.go", "package main\nimport \"syscall\"\nfunc f() {\n\tsyscall.Exec(\"/bin/sh\", nil, nil)\n}\n"},
+		{"unsafe-code", "t.py", "import tempfile\ndef f():\n    return tempfile.mktemp()\n"},
+		{"injection-other", "p.py", "import os, request\ndef f():\n    os.chmod(request.args[\"f\"], 0o777)\n"},
+		{"dynamic-code-loading", "r.js", "const re = new RegExp(req.query.pattern)\n"},
+		{"dynamic-code-loading", "P.java", "class P {\n  void f() {\n    new ProcessImpl(new String[]{\"cmd\"});\n  }\n}\n"},
+		{"container-privilege", "pod.yml", "spec:\n  hostPath:\n    path: /etc\n  serviceAccountName: default\n"},
+		{"iac-exposure", "iam.tf", "resource \"aws_iam_policy\" \"p\" {\n  policy = jsonencode({\n    Action = \"*\"\n  })\n}\n"},
+		{"ci-secret-exposure", ".github/workflows/reusable.yml", "jobs:\n  call:\n    uses: org/repo/.github/workflows/x.yml@main\n    secrets: inherit\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.rule+"/"+tc.file, func(t *testing.T) {
+			diff := extraDiff(tc.file, tc.body)
+			for _, r := range rulesByName(t, tc.rule) {
+				if !hasFinding(r.Check(diff), tc.rule) {
+					t.Errorf("rule %s did not fire on %s", tc.rule, tc.file)
+				}
+			}
+		})
+	}
+}
