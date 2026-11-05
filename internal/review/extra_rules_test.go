@@ -121,6 +121,13 @@ func TestExtraRulesDetections(t *testing.T) {
 		{"dockerfile-user", "Dockerfile", "FROM alpine:3.19\nUSER root\nCMD [\"sh\"]\n"},
 		{"js-common-mistakes", "app.js", "function f(o) {\n  for (k in o) { console.log(k) }\n  return parseInt(o.n)\n}\n"},
 		{"dynamic-code-loading", "loader.py", "import importlib\ndef f(name):\n    return importlib.import_module(name)\n"},
+		{"log-injection", "app.py", "import logging, request\ndef f():\n    logging.info('got ' + request.args.get('q'))\n"},
+		{"nosql-injection", "app.js", "db.users.find({ name: req.query.name, $where: '1==1' })\n"},
+		{"graphql-injection", "q.js", "const q = gql`query { user(id: ${uid}) { name } }`\n"},
+		{"email-header-injection", "mail.py", "def f(to):\n    msg['Subject'] = 'Hi ' + request.args.get('n')\n"},
+		{"unbounded-read", "main.go", "package main\nimport \"io\"\nfunc f(r io.Reader) []byte {\n\tb, _ := io.ReadAll(r)\n\treturn b\n}\n"},
+		{"client-timeouts", "main.go", "package main\nimport \"net/http\"\nvar c = &http.Client{}\n"},
+		{"rust-unsafe", "lib.rs", "fn f(p: *const u8) -> u8 {\n    unsafe { *p }\n}\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.rule, func(t *testing.T) {

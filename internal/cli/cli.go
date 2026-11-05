@@ -660,9 +660,54 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return nil
 		}
 
-		fmt.Println("M3TAL Review History")
+		// Optional filters: history [--last N] [--status S] [--scope S] [--grep text]
+		last, statusFilter, scopeFilter, grepFilter := 0, "", "", ""
+		for i := 0; i < len(commandArgs); i++ {
+			arg := commandArgs[i]
+			if i+1 >= len(commandArgs) {
+				return fmt.Errorf("history option %q requires a value", arg)
+			}
+			i++
+			v := commandArgs[i]
+			switch arg {
+			case "--last":
+				n, err := strconv.Atoi(v)
+				if err != nil || n < 1 {
+					return fmt.Errorf("invalid --last %q", v)
+				}
+				last = n
+			case "--status":
+				statusFilter = v
+			case "--scope":
+				scopeFilter = v
+			case "--grep":
+				grepFilter = strings.ToLower(v)
+			default:
+				return fmt.Errorf("unknown history option %q", arg)
+			}
+		}
 
-		for _, entry := range entries {
+		shown := 0
+		fmt.Println("M3TAL Review History")
+		// Entries are chronological; --last shows the most recent N.
+		for idx := len(entries) - 1; idx >= 0; idx-- {
+			entry := entries[idx]
+			if statusFilter != "" && entry.Status != statusFilter {
+				continue
+			}
+			if scopeFilter != "" && entry.Scope != scopeFilter {
+				continue
+			}
+			if grepFilter != "" {
+				hay := strings.ToLower(entry.Summary + " " + entry.RunID)
+				if !strings.Contains(hay, grepFilter) {
+					continue
+				}
+			}
+			if last > 0 && shown >= last {
+				break
+			}
+			shown++
 			fmt.Printf(
 				"[%s] %s | %s | findings: %d | %s\n",
 				displayText(entry.Status),
@@ -671,6 +716,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 				entry.FindingCount,
 				displayText(entry.Summary),
 			)
+		}
+		if shown == 0 {
+			fmt.Println("No history entries match the filters.")
 		}
 
 		return nil
