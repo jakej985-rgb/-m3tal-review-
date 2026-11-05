@@ -14,21 +14,21 @@ Status markers: `[ ]` pending, `[~]` partial, `[x]` shipped.
 Goal: finish the clearly-feasible pattern backlog before FP costs dominate.
 Each wave = one commit, ~15–25 patterns, focused tests.
 
-- [ ] A11: CSV/formula injection (`=`,`+`,`-`,`@` cell prefixes on export),
+- [x] A11: CSV/formula injection (`=`,`+`,`-`,`@` cell prefixes on export),
       CRLF stripping gaps in mail/header builders, `html/template` dynamic
       template names, GraphQL persisted-query bypasses, additional SSTI sinks
       (Twig `display`, Blade `{!! !!}`, Jinja `|safe` variants — partially done)
-- [ ] A12: Secret formats round 2 — age/PGP done; add: Azure connection strings,
+- [x] A12: Secret formats round 2 — age/PGP done; add: Azure connection strings,
       JWT-shaped literals in config, `netrc`-style `[machine] login password`,
       Kubernetes Secret `data:` blocks with high-entropy values, Terraform
       `password = "..."` literals (raw-mode, filePattern `*.tf`)
-- [ ] A13: Transport/TLS round 2 — `wss://` downgrade checks, `ftp://`/`telnet://`
+- [x] A13: Transport/TLS round 2 — `wss://` downgrade checks, `ftp://`/`telnet://`
       URLs in code, `ssl.wrap_socket` legacy, `requests` `cert=` REJECT paths,
       Go `tls.Config{MinVersion: ssl30}`/SSLv3, `--proto ="-all,+SSLv3"` curl flags
-- [ ] A14: Auth/session round 2 — JWT `exp`/`nbf` not validated, session fixation
+- [x] A14: Auth/session round 2 — JWT `exp`/`nbf` not validated, session fixation
       (session ID not rotated on login), `remember_me` tokens without expiry,
       OAuth `state` missing on callback, password reset tokens logged/emailed raw
-- [ ] A15: Injection round 2 — LDAP filter `(|(...))` escapes, XPath `//user[name()='` + concat,
+- [x] A15: Injection round 2 — LDAP filter `(|(...))` escapes, XPath `//user[name()='` + concat,
       SMTP command injection (`\r\n` in `RCPT TO`), IMAP command injection,
       CRLF in `Location:`/`Refresh:` headers (Go `Header().Set` raw values),
       open redirect via `//evil.com` protocol-relative URLs
