@@ -4,6 +4,15 @@
 
 It provides actionable findings, records review trails (history), and supports a manual fix-and-re-review workflow (automated repair tracking is not currently supported).
 
+## Documentation
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — package layout, command pipeline, rule engines, and `.m3tal-review/` storage.
+- [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — using m3tal-review across the M3tal ecosystem repos, hooks, and CI; disambiguates the `.m3tal-review/` directory from M3tal Core's separate internal review workflow.
+- [`docs/RELEASE.md`](docs/RELEASE.md) — versioning, CI gates, and tagging a release.
+- [`docs/threat-model.md`](docs/threat-model.md) — what the tool guarantees and what it explicitly does not.
+- [`docs/fp-tuning.md`](docs/fp-tuning.md) — false-positive tuning and policy configuration.
+- `completion_report.md` — historical release-gate report (superseded; kept for audit history).
+
 ## Features
 
 - **Review Engine**: `review` checks staged Git changes; `audit` checks the complete working-tree change set.

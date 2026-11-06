@@ -1,3 +1,5 @@
+> **Historical record** — this report documents a past release gate for an earlier milestone. It is kept for audit history and may not reflect the current codebase. For current documentation see `docs/` and `README.md`.
+
 ## M3TAL Review — Final Storage Hardening & Release Gate Report
 
 ### 1. Executive Release Recommendation
