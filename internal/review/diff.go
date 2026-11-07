@@ -74,14 +74,8 @@ func parseGitDiffHeaderPaths(line string) (string, string) {
 		}
 	}
 
-	cleanOld := unquoteDiffPath(oldPart)
-	if strings.HasPrefix(cleanOld, "a/") {
-		cleanOld = strings.TrimPrefix(cleanOld, "a/")
-	}
-	cleanNew := unquoteDiffPath(newPart)
-	if strings.HasPrefix(cleanNew, "b/") {
-		cleanNew = strings.TrimPrefix(cleanNew, "b/")
-	}
+	cleanOld := strings.TrimPrefix(unquoteDiffPath(oldPart), "a/")
+	cleanNew := strings.TrimPrefix(unquoteDiffPath(newPart), "b/")
 	return cleanOld, cleanNew
 }
 

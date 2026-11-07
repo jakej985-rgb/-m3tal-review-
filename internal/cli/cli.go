@@ -1065,11 +1065,6 @@ func defaultAuditOptions() auditOptions {
 	return auditOptions{MaxFiles: 10000, MaxBytes: 128 << 20, Profile: "fast", Format: "text", seen: map[string]bool{}}
 }
 
-func parseReviewProfile(args []string) (string, error) {
-	options, err := parseReviewOptions(args)
-	return options.Profile, err
-}
-
 func parseAuditOptions(args []string) (auditOptions, error) {
 	options := defaultAuditOptions()
 	for i := 0; i < len(args); i++ {
@@ -1163,10 +1158,6 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 		}
 	}
 	return options, nil
-}
-
-func workingTreeSnapshot(repositoryRoot string) (string, []string, []string, error) {
-	return workingTreeSnapshotWithOptions(repositoryRoot, defaultAuditOptions())
 }
 
 func workingTreeSnapshotWithOptions(repositoryRoot string, options auditOptions) (string, []string, []string, error) {
@@ -1297,33 +1288,6 @@ func pathsOnlyDiff(files []string) string {
 		fmt.Fprintf(&diff, "diff --git %s %s\n", strconv.Quote("a/"+file), strconv.Quote("b/"+file))
 	}
 	return diff.String()
-}
-
-func filterUnanalyzedDiff(diff string, unanalyzed map[string]bool) string {
-	if len(unanalyzed) == 0 {
-		return diff
-	}
-	var filtered strings.Builder
-	var chunk strings.Builder
-	flush := func() {
-		if chunk.Len() == 0 {
-			return
-		}
-		text := chunk.String()
-		parsed := review.ParseDiff(text)
-		if len(parsed) == 0 || !unanalyzed[parsed[0].Path] {
-			filtered.WriteString(text)
-		}
-		chunk.Reset()
-	}
-	for _, line := range strings.SplitAfter(diff, "\n") {
-		if strings.HasPrefix(line, "diff --git ") {
-			flush()
-		}
-		chunk.WriteString(line)
-	}
-	flush()
-	return filtered.String()
 }
 
 func sortedKeys(set map[string]bool) []string {

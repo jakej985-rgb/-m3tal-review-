@@ -166,27 +166,6 @@ func findConfigCredential(text string) (string, string) {
 	return "", ""
 }
 
-// findCredential returns the credential-like name and its value from a line,
-// or empty strings when the line has none.
-func findCredential(file, text string) (string, string) {
-	for _, match := range credentialPattern.FindAllStringSubmatch(text, -1) {
-		if !isCredentialName(match[1]) {
-			continue
-		}
-		for _, value := range match[2:] {
-			if value != "" {
-				return match[1], value
-			}
-		}
-	}
-	if isConfigStyleFile(file) {
-		if match := unquotedCredentialPattern.FindStringSubmatch(text); match != nil && isCredentialName(match[1]) {
-			return match[1], match[2]
-		}
-	}
-	return "", ""
-}
-
 func isCredentialName(name string) bool {
 	name = strings.ToLower(name)
 	name = strings.NewReplacer("_", "", "-", "", ".", "").Replace(name)

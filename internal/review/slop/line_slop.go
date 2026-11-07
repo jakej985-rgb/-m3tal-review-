@@ -32,9 +32,7 @@ func checkSlopLineExtras(fd FileDiff) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 	lines := make([]int, 0, len(fd.AddedLines))
-	for _, line := range fd.AddedLines {
-		lines = append(lines, line)
-	}
+	lines = append(lines, fd.AddedLines...)
 	sort.Ints(lines)
 
 	// Lint/tool suppressions added without visible justification.
@@ -253,9 +251,7 @@ func crossFileDuplicateFindings(fileDiffs []FileDiff) []Finding {
 			continue
 		}
 		lines := make([]int, 0, len(fd.AddedLines))
-		for _, line := range fd.AddedLines {
-			lines = append(lines, line)
-		}
+		lines = append(lines, fd.AddedLines...)
 		sort.Ints(lines)
 		// Contiguous runs of added lines.
 		var runs [][]int

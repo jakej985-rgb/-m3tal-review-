@@ -49,12 +49,12 @@ var sqliPatterns = []struct {
 	},
 	{
 		language: language.LanguageJavaScript,
-		pattern:  regexp.MustCompile("\\.(?:query|execute)\\w*\\s*\\([^)]{0,120}?\\+\\s*\\w"),
+		pattern:  regexp.MustCompile(`\.(?:query|execute)\w*\s*\([^)]{0,120}?\+\s*\w`),
 		message:  "SQL query built with concatenation; use parameterized queries",
 	},
 	{
 		language: language.LanguageTypeScript,
-		pattern:  regexp.MustCompile("\\.(?:query|execute)\\w*\\s*\\([^)]{0,120}?\\+\\s*\\w"),
+		pattern:  regexp.MustCompile(`\.(?:query|execute)\w*\s*\([^)]{0,120}?\+\s*\w`),
 		message:  "SQL query built with concatenation; use parameterized queries",
 	},
 	{

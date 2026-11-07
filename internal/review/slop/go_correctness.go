@@ -296,34 +296,6 @@ func (v *slopInspector) checkFatalOutsideMain(fn *ast.FuncDecl, call *ast.CallEx
 	}
 }
 
-// checkUnusedParams reports function parameters that are never referenced.
-func (v *slopInspector) checkUnusedParams(fn *ast.FuncDecl) {
-	if fn.Type.Params == nil {
-		return
-	}
-	if fn.Body != nil {
-		used := make(map[string]bool)
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok {
-				used[id.Name] = true
-			}
-			return true
-		})
-		for _, field := range fn.Type.Params.List {
-			for _, name := range field.Names {
-				param := name.Name
-				if param == "_" || param == "this" || used[param] {
-					continue
-				}
-				line := v.fset.Position(name.Pos()).Line
-				if v.lineMap[line] {
-					v.addFinding(line, "Unused parameter "+param, "Rename to _ if intentionally unused, or remove the parameter.")
-				}
-			}
-		}
-	}
-}
-
 // checkCyclomatic reports functions with high branch density.
 func (v *slopInspector) checkCyclomatic(fn *ast.FuncDecl) {
 	if fn.Body == nil {
@@ -331,11 +303,11 @@ func (v *slopInspector) checkCyclomatic(fn *ast.FuncDecl) {
 	}
 	branches := 0
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		switch n.(type) {
+		switch n := n.(type) {
 		case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.CaseClause, *ast.CommClause:
 			branches++
 		case *ast.BinaryExpr:
-			if b, ok := n.(*ast.BinaryExpr); ok && (b.Op == token.LAND || b.Op == token.LOR) {
+			if n.Op == token.LAND || n.Op == token.LOR {
 				branches++
 			}
 		}

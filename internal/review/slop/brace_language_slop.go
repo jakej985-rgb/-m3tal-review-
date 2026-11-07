@@ -876,9 +876,8 @@ func languageUnbracedNesting(tokens []braceLanguageToken, cfg braceLanguageConfi
 	cache := make(map[int]int)
 	visiting := make(map[int]bool)
 	var parseStatement func(int) int
-	var parseControl func(int) int
 
-	parseControl = func(index int) int {
+	parseControl := func(index int) int {
 		if end, ok := cache[index]; ok {
 			return end
 		}

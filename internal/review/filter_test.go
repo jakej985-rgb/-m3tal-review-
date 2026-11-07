@@ -23,7 +23,9 @@ func TestInlineSuppression(t *testing.T) {
 
 func TestFindingFingerprintStable(t *testing.T) {
 	f := Finding{Rule: "r", File: "a.go", Line: 3, Message: "m"}
-	if findingFingerprint(f) != findingFingerprint(f) {
+	fp1 := findingFingerprint(f)
+	fp2 := findingFingerprint(f)
+	if fp1 != fp2 {
 		t.Fatal("fingerprint not stable")
 	}
 	f2 := f

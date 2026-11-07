@@ -163,47 +163,6 @@ func (r *filenameRule) Check(diff string) []Finding {
 	return findings
 }
 
-// lineRule scans added raw lines (unmasked) for constructs that live in
-// non-code files (Dockerfile, workflows, shell scripts).
-type lineRule struct {
-	ruleRuntime
-	name        string
-	severity    string
-	message     string
-	remediation string
-	filePattern *regexp.Regexp
-	pattern     *regexp.Regexp
-}
-
-func (r *lineRule) Name() string { return r.name }
-
-func (r *lineRule) Check(diff string) []Finding {
-	var findings []Finding
-	for _, fileDiff := range ParseDiff(diff) {
-		if r.filePattern != nil && !r.filePattern.MatchString(filepath.ToSlash(fileDiff.Path)) {
-			continue
-		}
-		for _, block := range diffSourceBlocksForFile(diff, fileDiff.Path) {
-			code := string(maskNonCode(block.file, block.text))
-			for _, match := range r.pattern.FindAllStringIndex(code, -1) {
-				if !matchTouchesAdded(block, code, match[0], match[1]) {
-					continue
-				}
-				line := lineAtOffset(block.firstLine, code, match[0])
-				findings = append(findings, Finding{
-					Rule:        r.name,
-					Severity:    r.severity,
-					File:        block.file,
-					Line:        line,
-					Message:     r.message,
-					Remediation: r.remediation,
-				})
-			}
-		}
-	}
-	return findings
-}
-
 // lineContentAt returns the single line of source containing offset.
 func lineContentAt(source string, offset int) string {
 	if offset < 0 {

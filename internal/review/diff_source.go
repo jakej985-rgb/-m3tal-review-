@@ -15,15 +15,6 @@ type diffSourceBlock struct {
 	lineCount  int
 }
 
-// diffSourceBlocks constructs contiguous source blocks across all files in the diff.
-func diffSourceBlocks(diff string) []diffSourceBlock {
-	var blocks []diffSourceBlock
-	for _, fileDiff := range ParseDiff(diff) {
-		blocks = append(blocks, fileDiffSourceBlocks(fileDiff)...)
-	}
-	return blocks
-}
-
 // fileDiffSourceBlocks constructs contiguous source blocks directly for a single FileDiff.
 // Performance optimization: Callers iterating over ParseDiff(diff) can call this directly
 // on each FileDiff instead of re-parsing the entire diff and rebuilding all blocks (avoiding

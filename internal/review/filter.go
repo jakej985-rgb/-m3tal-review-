@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -109,9 +109,7 @@ func inlineSuppressions(diff string) map[string]*fileSuppressions {
 			result[fd.Path] = fs
 		}
 		lines := make([]int, 0, len(fd.AddedLines))
-		for _, line := range fd.AddedLines {
-			lines = append(lines, line)
-		}
+		lines = append(lines, fd.AddedLines...)
 		sort.Ints(lines)
 		for _, line := range lines {
 			text := fd.AddedText[line]
@@ -212,7 +210,7 @@ type ignorePattern struct {
 }
 
 func readIgnoreFile(repositoryRoot string, workingTree bool) []ignorePattern {
-	file := path.Join(repositoryRoot, ignoreFileName)
+	file := filepath.Join(repositoryRoot, ignoreFileName)
 	if info, err := os.Lstat(file); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return nil
 	}

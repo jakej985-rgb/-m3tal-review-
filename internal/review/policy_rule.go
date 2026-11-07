@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -128,7 +129,7 @@ func readReviewPolicy(repositoryRoot string, workingTree bool) (reviewPolicy, er
 	if repositoryRoot == "" {
 		return reviewPolicy{}, nil
 	}
-	file := path.Join(repositoryRoot, policyFileName)
+	file := filepath.Join(repositoryRoot, policyFileName)
 	// The policy file is repo-controlled input; refuse to follow a symlink
 	// that could redirect the read outside the repository.
 	if info, statErr := os.Lstat(file); statErr == nil && info.Mode()&os.ModeSymlink != 0 {

@@ -449,7 +449,7 @@ func analyzeBraceSlop(file, language, source string, added map[int]bool) []Findi
 	// not create findings.
 	analysisTokens := make([]braceLanguageToken, len(tokens))
 	for i, token := range tokens {
-		analysisTokens[i] = braceLanguageToken{text: token.text, line: token.line, start: token.start, end: token.end}
+		analysisTokens[i] = braceLanguageToken(token)
 	}
 	for i := 1; i+1 < len(tokens); i++ {
 		if tokens[i].text != "==" && tokens[i].text != "===" && tokens[i].text != "!=" && tokens[i].text != "!==" {
@@ -475,7 +475,7 @@ func analyzeBraceSlop(file, language, source string, added map[int]bool) []Findi
 func asBraceTokens(tokens []sourceToken) []braceLanguageToken {
 	converted := make([]braceLanguageToken, len(tokens))
 	for i, token := range tokens {
-		converted[i] = braceLanguageToken{text: token.text, line: token.line, start: token.start, end: token.end}
+		converted[i] = braceLanguageToken(token)
 	}
 	return converted
 }
@@ -507,8 +507,6 @@ func braceStructureError(tokens []sourceToken) error {
 	}
 	return nil
 }
-
-func isJSBool(text string) bool { return text == "true" || text == "false" }
 
 var braceComments = regexp.MustCompile(`(?s)/\*.*?\*/|//[^\n]*`)
 

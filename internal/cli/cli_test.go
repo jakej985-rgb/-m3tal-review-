@@ -979,7 +979,7 @@ func TestWorkingTreeSnapshotOptionsIncludeIgnoredFilesAndEnforceBudget(t *testin
 		t.Fatal("ignored file was included without --include-ignored")
 	}
 	options.IncludeIgnored = true
-	diff, files, unanalyzed, err := workingTreeSnapshotWithOptions(repo, options)
+	diff, files, _, err := workingTreeSnapshotWithOptions(repo, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -987,7 +987,7 @@ func TestWorkingTreeSnapshotOptionsIncludeIgnoredFilesAndEnforceBudget(t *testin
 		t.Fatalf("ignored file missing from opted-in snapshot; files=%v", files)
 	}
 	options.MaxBytes = 1
-	_, _, unanalyzed, err = workingTreeSnapshotWithOptions(repo, options)
+	_, _, unanalyzed, err := workingTreeSnapshotWithOptions(repo, options)
 	if err != nil {
 		t.Fatal(err)
 	}
