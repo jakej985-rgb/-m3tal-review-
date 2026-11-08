@@ -19,11 +19,7 @@ const ignoreFileName = ".m3tal-review-ignore"
 // and applies policy-file per-rule enable/severity overrides. It is safe to
 // call per-file (audit) or once with a combined diff (review).
 func ApplyFindingFilters(diff string, findings []Finding, repositoryRoot string, workingTree bool) []Finding {
-	for i := range findings {
-		if findings[i].ID == "" {
-			findings[i].ID = findingFingerprint(findings[i])
-		}
-	}
+	findings = AssignFindingIDs(findings)
 
 	var policy *reviewPolicy
 	if repositoryRoot != "" {

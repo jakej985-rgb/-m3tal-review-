@@ -1,9 +1,6 @@
 package review
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 	"sort"
 	"time"
 )
@@ -54,14 +51,11 @@ func NewReport(
 	reviewedFiles []string,
 	findings []Finding,
 ) Report {
-	findings = append([]Finding(nil), findings...)
+	findings = AssignFindingIDs(findings)
 	passed := true
 	for i := range findings {
 		if findings[i].Category == "" {
 			findings[i].Category = categoryForRule(findings[i].Rule)
-		}
-		if findings[i].ID == "" {
-			findings[i].ID = FindingID(findings[i])
 		}
 		finding := findings[i]
 		if finding.Severity != "info" {
@@ -92,18 +86,6 @@ func NewReport(
 		Summary:       summary,
 		Findings:      findings,
 	}
-}
-
-// FindingID returns a stable identifier for the same rule, file, line, and
-// message. Reports can use it to compare repeated reviews without an agent.
-func FindingID(f Finding) string {
-	category := f.Category
-	if category == "" {
-		category = categoryForRule(f.Rule)
-	}
-	key := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s", category, f.Rule, f.File, f.Line, f.Message)
-	hash := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(hash[:8])
 }
 
 func CompareFindings(previous, current []Finding) FindingChanges {

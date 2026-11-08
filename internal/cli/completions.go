@@ -13,7 +13,7 @@ _m3tal_review() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   case "${COMP_WORDS[1]}" in
     review|audit)
-      COMPREPLY=($(compgen -W "--profile --with-tools --only --skip --fail-on --base --baseline --write-baseline --include --exclude --sort-by --summary-only --max-findings --max-diff-size --rule --format --include-ignored --max-files --max-bytes" -- "$cur"))
+      COMPREPLY=($(compgen -W "--profile --with-tools --only --skip --fail-on --base --baseline --write-baseline --include --exclude --sort-by --summary-only --max-findings --max-diff-size --rule --format --snippets --include-ignored --max-files --max-bytes" -- "$cur"))
       ;;
     explain)
       COMPREPLY=($(compgen -W "%s" -- "$cur"))
@@ -40,7 +40,7 @@ _m3tal_review "$@"
 	case "fish":
 		fmt.Printf(`complete -c m3tal-review -f
 for c in %s; complete -c m3tal-review -n "__fish_use_subcommand" -a $c; end
-for f in --profile --with-tools --only --skip --fail-on --base --baseline --write-baseline --include --exclude --sort-by --summary-only --max-findings --max-diff-size --rule --format --include-ignored --max-files --max-bytes; complete -c m3tal-review -l (string replace -r '^--' '' $f); end
+for f in --profile --with-tools --only --skip --fail-on --base --baseline --write-baseline --include --exclude --sort-by --summary-only --max-findings --max-diff-size --rule --format --snippets --include-ignored --max-files --max-bytes; complete -c m3tal-review -l (string replace -r '^--' '' $f); end
 `, commands)
 	default:
 		return fmt.Errorf("unsupported shell %q; expected bash, zsh, or fish", shell)

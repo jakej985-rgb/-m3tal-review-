@@ -401,6 +401,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 			findings = append(findings, toolFindings...)
 			confidenceChecks = append(confidenceChecks, results...)
 		}
+		findings = review.GroupFindings(findings)
 		workingTree := options.Base != ""
 		findings = review.ApplyFindingFilters(diff, findings, repositoryRoot, workingTree)
 		if options.Baseline != "" {
@@ -465,6 +466,8 @@ func executeWithArgs(command string, commandArgs []string) error {
 			}
 		}
 
+		review.AttachSnippetsToReport(&report, diff, repositoryRoot, false)
+
 		reportPath := filepath.Join(
 			repositoryRoot,
 			".m3tal-review",
@@ -516,6 +519,18 @@ func executeWithArgs(command string, commandArgs []string) error {
 				return err
 			}
 			fmt.Println(out)
+		case "jsonl":
+			out, err := formatFindingsJSONL(report.Findings)
+			if err != nil {
+				return err
+			}
+			fmt.Print(out)
+		case "html":
+			out, err := formatReportHTML(report)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
 		case "junit":
 			fmt.Print(formatFindingsJUnit(report.Findings))
 		case "codeclimate":
@@ -542,6 +557,12 @@ func executeWithArgs(command string, commandArgs []string) error {
 				)
 				if finding.Remediation != "" {
 					fmt.Printf("  Remediation: %s\n", displayText(finding.Remediation))
+				}
+				if options.Snippets && finding.Snippet != "" {
+					lines := strings.Split(strings.TrimRight(finding.Snippet, "\n"), "\n")
+					for _, l := range lines {
+						fmt.Printf("  %s\n", displayText(l))
+					}
 				}
 			}
 		}
@@ -644,6 +665,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 			findings = append(findings, toolFindings...)
 			confidenceChecks = append(confidenceChecks, results...)
 		}
+		findings = review.GroupFindings(findings)
 		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: unable to determine current commit SHA: %s\n", displayText(err.Error()))
@@ -668,6 +690,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		} else if len(findings) > 0 {
 			report.Summary = "Audit passed with informational risk signals."
 		}
+		review.AttachSnippetsToReport(&report, "", repositoryRoot, true)
 		reportPath := filepath.Join(repositoryRoot, ".m3tal-review", "reports", runID+".json")
 		historyPath := filepath.Join(repositoryRoot, ".m3tal-review", "history.jsonl")
 		if err := ensureReviewStorageSafe(repositoryRoot, reportPath, historyPath); err != nil {
@@ -704,6 +727,18 @@ func executeWithArgs(command string, commandArgs []string) error {
 				return err
 			}
 			fmt.Println(out)
+		case "jsonl":
+			out, err := formatFindingsJSONL(report.Findings)
+			if err != nil {
+				return err
+			}
+			fmt.Print(out)
+		case "html":
+			out, err := formatReportHTML(report)
+			if err != nil {
+				return err
+			}
+			fmt.Println(out)
 		case "junit":
 			fmt.Print(formatFindingsJUnit(report.Findings))
 		case "codeclimate":
@@ -719,6 +754,12 @@ func executeWithArgs(command string, commandArgs []string) error {
 					location = fmt.Sprintf("%s:%d", location, finding.Line)
 				}
 				fmt.Printf("[%s] %s: %s (%s)\n", displayText(finding.Severity), location, displayText(finding.Message), displayText(finding.Rule))
+				if options.Snippets && finding.Snippet != "" {
+					lines := strings.Split(strings.TrimRight(finding.Snippet, "\n"), "\n")
+					for _, l := range lines {
+						fmt.Printf("  %s\n", displayText(l))
+					}
+				}
 			}
 		}
 		if options.FailOn != "" {
@@ -792,10 +833,10 @@ func executeWithArgs(command string, commandArgs []string) error {
 			format := "text"
 			for i := 0; i < len(rest); i++ {
 				if rest[i] == "--format" {
-					if i+1 >= len(rest) || rest[i+1] != "json" {
-						return fmt.Errorf("usage: m3tal-review history show <run-id> [--format json]")
+					if i+1 >= len(rest) || (rest[i+1] != "json" && rest[i+1] != "jsonl" && rest[i+1] != "html") {
+						return fmt.Errorf("usage: m3tal-review history show <run-id> [--format json|jsonl|html]")
 					}
-					format = "json"
+					format = rest[i+1]
 				}
 			}
 			return commandHistoryShowFormat(repositoryRoot, runID, format)
@@ -964,6 +1005,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 		fmt.Printf("Successfully recovered %d review entries to history.\n", recovered)
 		return nil
 
+	case "repair":
+		return commandRepair(commandArgs)
+
 	case "help":
 		printHelp()
 		return nil
@@ -1069,6 +1113,7 @@ type auditOptions struct {
 	Exclude        []string
 	FailOn         string
 	Format         string
+	Snippets       bool
 	Baseline       string
 	WriteBaseline  string
 	VulnScan       bool
@@ -1134,11 +1179,13 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				}
 				options.FailOn = v
 			case "--format":
-				if v != "text" && v != "sarif" && v != "github" && v != "json" && v != "junit" && v != "codeclimate" {
+				if v != "text" && v != "sarif" && v != "github" && v != "json" && v != "junit" && v != "codeclimate" && v != "jsonl" && v != "html" {
 					return auditOptions{}, fmt.Errorf("invalid --format %q", v)
 				}
 				options.Format = v
 			}
+		case arg == "--snippets":
+			options.Snippets = true
 		case arg == "--with-tools":
 			options.WithTools = true
 		case arg == "--vuln-scan":
@@ -1184,7 +1231,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				options.MaxBytes = value
 			}
 		default:
-			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate] [--baseline file] [--write-baseline file]", arg)
+			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets] [--baseline file] [--write-baseline file]", arg)
 		}
 	}
 	return options, nil
@@ -1466,7 +1513,7 @@ func printHelp() {
 	fmt.Println("    --max-files N      Set the maximum files to read (default 10000)")
 	fmt.Println("    --max-bytes N      Set the maximum total bytes to read (default 134217728)")
 	fmt.Println("  history [--last N] [--status S] [--scope S] [--grep text] [--format json]")
-	fmt.Println("  history show <run-id> [--format json]")
+	fmt.Println("  history show <run-id> [--format json|jsonl|html]")
 	fmt.Println("  show <run-id>")
 	fmt.Println("  diff <file.patch>   Review an arbitrary patch file")
 	fmt.Println("  stdin               Review a diff from stdin")
@@ -1478,6 +1525,14 @@ func printHelp() {
 	fmt.Println("  completions <bash|zsh|fish>")
 	fmt.Println("  lint")
 	fmt.Println("  recover-history")
+	fmt.Println("  repair [run-id]     Constrained isolated repair workflow")
+	fmt.Println("    --finding <id>     Repair specific finding ID")
+	fmt.Println("    --rule <rule>      Repair findings from specific rule")
+	fmt.Println("    --fixer <name>     Use specific allowlisted fixer")
+	fmt.Println("    --max-attempts N   Maximum repair attempts (default 3)")
+	fmt.Println("    --dry-run          Simulate and verify in sandbox without applying")
+	fmt.Println("    --yes, --approve   Approve verified repairs without prompt")
+	fmt.Println("    --history          Display repair audit history")
 	fmt.Println("  version [--json]")
 	fmt.Println("  help")
 }

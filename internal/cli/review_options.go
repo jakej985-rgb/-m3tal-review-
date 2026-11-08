@@ -19,6 +19,7 @@ type reviewOptions struct {
 	Base          string
 	Baseline      string
 	Format        string
+	Snippets      bool
 	WriteBaseline string
 	CheckRun      bool
 	CheckRunSHA   string
@@ -173,12 +174,14 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 			if err != nil {
 				return options, err
 			}
-			if v != "text" && v != "sarif" && v != "github" && v != "json" && v != "junit" && v != "codeclimate" {
-				return options, fmt.Errorf("invalid --format %q; expected text, sarif, github, json, junit, or codeclimate", v)
+			if v != "text" && v != "sarif" && v != "github" && v != "json" && v != "junit" && v != "codeclimate" && v != "jsonl" && v != "html" {
+				return options, fmt.Errorf("invalid --format %q; expected text, sarif, github, json, junit, codeclimate, jsonl, or html", v)
 			}
 			options.Format = v
+		case "--snippets":
+			options.Snippets = true
 		default:
-			return options, fmt.Errorf("unknown review option %q; usage: m3tal-review review [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--base ref] [--baseline file] [--format text|sarif|github|json|junit|codeclimate]", arg)
+			return options, fmt.Errorf("unknown review option %q; usage: m3tal-review review [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--base ref] [--baseline file] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets]", arg)
 		}
 	}
 	// Profile presets restrict the rule set for common workflows (explicit

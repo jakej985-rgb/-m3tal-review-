@@ -2,7 +2,7 @@
 
 `m3tal-review` is a deterministic, local code-review CLI tool for the m3tal app ecosystem. It helps review code for maintainability (slop) and security issues.
 
-It provides actionable findings, records review trails (history), and supports a manual fix-and-re-review workflow (automated repair tracking is not currently supported).
+It provides actionable findings, records review trails (history), and provides a constrained, isolated repair workflow with durable audit logging.
 
 ## Documentation
 
@@ -237,7 +237,8 @@ m3tal-review install-hook [--force]
 m3tal-review review --profile security|slop|ci
 m3tal-review review --baseline known-findings.txt --write-baseline new-baseline.json
 m3tal-review review --include "*.go" --exclude "*_test.go" --sort-by severity --max-findings 100
-m3tal-review review --format json|junit|codeclimate
+m3tal-review review --format json|jsonl|html|junit|codeclimate
+m3tal-review review --snippets   # display contextual code snippets for findings in text output
 m3tal-review review --summary-only --max-diff-size 33554432
 m3tal-review review --rule code-slop
 
@@ -256,7 +257,7 @@ m3tal-review review --check-run          # Check Run with annotations (needs GIT
 m3tal-review review --pr-comment         # comment on the current PR via the gh CLI
 ```
 
-`audit` also accepts `--only`, `--skip`, `--fail-on`, and `--format` like `review`. Policy files support per-path rule overrides via `"paths": {"<glob>": {"<rule>": {"enabled": false, "severity": "info"}}}`.
+`audit` also accepts `--only`, `--skip`, `--fail-on`, `--format`, and `--snippets` like `review`. Policy files support per-path rule overrides via `"paths": {"<glob>": {"<rule>": {"enabled": false, "severity": "info"}}}`.
 
 `--with-tools` uses any installed `gitleaks`, `gosec`, and `osv-scanner`; each unavailable scanner makes the requested scan incomplete. OSV Scanner may need network access to obtain vulnerability data.
 
@@ -306,6 +307,20 @@ m3tal-review recover-history
 ```
 
 If multiple report files contain the same Run ID (e.g., from manual copies or backups), recovery deterministically selects the canonical `<run-id>.json` report (or newest timestamp if non-canonical), ensuring no duplicate entries are introduced.
+
+### Repair
+
+Generate and apply deterministic repair proposals for eligible findings inside an isolated sandbox, verified with `VerifyRemediation`:
+
+```bash
+m3tal-review repair [run-id]
+m3tal-review repair --finding <id>
+m3tal-review repair --rule <rule>
+m3tal-review repair --dry-run
+m3tal-review repair --yes
+m3tal-review repair --history
+```
+
 
 ### Environment variables
 

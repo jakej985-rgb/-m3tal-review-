@@ -228,9 +228,18 @@ func queryOSV(ctx context.Context, deps []depRef) ([]review.Finding, error) {
 			}
 			msg := fmt.Sprintf("%s %s@%s: %s %s", d.Ecosystem, d.Name, d.Version, id, v.Summary)
 			msg = strings.TrimSpace(msg)
+			sev := cvssSeverity(v.Severity)
+			rawSev := cvssRawScore(v.Severity)
 			findings = append(findings, review.Finding{
+				Category:    "security",
 				Rule:        "dependency-cve",
-				Severity:    cvssSeverity(v.Severity),
+				Rules:       []string{"dependency-cve"},
+				Analyzers:   []string{"osv-api"},
+				Severity:    sev,
+				RawSeverity: rawSev,
+				Confidence:  "high",
+				AdvisoryID:  id,
+				AdvisoryIDs: []string{id},
 				File:        d.File,
 				Line:        1,
 				Message:     msg,
@@ -271,6 +280,18 @@ func cvssSeverity(severities []struct {
 		}
 	}
 	return "medium"
+}
+
+func cvssRawScore(severities []struct {
+	Type  string `json:"type"`
+	Score string `json:"score"`
+}) string {
+	for _, s := range severities {
+		if s.Type == "CVSS_V3" && s.Score != "" {
+			return s.Score
+		}
+	}
+	return ""
 }
 
 // ruleAllowed reports whether ruleName survives --only/--skip filters.

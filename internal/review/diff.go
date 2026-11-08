@@ -16,6 +16,13 @@ const (
 	FileRenamed  FileChangeType = "renamed"
 )
 
+type DiffLine struct {
+	Type          string `json:"type"` // "+", "-", " "
+	OldLineNumber int    `json:"old_line_number,omitempty"`
+	NewLineNumber int    `json:"new_line_number,omitempty"`
+	Content       string `json:"content"`
+}
+
 type FileDiff struct {
 	OldPath     string
 	NewPath     string
@@ -24,6 +31,7 @@ type FileDiff struct {
 	AddedLines  []int
 	AddedText   map[int]string
 	ContextText map[int]string
+	Lines       []DiffLine
 }
 
 // AddedDiffLine is a normalized source line from the new side of a Git diff.
@@ -35,7 +43,7 @@ type AddedDiffLine struct {
 
 // hunkCounts captures old count, new start and new count from a hunk header.
 // Omitted counts mean 1 (see hunkCount).
-var hunkCounts = regexp.MustCompile(`^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
+var hunkCounts = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 
 func hunkCount(s string) int {
 	if s == "" {
@@ -128,6 +136,7 @@ func parseDiff(diff string) []FileDiff {
 
 	inHunk := false
 	currentLine := 0
+	oldLine := 0
 	// Remaining old/new line counts for the current hunk. Hunk bodies are
 	// delimited by these counts, not by line prefixes, so an added line whose
 	// content starts with "++" (diff line "+++...") is not mistaken for a file
@@ -198,9 +207,10 @@ func parseDiff(diff string) []FileDiff {
 			// Body lines always start with "+", "-", " " or "\\", so a line starting
 			// with "@@" is always a hunk header, whatever the remaining counts say.
 			inHunk = true
-			currentLine, _ = strconv.Atoi(matches[2])
-			oldRemaining = hunkCount(matches[1])
-			newRemaining = hunkCount(matches[3])
+			oldLine, _ = strconv.Atoi(matches[1])
+			oldRemaining = hunkCount(matches[2])
+			currentLine, _ = strconv.Atoi(matches[3])
+			newRemaining = hunkCount(matches[4])
 			if oldRemaining == 0 && newRemaining == 0 {
 				inHunk = false
 			}
@@ -214,11 +224,25 @@ func parseDiff(diff string) []FileDiff {
 				if current.AddedText == nil {
 					current.AddedText = make(map[int]string)
 				}
-				current.AddedText[currentLine] = strings.TrimPrefix(line, "+")
+				content := strings.TrimPrefix(line, "+")
+				current.AddedText[currentLine] = content
+				current.Lines = append(current.Lines, DiffLine{
+					Type:          "+",
+					OldLineNumber: 0,
+					NewLineNumber: currentLine,
+					Content:       content,
+				})
 				currentLine++
 				newRemaining--
 			case strings.HasPrefix(line, "-"):
-				// deleted line from old file; do not increment currentLine for new file
+				content := strings.TrimPrefix(line, "-")
+				current.Lines = append(current.Lines, DiffLine{
+					Type:          "-",
+					OldLineNumber: oldLine,
+					NewLineNumber: currentLine,
+					Content:       content,
+				})
+				oldLine++
 				oldRemaining--
 			case strings.HasPrefix(line, "\\"):
 				// e.g. \ No newline at end of file; do not count
@@ -226,7 +250,15 @@ func parseDiff(diff string) []FileDiff {
 				if current.ContextText == nil {
 					current.ContextText = make(map[int]string)
 				}
-				current.ContextText[currentLine] = line[1:]
+				content := line[1:]
+				current.ContextText[currentLine] = content
+				current.Lines = append(current.Lines, DiffLine{
+					Type:          " ",
+					OldLineNumber: oldLine,
+					NewLineNumber: currentLine,
+					Content:       content,
+				})
+				oldLine++
 				currentLine++
 				oldRemaining--
 				newRemaining--

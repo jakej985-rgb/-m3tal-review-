@@ -55,7 +55,7 @@ func loadUserConfig() (userConfig, error) {
 		return userConfig{}, fmt.Errorf("invalid config profile %q", cfg.Profile)
 	}
 	switch cfg.Format {
-	case "", "text", "sarif", "github", "json", "junit", "codeclimate":
+	case "", "text", "sarif", "github", "json", "junit", "codeclimate", "jsonl", "html":
 	default:
 		return userConfig{}, fmt.Errorf("invalid config format %q", cfg.Format)
 	}

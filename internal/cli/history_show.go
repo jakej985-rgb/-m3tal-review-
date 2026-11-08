@@ -63,6 +63,22 @@ func commandHistoryShowFormat(repositoryRoot, runID, format string) error {
 		fmt.Println(string(out))
 		return nil
 	}
+	if format == "jsonl" {
+		out, err := formatFindingsJSONL(report.Findings)
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
+		return nil
+	}
+	if format == "html" {
+		out, err := formatReportHTML(report)
+		if err != nil {
+			return err
+		}
+		fmt.Println(out)
+		return nil
+	}
 
 	fmt.Printf("Run %s\n", displayText(report.RunID))
 	fmt.Printf("  timestamp:  %s\n", report.Timestamp.Format("2006-01-02 15:04:05 UTC"))
