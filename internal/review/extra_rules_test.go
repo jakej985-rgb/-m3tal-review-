@@ -356,3 +356,136 @@ func TestPhaseBDetectors(t *testing.T) {
 		})
 	}
 }
+
+func TestPhase1PairedPositiveNegativeFixtures(t *testing.T) {
+	type fixtureCase struct {
+		rule     string
+		file     string
+		positive string // must trigger rule
+		negative string // must NOT trigger rule
+	}
+
+	cases := []fixtureCase{
+		{
+			rule:     "secret-file",
+			file:     ".env",
+			positive: "DB_PASS=production123\n",
+			negative: "# normal file content",
+		},
+		{
+			rule:     "websocket-origin",
+			file:     "ws.go",
+			positive: "package main\nimport \"net/http\"\nfunc h() {\n\tupgrader.CheckOrigin = func(r *http.Request) bool { return true }\n}\n",
+			negative: "package main\nimport \"net/http\"\nfunc h() {\n\tupgrader.CheckOrigin = func(r *http.Request) bool { return allowedHosts[r.Header.Get(\"Origin\")] }\n}\n",
+		},
+		{
+			rule:     "websocket-origin",
+			file:     "server.js",
+			positive: "const io = require('socket.io')(server, { cors: { origin: '*' } });\n",
+			negative: "const io = require('socket.io')(server, { cors: { origin: ['https://example.com'] } });\n",
+		},
+		{
+			rule:     "websocket-origin",
+			file:     "app.py",
+			positive: "class SocketHandler(websocket.WebSocketHandler):\n    def check_origin(self, origin):\n        return True\n",
+			negative: "class SocketHandler(websocket.WebSocketHandler):\n    def check_origin(self, origin):\n        return origin == 'https://trusted.domain'\n",
+		},
+		{
+			rule:     "timing-unsafe-compare",
+			file:     "auth.go",
+			positive: "package auth\nfunc Verify(token, expectedToken string) bool {\n\treturn token == expectedToken\n}\n",
+			negative: "package auth\nimport \"crypto/subtle\"\nfunc Verify(token, expectedToken string) bool {\n\treturn subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) == 1\n}\n",
+		},
+		{
+			rule:     "timing-unsafe-compare",
+			file:     "auth.py",
+			positive: "def verify_api_key(api_key, expected_key):\n    return api_key == expected_key\n",
+			negative: "import hmac\ndef verify_api_key(api_key, expected_key):\n    return hmac.compare_digest(api_key, expected_key)\n",
+		},
+		{
+			rule:     "timing-unsafe-compare",
+			file:     "auth.js",
+			positive: "function verifySecret(secret, expectedSecret) {\n  return secret === expectedSecret;\n}\n",
+			negative: "const crypto = require('crypto');\nfunction verifySecret(secret, expectedSecret) {\n  return crypto.timingSafeEqual(Buffer.from(secret), Buffer.from(expectedSecret));\n}\n",
+		},
+		{
+			rule:     "web-storage-secrets",
+			file:     "storage.js",
+			positive: "function saveAuth(authToken) {\n  localStorage.setItem('auth_token', authToken);\n}\n",
+			negative: "function saveTheme(theme) {\n  localStorage.setItem('theme-key', theme);\n  sessionStorage.setItem('sidebar_collapsed', 'true');\n}\n",
+		},
+		{
+			rule:     "query-token-exposure",
+			file:     "client.js",
+			positive: "const ws = new WebSocket('wss://api.example.com/stream?token=synthetic_token_123456');\n",
+			negative: "const ws = new WebSocket('wss://api.example.com/stream?ticket=single_use_ticket_nonce');\n",
+		},
+		{
+			rule:     "plaintext-secret-storage",
+			file:     "schema.sql",
+			positive: "CREATE TABLE api_clients (\n  id INT PRIMARY KEY,\n  api_key VARCHAR(255) NOT NULL\n);\n",
+			negative: "CREATE TABLE api_clients (\n  id INT PRIMARY KEY,\n  api_key_hash VARCHAR(64) NOT NULL,\n  salt VARCHAR(32) NOT NULL\n);\n",
+		},
+		{
+			rule:     "actions-credential-url",
+			file:     ".github/workflows/sync.yml",
+			positive: "name: Sync\non: push\njobs:\n  run:\n    steps:\n      - run: git clone https://${{ secrets.PAT }}@github.com/org/repo.git\n",
+			negative: "name: Sync\non: push\njobs:\n  run:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          token: ${{ secrets.PAT }}\n",
+		},
+		{
+			rule:     "workflow-force-push",
+			file:     ".github/workflows/deploy.yml",
+			positive: "name: Deploy\non: push\njobs:\n  deploy:\n    steps:\n      - run: git push --force origin production\n",
+			negative: "name: Deploy\non: push\njobs:\n  deploy:\n    steps:\n      - run: git push origin production\n",
+		},
+		{
+			rule:     "privileged-service-execution",
+			file:     "daemon.service",
+			positive: "[Service]\nUser=root\nCapabilityBoundingSet=CAP_SYS_ADMIN\n",
+			negative: "[Service]\nUser=appdaemon\nDynamicUser=yes\nProtectSystem=strict\nProtectHome=true\n",
+		},
+		{
+			rule:     "shell-script-safety",
+			file:     "deploy.sh",
+			positive: "#!/bin/bash\nrm -rf $TARGET_DIR\neval $USER_INPUT\n",
+			negative: "#!/bin/bash\nset -euo pipefail\nrm -rf \"${TARGET_DIR}\"\ntmpfile=$(mktemp)\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run("positive/"+tc.rule+"/"+tc.file, func(t *testing.T) {
+			diff := extraDiff(tc.file, tc.positive)
+			ruleList := rulesByName(t, tc.rule)
+			if len(ruleList) == 0 {
+				t.Fatalf("rule %q not found", tc.rule)
+			}
+			found := false
+			for _, r := range ruleList {
+				if hasFinding(r.Check(diff), tc.rule) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected rule %q to fire on positive fixture in %s", tc.rule, tc.file)
+			}
+		})
+
+		t.Run("negative/"+tc.rule+"/"+tc.file, func(t *testing.T) {
+			file := tc.file
+			if tc.rule == "secret-file" {
+				file = ".env.example" // safe template naming convention
+			}
+			diff := extraDiff(file, tc.negative)
+			ruleList := rulesByName(t, tc.rule)
+			if len(ruleList) == 0 {
+				t.Fatalf("rule %q not found", tc.rule)
+			}
+			for _, r := range ruleList {
+				if hasFinding(r.Check(diff), tc.rule) {
+					t.Errorf("expected rule %q NOT to fire on negative fixture in %s", tc.rule, file)
+				}
+			}
+		})
+	}
+}

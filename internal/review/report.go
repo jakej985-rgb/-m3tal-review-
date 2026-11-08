@@ -22,23 +22,25 @@ type FindingChanges struct {
 }
 
 type Report struct {
-	Scope           string          `json:"scope,omitempty"`
-	Profile         string          `json:"profile,omitempty"`
-	RunID           string          `json:"run_id"`
-	Timestamp       time.Time       `json:"timestamp"`
-	Repository      string          `json:"repository"`
-	Branch          string          `json:"branch"`
-	CommitSHA       string          `json:"commit_sha"`
-	BaseCommitSHA   string          `json:"base_commit_sha"`
-	DiffHash        string          `json:"diff_hash"`
-	ToolVersion     string          `json:"tool_version"`
-	ReviewedFiles   []string        `json:"reviewed_files"`
-	UnanalyzedFiles []string        `json:"unanalyzed_files,omitempty"`
-	Passed          bool            `json:"passed"`
-	Summary         string          `json:"summary"`
-	Findings        []Finding       `json:"findings"`
-	Checks          []CheckResult   `json:"checks,omitempty"`
-	FindingChanges  *FindingChanges `json:"finding_changes,omitempty"`
+	Scope           string             `json:"scope,omitempty"`
+	Profile         string             `json:"profile,omitempty"`
+	RunID           string             `json:"run_id"`
+	Timestamp       time.Time          `json:"timestamp"`
+	Repository      string             `json:"repository"`
+	Branch          string             `json:"branch"`
+	CommitSHA       string             `json:"commit_sha"`
+	BaseCommitSHA   string             `json:"base_commit_sha"`
+	DiffHash        string             `json:"diff_hash"`
+	ToolVersion     string             `json:"tool_version"`
+	ReviewedFiles   []string           `json:"reviewed_files"`
+	UnanalyzedFiles []string           `json:"unanalyzed_files,omitempty"`
+	Passed          bool               `json:"passed"`
+	Summary         string             `json:"summary"`
+	Findings        []Finding          `json:"findings"`
+	Checks          []CheckResult      `json:"checks,omitempty"`
+	FindingChanges  *FindingChanges    `json:"finding_changes,omitempty"`
+	Coverage        *CoverageMetadata  `json:"coverage,omitempty"`
+	Attestation     *ReportAttestation `json:"attestation,omitempty"`
 }
 
 func NewReport(

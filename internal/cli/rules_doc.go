@@ -94,6 +94,12 @@ var ruleCatalog = []ruleDoc{
 	{"terraform-secret", "Literal credentials in .tf files.", "password = \"...\""},
 	{"k8s-committed-secret", "Kubernetes Secret manifests committed to the repo.", "kind: Secret\ndata: ..."},
 	{"script-file", "Committed executable scripts (.bat/.ps1/.vbs/etc).", "deploy.bat"},
+	{"query-token-exposure", "Authentication tokens exposed in URL query parameters.", "https://api.example.com?token=secret123"},
+	{"plaintext-secret-storage", "Plaintext tokens/keys persisted in database schemas or unhashed writes.", "CREATE TABLE users (api_key VARCHAR(255))"},
+	{"actions-credential-url", "GitHub Actions workflow secret interpolated into Git remote URL or config.", "https://${{ secrets.PAT }}@github.com/..."},
+	{"workflow-force-push", "Destructive unconditional git push force in CI workflow.", "git push --force origin main"},
+	{"privileged-service-execution", "Systemd service configured to run as root with broad capabilities.", "User=root"},
+	{"shell-script-safety", "Shell script hazards: unquoted rm -rf variables, predictable /tmp, or dynamic eval.", "rm -rf $DIR"},
 }
 
 func listRules() error {

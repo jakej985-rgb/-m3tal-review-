@@ -54,3 +54,51 @@ func TestJavaScriptSyntaxAnalyzerReportsUnbalancedStructure(t *testing.T) {
 		t.Fatalf("unbalanced JavaScript should be marked unanalyzable: %+v", findings)
 	}
 }
+
+func TestJSXSafeParsing(t *testing.T) {
+	jsxSource := `import React from 'react';
+
+export function Dashboard() {
+  const handleClick = () => console.log('clicked');
+  return (
+    <div className="dashboard">
+      <h1>Dashboard</h1>
+      <input type="text" placeholder="search" />
+      <button onClick={handleClick}>Submit</button>
+      <>
+        <span>Fragment Child</span>
+      </>
+    </div>
+  );
+}
+`
+	repo := stageNonGoSlopSource(t, "Dashboard.jsx", jsxSource)
+	diff := fullSourceDiff("Dashboard.jsx", jsxSource)
+	findings := (review.SlopRule{RepositoryRoot: repo}).Check(diff)
+	for _, f := range findings {
+		if f.Rule == "code-slop-analysis-error" {
+			t.Fatalf("valid JSX should not produce analysis error, got: %+v", f)
+		}
+	}
+
+	brokenJSX := `export function Broken() {
+  return (
+    <div onClick={() => {
+    </div>
+  );
+}
+`
+	repoBroken := stageNonGoSlopSource(t, "Broken.jsx", brokenJSX)
+	diffBroken := fullSourceDiff("Broken.jsx", brokenJSX)
+	brokenFindings := (review.SlopRule{RepositoryRoot: repoBroken}).Check(diffBroken)
+	foundJSXError := false
+	for _, f := range brokenFindings {
+		if f.Rule == "code-slop-analysis-error" {
+			foundJSXError = true
+			break
+		}
+	}
+	if !foundJSXError {
+		t.Fatalf("expected code-slop-analysis-error on malformed JSX")
+	}
+}

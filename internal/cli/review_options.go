@@ -186,11 +186,11 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 	if len(options.Only) == 0 {
 		switch options.Profile {
 		case "security":
-			options.Only = []string{"hardcoded-credential", "exposed-secret", "secret-file", "secret-material", "ssrf", "command-injection", "open-redirect", "template-injection", "prototype-pollution", "archive-extraction", "xxe", "injection-other", "unsafe-code", "jwt-misuse", "hardcoded-session-secret", "tls-verification", "weak-crypto-params", "timing-unsafe-compare", "insecure-randomness", "insecure-permissions", "cors-misconfig", "cookie-flags", "web-storage-secrets", "postmessage-origin", "xss-extra-sinks", "deserialization-gadgets", "weak-encoding-crypto", "websocket-origin", "path-traversal", "weak-cryptography", "unsafe-deserialization", "dangerous-eval", "cross-site-scripting", "sql-injection", "risky-shell-execution", "world-writable-file-mode", "insecure-tls-verification", "review-risk"}
+			options.Only = []string{"hardcoded-credential", "exposed-secret", "secret-file", "secret-material", "ssrf", "command-injection", "open-redirect", "template-injection", "prototype-pollution", "archive-extraction", "xxe", "injection-other", "unsafe-code", "jwt-misuse", "hardcoded-session-secret", "tls-verification", "weak-crypto-params", "timing-unsafe-compare", "insecure-randomness", "insecure-permissions", "cors-misconfig", "cookie-flags", "web-storage-secrets", "postmessage-origin", "xss-extra-sinks", "deserialization-gadgets", "weak-encoding-crypto", "websocket-origin", "path-traversal", "weak-cryptography", "unsafe-deserialization", "dangerous-eval", "cross-site-scripting", "sql-injection", "risky-shell-execution", "world-writable-file-mode", "insecure-tls-verification", "review-risk", "query-token-exposure", "plaintext-secret-storage", "actions-credential-url", "privileged-service-execution", "shell-script-safety"}
 		case "slop":
 			options.Only = []string{"code-slop"}
 		case "ci":
-			options.Only = []string{"unpinned-action", "pull-request-target", "actions-script-injection", "pipe-to-shell", "unpinned-image", "ci-secret-exposure", "container-privilege", "dockerfile-remote-add", "dockerfile-user", "secret-file", "secret-material"}
+			options.Only = []string{"unpinned-action", "pull-request-target", "actions-script-injection", "pipe-to-shell", "unpinned-image", "ci-secret-exposure", "container-privilege", "dockerfile-remote-add", "dockerfile-user", "secret-file", "secret-material", "actions-credential-url", "workflow-force-push"}
 		}
 	}
 	return options, nil

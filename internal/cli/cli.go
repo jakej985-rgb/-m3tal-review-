@@ -459,6 +459,11 @@ func executeWithArgs(command string, commandArgs []string) error {
 			report.Passed = false
 			report.Summary = "Review incomplete. Some staged files could not be analyzed."
 		}
+		if review.ValidateCommitSHA(currentSHA) == nil {
+			if att, err := review.GenerateAttestation(&report, ""); err == nil {
+				report.Attestation = &att
+			}
+		}
 
 		reportPath := filepath.Join(
 			repositoryRoot,
@@ -600,7 +605,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return err
 		}
 		rules := filterRules(workingTreeRules(defaultRules(repositoryRoot)), options.Only, options.Skip)
-		findings, reviewedFiles, unanalyzedFiles, snapshotHash, err := analyzeWorkingTree(repositoryRoot, options, rules)
+		findings, reviewedFiles, unanalyzedFiles, snapshotHash, coverage, err := analyzeWorkingTree(repositoryRoot, options, rules)
 		if err != nil {
 			return err
 		}
@@ -621,6 +626,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 			}
 			findings = filterBaseline(findings, baseline)
 		}
+		findings = filterFindingsByPath(findings, options.Include, options.Exclude)
 		if options.WriteBaseline != "" {
 			if err := writeBaseline(options.WriteBaseline, findings); err != nil {
 				return err
@@ -647,6 +653,12 @@ func executeWithArgs(command string, commandArgs []string) error {
 		report.Profile = options.Profile
 		report.Checks = append(report.Checks, confidenceChecks...)
 		report.Scope = "working-tree"
+		report.Coverage = coverage
+		if review.ValidateCommitSHA(currentSHA) == nil {
+			if att, err := review.GenerateAttestation(&report, snapshotHash); err == nil {
+				report.Attestation = &att
+			}
+		}
 		if len(unanalyzedFiles) > 0 {
 			report.UnanalyzedFiles = unanalyzedFiles
 			report.Passed = false
@@ -1053,6 +1065,8 @@ type auditOptions struct {
 	Profile        string
 	Only           []string
 	Skip           []string
+	Include        []string
+	Exclude        []string
 	FailOn         string
 	Format         string
 	Baseline       string
@@ -1077,6 +1091,22 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 		switch {
 		case arg == "--include-ignored":
 			options.IncludeIgnored = true
+		case arg == "--include" || arg == "--exclude":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			if arg == "--include" {
+				options.Include = splitRuleList(args[i])
+			} else {
+				options.Exclude = splitRuleList(args[i])
+			}
+		case strings.HasPrefix(arg, "--include="):
+			_, v, _ := strings.Cut(arg, "=")
+			options.Include = splitRuleList(v)
+		case strings.HasPrefix(arg, "--exclude="):
+			_, v, _ := strings.Cut(arg, "=")
+			options.Exclude = splitRuleList(v)
 		case arg == "--baseline" || arg == "--write-baseline":
 			if i+1 >= len(args) {
 				return auditOptions{}, fmt.Errorf("%s requires a file path", arg)
@@ -1162,7 +1192,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 
 func workingTreeSnapshotWithOptions(repositoryRoot string, options auditOptions) (string, []string, []string, error) {
 	var diff strings.Builder
-	files, unanalyzed, err := walkWorkingTree(repositoryRoot, options, func(_ string, fileDiff string) {
+	files, unanalyzed, _, err := walkWorkingTree(repositoryRoot, options, func(_ string, fileDiff string) {
 		diff.WriteString(fileDiff)
 	})
 	if err != nil {
@@ -1171,17 +1201,22 @@ func workingTreeSnapshotWithOptions(repositoryRoot string, options auditOptions)
 	return diff.String(), files, unanalyzed, nil
 }
 
-func walkWorkingTree(repositoryRoot string, options auditOptions, visit func(string, string)) ([]string, []string, error) {
+func walkWorkingTree(repositoryRoot string, options auditOptions, visit func(string, string)) ([]string, []string, *review.CoverageMetadata, error) {
 	files, err := git.WorkingTreeFilesWithIgnored(repositoryRoot, options.IncludeIgnored)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	fileSet := make(map[string]bool, len(files))
 	unanalyzedSet := make(map[string]bool)
+	var vendorFiles []string
 	filesRead := 0
 	bytesRead := int64(0)
 	for _, file := range files {
 		if file == ".m3tal-review" || strings.HasPrefix(file, ".m3tal-review/") || file == ".git" || strings.HasPrefix(file, ".git/") {
+			continue
+		}
+		if review.IsVendorOrDependencyPath(file) && (len(options.Include) == 0 || !pathMatchesAny(options.Include, file)) {
+			vendorFiles = append(vendorFiles, file)
 			continue
 		}
 		if !filepath.IsLocal(file) {
@@ -1244,10 +1279,25 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, visit func(str
 		unanalyzed = append(unanalyzed, file)
 	}
 	sort.Strings(unanalyzed)
-	return sortedKeys(fileSet), unanalyzed, nil
+
+	cov := &review.CoverageMetadata{
+		TotalFiles:      len(files),
+		FirstPartyFiles: len(fileSet),
+		VendorFiles:     len(vendorFiles),
+		UnanalyzedFiles: len(unanalyzed),
+	}
+	if len(vendorFiles) > 0 {
+		cov.Exclusions = append(cov.Exclusions, review.ScopeExclusion{
+			Reason: "third-party dependency / vendor path (node_modules, vendor)",
+			Count:  len(vendorFiles),
+			Paths:  vendorFiles,
+		})
+	}
+
+	return sortedKeys(fileSet), unanalyzed, cov, nil
 }
 
-func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []review.Rule) ([]review.Finding, []string, []string, string, error) {
+func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []review.Rule) ([]review.Finding, []string, []string, string, *review.CoverageMetadata, error) {
 	var fileRules, policyRules []review.Rule
 	for _, rule := range rules {
 		switch rule.(type) {
@@ -1264,7 +1314,7 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 	defer cache.flush()
 	hash := sha256.New()
 	var findings []review.Finding
-	files, unanalyzed, err := walkWorkingTree(repositoryRoot, options, func(_ string, fileDiff string) {
+	files, unanalyzed, cov, err := walkWorkingTree(repositoryRoot, options, func(_ string, fileDiff string) {
 		_, _ = hash.Write([]byte(fileDiff))
 		fileFindings, ok := cache.get(fileDiff)
 		if !ok {
@@ -1274,12 +1324,12 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 		findings = append(findings, review.ApplyFindingFilters(fileDiff, fileFindings, repositoryRoot, true)...)
 	})
 	if err != nil {
-		return nil, nil, nil, "", err
+		return nil, nil, nil, "", nil, err
 	}
 	if len(policyRules) > 0 {
 		findings = append(findings, review.NewEngine(policyRules...).Run(pathsOnlyDiff(files))...)
 	}
-	return findings, files, unanalyzed, hex.EncodeToString(hash.Sum(nil)), nil
+	return findings, files, unanalyzed, hex.EncodeToString(hash.Sum(nil)), cov, nil
 }
 
 func pathsOnlyDiff(files []string) string {

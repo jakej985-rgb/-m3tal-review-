@@ -20,6 +20,7 @@ const (
 	LanguageRust       CodeLanguage = "rust"
 	LanguageSwift      CodeLanguage = "swift"
 	LanguagePHP        CodeLanguage = "php"
+	LanguageShell      CodeLanguage = "shell"
 	LanguageUnknown    CodeLanguage = "unknown"
 )
 
@@ -57,6 +58,8 @@ func (CodeChecker) Language(file string) CodeLanguage {
 		return LanguageSwift
 	case ".php", ".phtml":
 		return LanguagePHP
+	case ".sh", ".bash", ".zsh":
+		return LanguageShell
 	default:
 		return LanguageUnknown
 	}
@@ -71,7 +74,7 @@ func IsLikelySourceFile(file string) bool {
 	case ".rb", ".rake", ".scala", ".sc", ".dart", ".vue", ".svelte",
 		".sql", ".lua", ".r", ".m", ".mm", ".pl", ".pm", ".ex", ".exs",
 		".erl", ".hrl", ".clj", ".cljs", ".cljc", ".groovy", ".gradle",
-		".sh", ".bash", ".zsh", ".fish", ".elm", ".hs", ".lhs",
+		".fish", ".elm", ".hs", ".lhs",
 		".jl", ".nim", ".nix", ".proto", ".graphql", ".gql",
 		".tf", ".hcl", ".sol", ".v", ".sv", ".asm", ".s":
 		return true

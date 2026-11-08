@@ -52,6 +52,16 @@ func lexBraceSource(source string) []sourceToken {
 			}
 			continue
 		}
+		if c == '<' && i+1 < len(source) && source[i+1] == '/' {
+			tokens = append(tokens, sourceToken{text: "</", line: line, start: i, end: i + 2})
+			i += 2
+			continue
+		}
+		if c == '/' && i+1 < len(source) && source[i+1] == '>' {
+			tokens = append(tokens, sourceToken{text: "/>", line: line, start: i, end: i + 2})
+			i += 2
+			continue
+		}
 		if c == '/' && regexLiteralCanStart(tokens) {
 			start := i
 			startLine := line
@@ -262,8 +272,11 @@ func regexLiteralCanStart(tokens []sourceToken) bool {
 	if last == ">" && len(tokens) > 1 && tokens[len(tokens)-2].text == "=" {
 		return true // A regex literal can be the expression body of an arrow function.
 	}
+	if last == "<" || last == ">" || last == "</" || last == "/>" {
+		return false
+	}
 	switch last {
-	case "(", "{", "[", ";", ",", ":", "?", "=", "!", "+", "-", "*", "%", "&", "|", "^", "~", "<", ">", "return", "case", "throw", "yield", "await":
+	case "(", "{", "[", ";", ",", ":", "?", "=", "!", "+", "-", "*", "%", "&", "|", "^", "~", "return", "case", "throw", "yield", "await":
 		return true
 	default:
 		return false
@@ -313,13 +326,19 @@ type braceControl struct {
 func analyzeBraceSlop(file, language, source string, added map[int]bool) []Finding {
 	tokens := lexBraceSource(source)
 	if err := braceStructureError(tokens); err != nil {
+		langName := language
+		remediation := "Fix mismatched braces or delimiters, then rerun the review."
+		if strings.HasSuffix(strings.ToLower(file), ".jsx") || strings.HasSuffix(strings.ToLower(file), ".tsx") {
+			langName = "JSX/TSX"
+			remediation = "Ensure JSX tags and curly brace expressions are properly closed, or add file to .m3tal-review-ignore."
+		}
 		return []Finding{{
 			Rule:        "code-slop-analysis-error",
 			Severity:    "high",
 			File:        file,
 			Line:        0,
-			Message:     "Could not safely analyze " + language + " structure: " + err.Error(),
-			Remediation: "Fix mismatched braces or delimiters, then rerun the review.",
+			Message:     "Could not safely analyze " + langName + " structure: " + err.Error(),
+			Remediation: remediation,
 		}}
 	}
 	controls := make(map[int]braceControl)

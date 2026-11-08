@@ -132,11 +132,12 @@ func (r *patternRule) Check(diff string) []Finding {
 // filenameRule flags files by path alone (e.g. committed secret material).
 type filenameRule struct {
 	ruleRuntime
-	name        string
-	severity    string
-	message     string
-	remediation string
-	pattern     *regexp.Regexp
+	name         string
+	severity     string
+	message      string
+	remediation  string
+	pattern      *regexp.Regexp
+	allowPattern *regexp.Regexp
 }
 
 func (r *filenameRule) Name() string { return r.name }
@@ -144,7 +145,11 @@ func (r *filenameRule) Name() string { return r.name }
 func (r *filenameRule) Check(diff string) []Finding {
 	var findings []Finding
 	for _, fileDiff := range ParseDiff(diff) {
-		if !r.pattern.MatchString(filepath.ToSlash(fileDiff.Path)) {
+		path := filepath.ToSlash(fileDiff.Path)
+		if !r.pattern.MatchString(path) {
+			continue
+		}
+		if r.allowPattern != nil && r.allowPattern.MatchString(path) {
 			continue
 		}
 		if len(fileDiff.AddedLines) == 0 {
