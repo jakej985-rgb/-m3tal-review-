@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -244,6 +245,9 @@ func TestRecoverHistoryWriteFailure(t *testing.T) {
 	}
 
 	// Create an unwritable history dir
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping readonly directory permission test on windows; Windows does not enforce POSIX directory permissions")
+	}
 	readOnlyDir := filepath.Join(tempDir, "readonly")
 	if err := os.MkdirAll(readOnlyDir, 0555); err != nil {
 		t.Fatalf("failed to create readonly dir: %v", err)

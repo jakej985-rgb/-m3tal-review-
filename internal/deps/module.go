@@ -434,13 +434,20 @@ func AnalyzeGoModules(repoRoot string) (*DepReport, []review.Finding, error) {
 		if !isUsed {
 			unusedDirect = append(unusedDirect, req.Path)
 			findings = append(findings, review.Finding{
-				Category:    "drift",
-				Rule:        "go-module-unused-dependency",
-				Severity:    "medium",
-				File:        "go.mod",
-				Line:        req.Line,
-				Message:     fmt.Sprintf("Direct dependency %q is required in go.mod but not imported in any Go source file", req.Path),
-				Remediation: "Remove the unused direct dependency or run 'go mod tidy'",
+				Category:     "drift",
+				Rule:         "go-module-unused-dependency",
+				Severity:     "medium",
+				File:         "go.mod",
+				Line:         req.Line,
+				Message:      fmt.Sprintf("Direct dependency %q is required in go.mod but not imported in any Go source file", req.Path),
+				Remediation:  "Remove the unused direct dependency or run 'go mod tidy'",
+				Reachability: string(ReachabilityUnreachable),
+				Metadata: map[string]string{
+					"reachability":           string(ReachabilityUnreachable),
+					"reachability_rationale": "Direct dependency is required in go.mod but not imported in any Go source file",
+					"dependency_type":        string(DependencyTypeDirect),
+					"package":                req.Path,
+				},
 			})
 		}
 	}

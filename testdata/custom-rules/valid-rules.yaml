@@ -1,0 +1,25 @@
+version: "1.0"
+rules:
+  - id: custom-disallow-eval
+    name: "Disallow dynamic code evaluation"
+    severity: high
+    category: security
+    message: "Dynamic code evaluation via eval() or Function() is dangerous"
+    languages:
+      - javascript
+      - typescript
+      - python
+    pattern: '\b(?:eval|exec)\s*\('
+    remediation: "Use safe alternatives instead of eval/exec"
+    timeout: "1s"
+
+  - id: custom-unsafe-token-log
+    name: "Unsafe token logging"
+    severity: medium
+    category: security
+    message: "Logging token or secret variables directly"
+    languages:
+      - go
+    pattern: 'log\.Print(?:f|ln)?\s*\([^)]*(?:auth_token|user_secret|api_key)'
+    remediation: "Do not log sensitive tokens or secrets"
+    file_exclude_pattern: '.*_test\.go$'

@@ -21,8 +21,10 @@ type reviewPolicy struct {
 	Rules           map[string]policyRuleTuning `json:"rules,omitempty"`
 	// Paths maps a repo-path glob to per-rule tuning, e.g.
 	// {"paths": {"*_test.go": {"code-slop": {"severity": "info"}}}}.
-	Paths         map[string]map[string]policyRuleTuning `json:"paths,omitempty"`
-	LicensePolicy *LicensePolicyConfig                   `json:"license_policy,omitempty"`
+	Paths             map[string]map[string]policyRuleTuning `json:"paths,omitempty"`
+	LicensePolicy     *LicensePolicyConfig                   `json:"license_policy,omitempty"`
+	LanguageOverrides map[string]string                      `json:"language_overrides,omitempty"`
+	Lint              *LintConfig                            `json:"lint,omitempty"`
 }
 
 // LicensePolicyConfig specifies allowed, denied, and unknown license rules.
@@ -255,6 +257,15 @@ func ReadLicensePolicyConfig(repositoryRoot string, workingTree bool) (*LicenseP
 		return nil, err
 	}
 	return policy.LicensePolicy, nil
+}
+
+// ReadLanguageOverridesConfig reads the language_overrides configuration from .m3tal-review-policy.json.
+func ReadLanguageOverridesConfig(repositoryRoot string, workingTree bool) (map[string]string, error) {
+	policy, err := readReviewPolicy(repositoryRoot, workingTree)
+	if err != nil {
+		return nil, err
+	}
+	return policy.LanguageOverrides, nil
 }
 
 var _ Rule = RiskRule{}

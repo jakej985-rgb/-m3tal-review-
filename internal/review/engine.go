@@ -3,6 +3,7 @@ package review
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -45,6 +46,11 @@ func (e *Engine) Run(diff string) []Finding {
 }
 
 func categoryForRule(rule string) string {
+	if strings.HasPrefix(rule, "gin-") || strings.HasPrefix(rule, "echo-") ||
+		strings.HasPrefix(rule, "chi-") || strings.HasPrefix(rule, "fiber-") ||
+		strings.HasPrefix(rule, "http-") {
+		return "security"
+	}
 	switch rule {
 	case "hardcoded-credential", "exposed-secret", "high-entropy-secret", "world-writable-file-mode", "insecure-tls-verification", "risky-shell-execution":
 		return "security"

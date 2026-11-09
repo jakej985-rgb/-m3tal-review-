@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/git"
+	"github.com/jakej985-rgb/m3tal-review/internal/plugin"
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
@@ -40,6 +42,7 @@ type RunnerConfig struct {
 	SnapshotHash    string
 	Coverage        *review.CoverageMetadata
 	WorkingTreeDiff bool
+	Checks          []review.CheckResult
 
 	// Review-specific integration flags
 	CheckRun    bool
@@ -50,6 +53,13 @@ type RunnerConfig struct {
 	MaxFiles       int
 	MaxBytes       int64
 	IncludeIgnored bool
+
+	// Progress reporting
+	Progress ProgressReporter
+
+	// Plugin analyzers
+	PluginRegistry *plugin.Registry
+	PluginDir      string
 }
 
 // RunPipeline executes the shared review-runner pipeline for both review and audit.
@@ -59,14 +69,59 @@ func RunPipeline(cfg RunnerConfig) error {
 
 	var confidenceChecks []review.CheckResult
 	if cfg.Profile == "full" {
+		if cfg.Progress != nil {
+			cfg.Progress.Tick("Running Go confidence checks")
+		}
 		checkFindings, results := runGoConfidenceChecks(cfg.RepositoryRoot)
 		findings = append(findings, checkFindings...)
 		confidenceChecks = results
 	}
 	if cfg.WithTools {
+		if cfg.Progress != nil {
+			cfg.Progress.Tick("Running external tool scanners")
+		}
 		toolFindings, results := runOptionalLocalToolsWithOverrides(cfg.RepositoryRoot, cfg.ToolPaths)
 		findings = append(findings, toolFindings...)
 		confidenceChecks = append(confidenceChecks, results...)
+	}
+
+	// Discover and execute plugin analyzers
+	var pluginRegistry *plugin.Registry
+	if cfg.PluginRegistry != nil {
+		pluginRegistry = cfg.PluginRegistry
+	} else {
+		pluginDir := cfg.PluginDir
+		if pluginDir == "" && cfg.RepositoryRoot != "" {
+			pluginDir = filepath.Join(cfg.RepositoryRoot, ".m3tal-review", "plugins")
+		}
+		if pluginDir != "" {
+			if discovered, err := plugin.DiscoverPlugins(pluginDir); err == nil && len(discovered) > 0 {
+				pluginRegistry = plugin.NewRegistry()
+				for _, p := range discovered {
+					_ = pluginRegistry.Register(p)
+				}
+			}
+		}
+	}
+
+	if pluginRegistry != nil && len(pluginRegistry.List()) > 0 {
+		if cfg.Progress != nil {
+			cfg.Progress.Tick("Running plugin analyzers")
+		}
+		var targetFiles []string
+		if cfg.Scope == "working-tree" {
+			targetFiles = cfg.ReviewedFiles
+		} else {
+			targetFiles = cfg.StagedFiles
+		}
+		pFindings, pChecks := pluginRegistry.RunPlugins(context.Background(), plugin.PluginInput{
+			RepositoryRoot: cfg.RepositoryRoot,
+			Scope:          cfg.Scope,
+			Files:          targetFiles,
+			Diff:           cfg.Diff,
+		})
+		findings = append(findings, pFindings...)
+		confidenceChecks = append(confidenceChecks, pChecks...)
 	}
 
 	findings = review.GroupFindings(findings)
@@ -139,6 +194,7 @@ func RunPipeline(cfg RunnerConfig) error {
 	)
 	report.Profile = cfg.Profile
 	report.Checks = append(report.Checks, confidenceChecks...)
+	report.Checks = append(report.Checks, cfg.Checks...)
 	report.Scope = cfg.Scope
 	report.Coverage = cfg.Coverage
 
@@ -184,11 +240,17 @@ func RunPipeline(cfg RunnerConfig) error {
 	}
 
 	attachFindingChanges(cfg.RepositoryRoot, historyPath, &report)
+	if cfg.Progress != nil {
+		cfg.Progress.Tick("Saving report and run history")
+	}
 	if err := review.WriteReport(reportPath, report); err != nil {
 		return err
 	}
 	if err := review.AppendHistory(historyPath, review.NewHistoryEntry(report)); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to append to history log (report was successfully saved to %s): %s\n", displayText(reportPath), displayText(err.Error()))
+	}
+	if cfg.Progress != nil {
+		cfg.Progress.Done("Analysis pipeline complete")
 	}
 
 	fmt.Println(displayText(report.Summary))

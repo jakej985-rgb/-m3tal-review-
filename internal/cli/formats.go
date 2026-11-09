@@ -155,44 +155,48 @@ func formatFindingsGitHub(findings []review.Finding) string {
 // formatFindingsJSON emits findings as a JSON array for tooling.
 func formatFindingsJSON(findings []review.Finding) (string, error) {
 	type item struct {
-		ID          string                   `json:"id,omitempty"`
-		Rule        string                   `json:"rule"`
-		Rules       []string                 `json:"rules,omitempty"`
-		Analyzers   []string                 `json:"analyzers,omitempty"`
-		Severity    string                   `json:"severity"`
-		RawSeverity string                   `json:"raw_severity,omitempty"`
-		Confidence  string                   `json:"confidence,omitempty"`
-		AdvisoryID  string                   `json:"advisory_id,omitempty"`
-		AdvisoryIDs []string                 `json:"advisory_ids,omitempty"`
-		File        string                   `json:"file"`
-		Line        int                      `json:"line"`
-		Message     string                   `json:"message"`
-		Remediation string                   `json:"remediation,omitempty"`
-		Category    string                   `json:"category,omitempty"`
-		Signature   string                   `json:"signature,omitempty"`
-		Snippet     string                   `json:"snippet,omitempty"`
-		Evidence    []review.FindingEvidence `json:"evidence,omitempty"`
+		ID           string                   `json:"id,omitempty"`
+		Rule         string                   `json:"rule"`
+		Rules        []string                 `json:"rules,omitempty"`
+		Analyzers    []string                 `json:"analyzers,omitempty"`
+		Severity     string                   `json:"severity"`
+		RawSeverity  string                   `json:"raw_severity,omitempty"`
+		Confidence   string                   `json:"confidence,omitempty"`
+		AdvisoryID   string                   `json:"advisory_id,omitempty"`
+		AdvisoryIDs  []string                 `json:"advisory_ids,omitempty"`
+		File         string                   `json:"file"`
+		Line         int                      `json:"line"`
+		Message      string                   `json:"message"`
+		Remediation  string                   `json:"remediation,omitempty"`
+		Category     string                   `json:"category,omitempty"`
+		Signature    string                   `json:"signature,omitempty"`
+		Snippet      string                   `json:"snippet,omitempty"`
+		Evidence     []review.FindingEvidence `json:"evidence,omitempty"`
+		Reachability string                   `json:"reachability,omitempty"`
+		Metadata     map[string]string        `json:"metadata,omitempty"`
 	}
 	items := make([]item, 0, len(findings))
 	for _, f := range findings {
 		items = append(items, item{
-			ID:          f.ID,
-			Rule:        f.Rule,
-			Rules:       f.Rules,
-			Analyzers:   f.Analyzers,
-			Severity:    f.Severity,
-			RawSeverity: f.RawSeverity,
-			Confidence:  f.Confidence,
-			AdvisoryID:  f.AdvisoryID,
-			AdvisoryIDs: f.AdvisoryIDs,
-			File:        f.File,
-			Line:        f.Line,
-			Message:     f.Message,
-			Remediation: f.Remediation,
-			Category:    f.Category,
-			Signature:   f.Signature,
-			Snippet:     f.Snippet,
-			Evidence:    f.Evidence,
+			ID:           f.ID,
+			Rule:         f.Rule,
+			Rules:        f.Rules,
+			Analyzers:    f.Analyzers,
+			Severity:     f.Severity,
+			RawSeverity:  f.RawSeverity,
+			Confidence:   f.Confidence,
+			AdvisoryID:   f.AdvisoryID,
+			AdvisoryIDs:  f.AdvisoryIDs,
+			File:         f.File,
+			Line:         f.Line,
+			Message:      f.Message,
+			Remediation:  f.Remediation,
+			Category:     f.Category,
+			Signature:    f.Signature,
+			Snippet:      f.Snippet,
+			Evidence:     f.Evidence,
+			Reachability: f.Reachability,
+			Metadata:     f.Metadata,
 		})
 	}
 	data, err := json.MarshalIndent(items, "", "  ")
@@ -214,43 +218,47 @@ func formatFindingsJSONL(findings []review.Finding) (string, error) {
 // writeFindingsJSONL streams findings to an io.Writer as newline-delimited JSON.
 func writeFindingsJSONL(w io.Writer, findings []review.Finding) error {
 	type item struct {
-		ID          string                   `json:"id,omitempty"`
-		Rule        string                   `json:"rule"`
-		Rules       []string                 `json:"rules,omitempty"`
-		Analyzers   []string                 `json:"analyzers,omitempty"`
-		Severity    string                   `json:"severity"`
-		RawSeverity string                   `json:"raw_severity,omitempty"`
-		Confidence  string                   `json:"confidence,omitempty"`
-		AdvisoryID  string                   `json:"advisory_id,omitempty"`
-		AdvisoryIDs []string                 `json:"advisory_ids,omitempty"`
-		File        string                   `json:"file"`
-		Line        int                      `json:"line"`
-		Message     string                   `json:"message"`
-		Remediation string                   `json:"remediation,omitempty"`
-		Category    string                   `json:"category,omitempty"`
-		Signature   string                   `json:"signature,omitempty"`
-		Snippet     string                   `json:"snippet,omitempty"`
-		Evidence    []review.FindingEvidence `json:"evidence,omitempty"`
+		ID           string                   `json:"id,omitempty"`
+		Rule         string                   `json:"rule"`
+		Rules        []string                 `json:"rules,omitempty"`
+		Analyzers    []string                 `json:"analyzers,omitempty"`
+		Severity     string                   `json:"severity"`
+		RawSeverity  string                   `json:"raw_severity,omitempty"`
+		Confidence   string                   `json:"confidence,omitempty"`
+		AdvisoryID   string                   `json:"advisory_id,omitempty"`
+		AdvisoryIDs  []string                 `json:"advisory_ids,omitempty"`
+		File         string                   `json:"file"`
+		Line         int                      `json:"line"`
+		Message      string                   `json:"message"`
+		Remediation  string                   `json:"remediation,omitempty"`
+		Category     string                   `json:"category,omitempty"`
+		Signature    string                   `json:"signature,omitempty"`
+		Snippet      string                   `json:"snippet,omitempty"`
+		Evidence     []review.FindingEvidence `json:"evidence,omitempty"`
+		Reachability string                   `json:"reachability,omitempty"`
+		Metadata     map[string]string        `json:"metadata,omitempty"`
 	}
 	for _, f := range findings {
 		it := item{
-			ID:          f.ID,
-			Rule:        f.Rule,
-			Rules:       f.Rules,
-			Analyzers:   f.Analyzers,
-			Severity:    f.Severity,
-			RawSeverity: f.RawSeverity,
-			Confidence:  f.Confidence,
-			AdvisoryID:  f.AdvisoryID,
-			AdvisoryIDs: f.AdvisoryIDs,
-			File:        f.File,
-			Line:        f.Line,
-			Message:     f.Message,
-			Remediation: f.Remediation,
-			Category:    f.Category,
-			Signature:   f.Signature,
-			Snippet:     f.Snippet,
-			Evidence:    f.Evidence,
+			ID:           f.ID,
+			Rule:         f.Rule,
+			Rules:        f.Rules,
+			Analyzers:    f.Analyzers,
+			Severity:     f.Severity,
+			RawSeverity:  f.RawSeverity,
+			Confidence:   f.Confidence,
+			AdvisoryID:   f.AdvisoryID,
+			AdvisoryIDs:  f.AdvisoryIDs,
+			File:         f.File,
+			Line:         f.Line,
+			Message:      f.Message,
+			Remediation:  f.Remediation,
+			Category:     f.Category,
+			Signature:    f.Signature,
+			Snippet:      f.Snippet,
+			Evidence:     f.Evidence,
+			Reachability: f.Reachability,
+			Metadata:     f.Metadata,
 		}
 		data, err := json.Marshal(it)
 		if err != nil {

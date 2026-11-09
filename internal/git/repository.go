@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -22,7 +23,7 @@ func RepositoryRoot(path string) (string, error) {
 
 	root := strings.TrimSpace(string(output))
 
-	return root, nil
+	return filepath.Clean(filepath.FromSlash(root)), nil
 }
 
 func Available() error {

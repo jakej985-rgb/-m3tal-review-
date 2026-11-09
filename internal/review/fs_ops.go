@@ -3,7 +3,9 @@ package review
 import (
 	"errors"
 	"os"
+	"runtime"
 	"syscall"
+	"time"
 )
 
 // fsOps defines filesystem operations used for atomic report and history writes.
@@ -20,6 +22,10 @@ type fsOps struct {
 }
 
 func defaultSyncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		// Directory fsync is unsupported on Windows file systems
+		return nil
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
@@ -35,6 +41,22 @@ func defaultSyncDir(dir string) error {
 	return nil
 }
 
+func defaultRename(oldpath, newpath string) error {
+	var err error
+	for i := 0; i < 5; i++ {
+		err = os.Rename(oldpath, newpath)
+		if err == nil {
+			return nil
+		}
+		if runtime.GOOS == "windows" {
+			time.Sleep(time.Duration(i+1) * 2 * time.Millisecond)
+			continue
+		}
+		break
+	}
+	return err
+}
+
 func defaultFSOps() fsOps {
 	return fsOps{
 		openFile:     os.OpenFile,
@@ -44,7 +66,7 @@ func defaultFSOps() fsOps {
 		closeFile:    func(f *os.File) error { return f.Close() },
 		truncateFile: func(f *os.File, size int64) error { return f.Truncate(size) },
 		removeFile:   func(name string) error { return os.Remove(name) },
-		renameFile:   func(oldpath, newpath string) error { return os.Rename(oldpath, newpath) },
+		renameFile:   defaultRename,
 		syncDir:      defaultSyncDir,
 	}
 }

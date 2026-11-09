@@ -156,6 +156,51 @@ All findings come from deterministic heuristics; see `m3tal-review list-rules` f
 | `iac-exposure` | World-open CIDRs, public ACLs, wildcard IAM, unencrypted storage. |
 | `script-file` | Committed executable scripts (.bat/.ps1/.vbs/etc). |
 
+**Go web framework rule packs (`--framework`)**
+
+| Rule | Framework | Detects |
+| --- | --- | --- |
+| `gin-unhandled-binding` | Gin | Unhandled binding errors (`BindJSON`, `ShouldBindJSON`, etc.). |
+| `gin-wildcard-cors` | Gin | CORS configuration with wildcard origins or AllowCredentials. |
+| `gin-missing-recovery` | Gin | Gin engine initialized with `gin.New()` without Recovery middleware. |
+| `gin-unsafe-param-reflection` | Gin | Route parameter or query reflected directly into response body. |
+| `gin-debug-mode` | Gin | Debug mode enabled explicitly via `gin.SetMode(gin.DebugMode)`. |
+| `echo-unhandled-binding` | Echo | Unhandled `c.Bind` error. |
+| `echo-wildcard-cors` | Echo | Echo CORS configuration allowing wildcard origin with credentials. |
+| `echo-missing-recovery` | Echo | Echo instance created without `middleware.Recover()`. |
+| `echo-unsafe-param-reflection` | Echo | Echo route parameter reflected directly in response body. |
+| `chi-unhandled-binding` | Chi | Unhandled Chi `render.Bind` or `render.Decode` error. |
+| `chi-wildcard-cors` | Chi | Chi CORS middleware with wildcard AllowedOrigins and credentials. |
+| `chi-missing-recovery` | Chi | Chi router created without `middleware.Recoverer`. |
+| `chi-unsafe-param-reflection` | Chi | Chi `URLParam` reflected directly into response writer. |
+| `fiber-unhandled-binding` | Fiber | Unhandled Fiber `c.BodyParser` or `c.QueryParser` error. |
+| `fiber-wildcard-cors` | Fiber | Fiber CORS middleware with wildcard AllowOrigins and credentials. |
+| `fiber-missing-recovery` | Fiber | Fiber application created without `recover.New()` middleware. |
+| `fiber-unsafe-param-reflection` | Fiber | Fiber route parameter reflected directly in response body. |
+| `http-unhandled-body-read` | net/http | Unhandled `json.NewDecoder(r.Body).Decode` error on request body. |
+| `http-wildcard-cors` | net/http | Wildcard `Access-Control-Allow-Origin: *` combined with credentials. |
+| `http-missing-timeouts` | net/http | HTTP server created without `ReadTimeout` / `ReadHeaderTimeout`. |
+| `http-unsafe-param-reflection` | net/http | Request parameter reflected directly in HTTP response. |
+
+### Custom Rule Authoring (`.m3tal-review-rules.yaml` or `--rules`)
+
+Declare repository-specific custom rules in `.m3tal-review-rules.yaml` (or `.json`) in the repository root or via `--rules <path>`. Rules are strictly validated and execute with bounded regex length (<= 1000 chars) and per-rule execution timeout limits.
+
+```yaml
+version: "1.0"
+rules:
+  - id: custom-no-raw-sql
+    name: "Disallow raw SQL query interpolation"
+    severity: high
+    category: security
+    message: "SQL query built with concatenation; use parameterized queries"
+    languages: ["go"]
+    pattern: 'db\.Query\s*\([^)]*\+'
+    remediation: "Use parameterized queries with placeholders ($1, ?)"
+    file_exclude_pattern: '.*_test\.go$'
+    timeout: "2s"
+```
+
 ### Slop Analyzer Coverage
 
 `internal/review/language/lang_checker.go` identifies source languages by file extension for rules that need language-specific behavior. The slop analyzer routes each file to its language-specific implementation. Findings are limited to added lines while each syntax-aware analyzer reads the full staged file (or working-tree file during `audit`) for context.

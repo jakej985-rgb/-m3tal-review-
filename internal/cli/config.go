@@ -5,20 +5,27 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/review"
+	"github.com/jakej985-rgb/m3tal-review/internal/review/language"
 )
 
 // userConfig holds repository-independent defaults from
 // $XDG_CONFIG_HOME/m3tal-review/config.json (or ~/.config/...). CLI flags
 // always override these values.
 type userConfig struct {
-	Profile   string            `json:"profile,omitempty"`
-	FailOn    string            `json:"fail_on,omitempty"`
-	Format    string            `json:"format,omitempty"`
-	Only      []string          `json:"only,omitempty"`
-	Skip      []string          `json:"skip,omitempty"`
-	Degraded  bool              `json:"degraded,omitempty"`
-	ToolPaths map[string]string `json:"tool_paths,omitempty"`
-	Tools     map[string]string `json:"tools,omitempty"`
+	Profile           string             `json:"profile,omitempty"`
+	FailOn            string             `json:"fail_on,omitempty"`
+	Format            string             `json:"format,omitempty"`
+	Only              []string           `json:"only,omitempty"`
+	Skip              []string           `json:"skip,omitempty"`
+	Degraded          bool               `json:"degraded,omitempty"`
+	ToolPaths         map[string]string  `json:"tool_paths,omitempty"`
+	Tools             map[string]string  `json:"tools,omitempty"`
+	Framework         []string           `json:"framework,omitempty"`
+	RulesFile         string             `json:"rules,omitempty"`
+	LanguageOverrides map[string]string  `json:"language_overrides,omitempty"`
+	Lint              *review.LintConfig `json:"lint,omitempty"`
 }
 
 func userConfigPath() (string, error) {
@@ -101,6 +108,12 @@ func applyUserConfig(options *reviewOptions, cfg userConfig) {
 			options.ToolPaths[k] = v
 		}
 	}
+	if !options.seen["--framework"] && len(cfg.Framework) > 0 {
+		options.Framework = cfg.Framework
+	}
+	if !options.seen["--rules"] && cfg.RulesFile != "" {
+		options.RulesFile = cfg.RulesFile
+	}
 }
 
 // applyUserConfigAudit fills audit options the user did not explicitly set.
@@ -137,4 +150,47 @@ func applyUserConfigAudit(options *auditOptions, cfg userConfig) {
 			options.ToolPaths[k] = v
 		}
 	}
+	if !options.seen["--framework"] && len(cfg.Framework) > 0 {
+		options.Framework = cfg.Framework
+	}
+	if !options.seen["--rules"] && cfg.RulesFile != "" {
+		options.RulesFile = cfg.RulesFile
+	}
+}
+
+// initLanguageOverrides loads language_overrides from user config, repo config (.m3tal-review-config.json),
+// and policy (.m3tal-review-policy.json), and registers them with package language.
+func initLanguageOverrides(repositoryRoot string) {
+	overrides := make(map[string]string)
+
+	// 1. User config
+	if uCfg, err := loadUserConfig(); err == nil {
+		for k, v := range uCfg.LanguageOverrides {
+			overrides[k] = v
+		}
+	}
+
+	// 2. Repo config (.m3tal-review-config.json)
+	if repositoryRoot != "" {
+		cfgPath := filepath.Join(repositoryRoot, ".m3tal-review-config.json")
+		if data, err := os.ReadFile(cfgPath); err == nil {
+			var raw struct {
+				LanguageOverrides map[string]string `json:"language_overrides"`
+			}
+			if err := json.Unmarshal(data, &raw); err == nil {
+				for k, v := range raw.LanguageOverrides {
+					overrides[k] = v
+				}
+			}
+		}
+
+		// 3. Policy (.m3tal-review-policy.json)
+		if policyOverrides, err := review.ReadLanguageOverridesConfig(repositoryRoot, true); err == nil {
+			for k, v := range policyOverrides {
+				overrides[k] = v
+			}
+		}
+	}
+
+	language.SetDefaultOverrides(overrides)
 }

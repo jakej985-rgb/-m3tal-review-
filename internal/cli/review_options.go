@@ -34,6 +34,9 @@ type reviewOptions struct {
 	MaxFindings   int
 	MaxDiffSize   int64
 	Rule          string
+	Framework     []string
+	RulesFile     string
+	Progress      *bool
 	// seen records which flags were explicitly passed, so user config
 	// defaults only fill in flags the user did not set.
 	seen map[string]bool
@@ -67,6 +70,12 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 		switch arg {
 		case "--with-tools":
 			options.WithTools = true
+		case "--progress":
+			p := true
+			options.Progress = &p
+		case "--no-progress":
+			p := false
+			options.Progress = &p
 		case "--profile":
 			v, err := next()
 			if err != nil {
@@ -217,6 +226,18 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 				return options, err
 			}
 			options.ToolPaths["osv-scanner"] = v
+		case "--framework":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.Framework = append(options.Framework, splitRuleList(v)...)
+		case "--rules":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.RulesFile = v
 		default:
 			if strings.HasPrefix(arg, "--tool-path=") {
 				v := strings.TrimPrefix(arg, "--tool-path=")

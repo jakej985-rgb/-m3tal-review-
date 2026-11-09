@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"time"
 )
 
 // maxCapturedOutput bounds how much stdout+stderr a review-spawned command may
@@ -38,11 +39,15 @@ func (b *cappedBuffer) String() string { return b.buf.String() }
 func runCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = dir
+	cmd.WaitDelay = 1 * time.Second
 	var out cappedBuffer
 	out.limit = maxCapturedOutput
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		return out.Bytes(), fmt.Errorf("subprocess cancelled: %w", ctx.Err())
+	}
 	return out.Bytes(), err
 }
 
@@ -51,12 +56,16 @@ func runCommand(ctx context.Context, dir string, args ...string) ([]byte, error)
 func runCommandOutput(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = dir
+	cmd.WaitDelay = 1 * time.Second
 	var out, errOut cappedBuffer
 	out.limit = maxCapturedOutput
 	errOut.limit = maxCapturedOutput
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		return out.Bytes(), fmt.Errorf("subprocess cancelled: %w", ctx.Err())
+	}
 	if err != nil && errOut.buf.Len() > 0 {
 		err = fmt.Errorf("%w: %s", err, errOut.String())
 	}

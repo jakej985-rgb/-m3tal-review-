@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "rules": [
+    {
+      "id": "custom-no-raw-sql",
+      "name": "Disallow raw sql execution",
+      "severity": "critical",
+      "category": "security",
+      "message": "Raw SQL query concatenation detected",
+      "languages": ["go"],
+      "patterns": [
+        "db\\.Query\\s*\\([^)]*\\+",
+        "db\\.Exec\\s*\\([^)]*fmt\\.Sprintf"
+      ],
+      "remediation": "Use parameterized queries with placeholders ($1, ?)",
+      "file_pattern": ".*\\.go$"
+    }
+  ]
+}

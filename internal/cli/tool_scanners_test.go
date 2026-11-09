@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -13,7 +14,11 @@ import (
 // Helper to construct simulated ExitError
 func mockExitError(code int) error {
 	// Running a command that exits with code gives a real *exec.ExitError
-	cmd := exec.Command("bash", "-c", "exit "+itoaLen(code))
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("cmd", "/c", "exit "+itoaLen(code))
+		return cmd.Run()
+	}
+	cmd := exec.Command("sh", "-c", "exit "+itoaLen(code))
 	return cmd.Run()
 }
 

@@ -1,0 +1,9 @@
+version: "1.0"
+rules:
+  - id: custom-rule-bad-sev
+    name: "Bad Severity Rule"
+    severity: urgent
+    category: security
+    message: "Invalid severity specified"
+    languages: ["go"]
+    pattern: 'test'

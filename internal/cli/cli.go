@@ -142,8 +142,8 @@ func showReport(runID string) error {
 	return nil
 }
 
-func execute(command string) error {
-	return executeWithArgs(command, nil)
+func execute(command string, args ...string) error {
+	return executeWithArgs(command, args)
 }
 
 func executeWithArgs(command string, commandArgs []string) error {
@@ -287,11 +287,16 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if err != nil {
 			return err
 		}
+		initLanguageOverrides(repositoryRoot)
 
 		branch, err := git.CurrentBranch(repositoryRoot)
 		if err != nil {
 			return err
 		}
+
+		progressEnabled := IsProgressEnabled(options.Progress, options.Format, stdoutIsTTY())
+		progress := NewProgressTracker(nil, progressEnabled)
+		progress.Stage(1, 4, "Inspecting repository changes")
 
 		var diff string
 		var stagedFiles, unanalyzedFiles []string
@@ -386,13 +391,29 @@ func executeWithArgs(command string, commandArgs []string) error {
 		}
 
 		rules := defaultRulesWithOptions(repositoryRoot, options.Degraded)
+
+		_, frameworkRules, frameworkChecks := review.ResolveFrameworkPacks(repositoryRoot, diff, options.Framework)
+		rules = append(rules, frameworkRules...)
+
+		customRulesFile := review.FindCustomRulesFile(repositoryRoot, options.RulesFile)
+		if customRulesFile != "" {
+			cRules, err := review.LoadCustomRulesFile(customRulesFile, repositoryRoot)
+			if err != nil {
+				return fmt.Errorf("custom rules error: %w", err)
+			}
+			rules = append(rules, cRules...)
+		}
+
 		if options.Base != "" {
 			rules = workingTreeRules(rules)
 		}
 		rules = filterRules(rules, options.Only, options.Skip)
+		progress.Stage(2, 4, "Executing heuristic review rules")
 		engine := review.NewEngine(rules...)
 
 		findings := engine.Run(diff)
+
+		progress.Stage(3, 4, "Running review pipeline and integrations")
 
 		return RunPipeline(RunnerConfig{
 			Scope:           "staged",
@@ -418,9 +439,11 @@ func executeWithArgs(command string, commandArgs []string) error {
 			UnanalyzedFiles: unanalyzedFiles,
 			InitialFindings: findings,
 			WorkingTreeDiff: options.Base != "",
+			Checks:          frameworkChecks,
 			CheckRun:        options.CheckRun,
 			CheckRunSHA:     options.CheckRunSHA,
 			PRComment:       options.PRComment,
+			Progress:        progress,
 		})
 
 	case "audit":
@@ -444,18 +467,40 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if err != nil {
 			return err
 		}
+		initLanguageOverrides(repositoryRoot)
 		branch, err := git.CurrentBranch(repositoryRoot)
 		if err != nil {
 			return err
 		}
+		progressEnabled := IsProgressEnabled(options.Progress, options.Format, stdoutIsTTY())
+		progress := NewProgressTracker(nil, progressEnabled)
+		progress.Stage(1, 4, "Analyzing repository working-tree files")
+
 		runID, err := review.NewRunID()
 		if err != nil {
 			return err
 		}
-		rules := filterRules(workingTreeRules(defaultRulesWithOptions(repositoryRoot, options.Degraded)), options.Only, options.Skip)
-		findings, reviewedFiles, unanalyzedFiles, snapshotHash, coverage, err := analyzeWorkingTree(repositoryRoot, options, rules)
+		rules := defaultRulesWithOptions(repositoryRoot, options.Degraded)
+
+		_, frameworkRules, frameworkChecks := review.ResolveFrameworkPacks(repositoryRoot, "", options.Framework)
+		rules = append(rules, frameworkRules...)
+
+		customRulesFile := review.FindCustomRulesFile(repositoryRoot, options.RulesFile)
+		if customRulesFile != "" {
+			cRules, err := review.LoadCustomRulesFile(customRulesFile, repositoryRoot)
+			if err != nil {
+				return fmt.Errorf("custom rules error: %w", err)
+			}
+			rules = append(rules, cRules...)
+		}
+
+		rules = filterRules(workingTreeRules(rules), options.Only, options.Skip)
+		findings, reviewedFiles, unanalyzedFiles, snapshotHash, coverage, err := analyzeWorkingTree(repositoryRoot, options, rules, progress)
 		if err != nil {
 			return err
+		}
+		if options.VulnScan || options.CheckDeps {
+			progress.Stage(2, 4, "Scanning dependencies and vulnerability databases")
 		}
 		if options.VulnScan {
 			vulnFindings, err := runVulnScan(repositoryRoot)
@@ -488,6 +533,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 				}
 			}
 		}
+		progress.Stage(3, 4, "Executing audit pipeline and finalizing report")
 		return RunPipeline(RunnerConfig{
 			Scope:           "working-tree",
 			RepositoryRoot:  repositoryRoot,
@@ -509,9 +555,11 @@ func executeWithArgs(command string, commandArgs []string) error {
 			InitialFindings: findings,
 			SnapshotHash:    snapshotHash,
 			Coverage:        coverage,
+			Checks:          frameworkChecks,
 			MaxFiles:        options.MaxFiles,
 			MaxBytes:        options.MaxBytes,
 			IncludeIgnored:  options.IncludeIgnored,
+			Progress:        progress,
 		})
 
 	case "history":
@@ -656,53 +704,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		return nil
 
 	case "lint":
-		workingDir, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("get working directory: %w", err)
-		}
-
-		if err := git.Available(); err != nil {
-			return err
-		}
-
-		repositoryRoot, err := git.RepositoryRoot(workingDir)
-		if err != nil {
-			return err
-		}
-
-		fmt.Println("M3TAL Review Lint")
-		fmt.Println("Repository:", displayText(repositoryRoot))
-
-		fmt.Println("Checking Go formatting...")
-
-		formatOutput, err := runCommand(context.Background(), repositoryRoot, "gofmt", "-l", ".")
-		if err != nil {
-			return fmt.Errorf("run gofmt: %w\n%s", err, displayText(string(formatOutput)))
-		}
-
-		if strings.TrimSpace(string(formatOutput)) != "" {
-			fmt.Println("Files need formatting:")
-			for _, file := range strings.Split(strings.TrimSpace(string(formatOutput)), "\n") {
-				fmt.Println(displayText(file))
-			}
-			return fmt.Errorf("gofmt check failed")
-		}
-
-		fmt.Println("Formatting passed.")
-
-		fmt.Println("Running go vet...")
-		vetOutput, err := runCommand(context.Background(), repositoryRoot, "go", "vet", "./...")
-		if err != nil {
-			return fmt.Errorf("go vet failed: %w\n%s", err, displayText(string(vetOutput)))
-		}
-
-		if len(vetOutput) > 0 {
-			fmt.Print(displayText(string(vetOutput)))
-		}
-
-		fmt.Println("go vet passed.")
-
-		return nil
+		return commandLint(commandArgs)
 
 	case "recover-history":
 		workingDir, err := os.Getwd()
@@ -875,6 +877,9 @@ type auditOptions struct {
 	WriteBaseline  string
 	VulnScan       bool
 	CheckDeps      bool
+	Framework      []string
+	RulesFile      string
+	Progress       *bool
 	seen           map[string]bool
 }
 
@@ -951,6 +956,12 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 			}
 		case arg == "--snippets":
 			options.Snippets = true
+		case arg == "--progress":
+			p := true
+			options.Progress = &p
+		case arg == "--no-progress":
+			p := false
+			options.Progress = &p
 		case arg == "--with-tools":
 			options.WithTools = true
 		case arg == "--vuln-scan":
@@ -1015,6 +1026,24 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 			i++
 			toolName := strings.TrimSuffix(strings.TrimPrefix(arg, "--"), "-path")
 			options.ToolPaths[toolName] = args[i]
+		case arg == "--framework":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("--framework requires a value")
+			}
+			i++
+			options.Framework = append(options.Framework, splitRuleList(args[i])...)
+		case strings.HasPrefix(arg, "--framework="):
+			_, v, _ := strings.Cut(arg, "=")
+			options.Framework = append(options.Framework, splitRuleList(v)...)
+		case arg == "--rules":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("--rules requires a path")
+			}
+			i++
+			options.RulesFile = args[i]
+		case strings.HasPrefix(arg, "--rules="):
+			_, v, _ := strings.Cut(arg, "=")
+			options.RulesFile = v
 		default:
 			if strings.HasPrefix(arg, "--tool-path=") {
 				v := strings.TrimPrefix(arg, "--tool-path=")
@@ -1044,7 +1073,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 
 func workingTreeSnapshotWithOptions(repositoryRoot string, options auditOptions) (string, []string, []string, error) {
 	var diff strings.Builder
-	files, unanalyzed, _, err := walkWorkingTree(repositoryRoot, options, func(_ string, fileDiff string) {
+	files, unanalyzed, _, err := walkWorkingTree(repositoryRoot, options, nil, func(_ string, fileDiff string) {
 		diff.WriteString(fileDiff)
 	})
 	if err != nil {
@@ -1053,7 +1082,7 @@ func workingTreeSnapshotWithOptions(repositoryRoot string, options auditOptions)
 	return diff.String(), files, unanalyzed, nil
 }
 
-func walkWorkingTree(repositoryRoot string, options auditOptions, visit func(string, string)) ([]string, []string, *review.CoverageMetadata, error) {
+func walkWorkingTree(repositoryRoot string, options auditOptions, progress ProgressReporter, visit func(string, string)) ([]string, []string, *review.CoverageMetadata, error) {
 	files, err := git.WorkingTreeFilesWithIgnored(repositoryRoot, options.IncludeIgnored)
 	if err != nil {
 		return nil, nil, nil, err
@@ -1087,6 +1116,9 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, visit func(str
 			continue
 		}
 		filesRead++
+		if progress != nil {
+			progress.FileTick(filesRead, len(files), file)
+		}
 		if filesRead > options.MaxFiles {
 			unanalyzedSet[file] = true
 			fileSet[file] = true
@@ -1149,7 +1181,7 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, visit func(str
 	return sortedKeys(fileSet), unanalyzed, cov, nil
 }
 
-func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []review.Rule) ([]review.Finding, []string, []string, string, *review.CoverageMetadata, error) {
+func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []review.Rule, progress ProgressReporter) ([]review.Finding, []string, []string, string, *review.CoverageMetadata, error) {
 	var fileRules, policyRules []review.Rule
 	for _, rule := range rules {
 		switch rule.(type) {
@@ -1166,7 +1198,7 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 	defer cache.flush()
 	hash := sha256.New()
 	var findings []review.Finding
-	files, unanalyzed, cov, err := walkWorkingTree(repositoryRoot, options, func(_ string, fileDiff string) {
+	files, unanalyzed, cov, err := walkWorkingTree(repositoryRoot, options, progress, func(_ string, fileDiff string) {
 		_, _ = hash.Write([]byte(fileDiff))
 		fileFindings, ok := cache.get(fileDiff)
 		if !ok {
