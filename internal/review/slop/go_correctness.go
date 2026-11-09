@@ -10,6 +10,9 @@ import (
 // checkResourceClose reports http response bodies, sql.Rows and opened files
 // that are never closed within the same function.
 func (v *slopInspector) checkResourceClose(fn *ast.FuncDecl) {
+	if fn.Body == nil {
+		return
+	}
 	var respVars, rowsVars, fileVars []string
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		switch node := n.(type) {

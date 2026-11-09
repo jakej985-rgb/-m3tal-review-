@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 type SlopRule struct {
 	RepositoryRoot string
 	WorkingTree    bool
+	Degraded       bool
 }
 
 func (SlopRule) Name() string {
@@ -357,6 +359,11 @@ func (v *slopInspector) addFinding(line int, message, remediation string) {
 }
 
 func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
+	return r.checkGoFileASTWithDiff(FileDiff{Path: file, AddedLines: addedLines})
+}
+
+func (r SlopRule) checkGoFileASTWithDiff(fd FileDiff) []Finding {
+	file := fd.Path
 	if !filepath.IsLocal(file) || file == "." {
 		return r.analysisReadError(file, os.ErrInvalid)
 	}
@@ -381,24 +388,234 @@ func (r SlopRule) checkGoFileAST(file string, addedLines []int) []Finding {
 			Remediation: "Ensure the file is readable and the repository is accessible.",
 		}}
 	}
-	return analyzeGoSourceAST(file, content, addedLines)
+	return r.analyzeGoSource(fd, content)
 }
 
-func analyzeGoSourceAST(file string, content []byte, addedLines []int) []Finding {
+func (r SlopRule) analyzeGoSource(fd FileDiff, content []byte) []Finding {
+	file := fd.Path
+	addedLines := fd.AddedLines
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, file, content, parser.ParseComments)
-	if err != nil {
-		return []Finding{{
+	f, parseErr := parser.ParseFile(fset, file, content, parser.ParseComments)
+	if parseErr == nil {
+		if ast.IsGenerated(f) {
+			return nil
+		}
+		return inspectGoAST(fset, f, file, addedLines)
+	}
+
+	// Parsing failed: determine whether this is an incomplete staged edit or a fatal syntax error.
+	incomplete := isIncompleteStagedEdit(parseErr, content, !r.WorkingTree)
+
+	// Step 1: Attempt fallback partial parsing from any declarations f managed to parse.
+	var findings []Finding
+	seen := make(map[string]bool)
+	addFindingUnique := func(item Finding) {
+		key := fmt.Sprintf("%d:%s", item.Line, item.Message)
+		if !seen[key] {
+			seen[key] = true
+			findings = append(findings, item)
+		}
+	}
+
+	if f != nil && len(f.Decls) > 0 && !ast.IsGenerated(f) {
+		partialFindings := inspectGoAST(fset, f, file, addedLines)
+		for _, pf := range partialFindings {
+			addFindingUnique(pf)
+		}
+	}
+
+	// Step 2: Chunk-based inspection for declarations not captured in partial AST.
+	chunkFindings := inspectGoChunks(file, content, addedLines)
+	for _, cf := range chunkFindings {
+		addFindingUnique(cf)
+	}
+
+	// Step 3: Optional degraded regex analysis mode.
+	if r.Degraded {
+		regexFindings := r.checkAddedLineRegex(fd)
+		for _, rf := range regexFindings {
+			addFindingUnique(rf)
+		}
+
+		degradedMsg := "Go AST parsing could not complete (" + parseErr.Error() + "); degraded to regex and partial analysis"
+		if incomplete {
+			degradedMsg = "Incomplete staged Go edit (" + parseErr.Error() + "); degraded to regex and partial analysis"
+		}
+		degradedFinding := Finding{
+			Rule:        "code-slop-degraded",
+			Severity:    "info",
+			File:        file,
+			Line:        0,
+			Message:     degradedMsg,
+			Remediation: "Complete staged edits or fix syntax errors to restore full AST analysis.",
+		}
+		return append([]Finding{degradedFinding}, findings...)
+	}
+
+	// When not in degraded mode, emit high-severity code-slop-analysis-error,
+	// distinguishing between incomplete staged edits and fatal syntax errors.
+	var errFinding Finding
+	if incomplete {
+		errFinding = Finding{
 			Rule:        "code-slop-analysis-error",
 			Severity:    "high",
 			File:        file,
 			Line:        0,
-			Message:     "Failed to parse Go code: " + err.Error(),
+			Message:     "Incomplete staged Go edit: " + parseErr.Error(),
+			Remediation: "Stage the complete change or run with --degraded to allow regex fallback.",
+		}
+	} else {
+		errFinding = Finding{
+			Rule:        "code-slop-analysis-error",
+			Severity:    "high",
+			File:        file,
+			Line:        0,
+			Message:     "Failed to parse Go code: " + parseErr.Error(),
 			Remediation: "Fix syntax errors in the analyzed Go file.",
-		}}
+		}
 	}
 
-	if ast.IsGenerated(f) {
+	return append([]Finding{errFinding}, findings...)
+}
+
+func analyzeGoSourceAST(file string, content []byte, addedLines []int) []Finding {
+	return (SlopRule{}).analyzeGoSource(FileDiff{Path: file, AddedLines: addedLines}, content)
+}
+
+func isIncompleteStagedEdit(err error, content []byte, isStaged bool) bool {
+	if err == nil {
+		return false
+	}
+	errMsg := strings.ToLower(err.Error())
+	incompleteMarkers := []string{
+		"unexpected eof",
+		"expected '}', found 'eof'",
+		"expected ';', found 'eof'",
+		"expected ')', found 'eof'",
+		"expected ']', found 'eof'",
+		"expected ':', found 'eof'",
+		"expected declaration, found 'eof'",
+		"expected operand, found 'eof'",
+		"expected statement, found 'eof'",
+		"expected type, found 'eof'",
+		"comment not terminated",
+		"string literal not terminated",
+		"raw string literal not terminated",
+	}
+	for _, marker := range incompleteMarkers {
+		if strings.Contains(errMsg, marker) {
+			return true
+		}
+	}
+	if isStaged && hasUnclosedTrailingDelimiters(content) {
+		return true
+	}
+	return false
+}
+
+func hasUnclosedTrailingDelimiters(content []byte) bool {
+	var s scanner.Scanner
+	fset := token.NewFileSet()
+	file := fset.AddFile("", fset.Base(), len(content))
+	s.Init(file, content, nil, 0)
+	braceCount := 0
+	parenCount := 0
+	for {
+		_, tok, _ := s.Scan()
+		if tok == token.EOF {
+			break
+		}
+		switch tok {
+		case token.LBRACE:
+			braceCount++
+		case token.RBRACE:
+			braceCount--
+		case token.LPAREN:
+			parenCount++
+		case token.RPAREN:
+			parenCount--
+		}
+	}
+	return braceCount > 0 || parenCount > 0
+}
+
+func inspectGoChunks(file string, content []byte, addedLines []int) []Finding {
+	if len(addedLines) == 0 {
+		return nil
+	}
+	lineMap := make(map[int]bool, len(addedLines))
+	for _, l := range addedLines {
+		lineMap[l] = true
+	}
+	lines := strings.Split(string(content), "\n")
+	var findings []Finding
+	seen := make(map[string]bool)
+
+	type chunkRange struct {
+		startLine int
+		endLine   int
+	}
+	var chunks []chunkRange
+	currentStart := -1
+
+	for i, l := range lines {
+		lineNum := i + 1
+		trimmed := strings.TrimSpace(l)
+		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+			continue
+		}
+		if strings.HasPrefix(l, "func ") || strings.HasPrefix(l, "type ") || strings.HasPrefix(l, "var ") || strings.HasPrefix(l, "const ") {
+			if currentStart > 0 {
+				chunks = append(chunks, chunkRange{startLine: currentStart, endLine: lineNum - 1})
+			}
+			currentStart = lineNum
+		}
+	}
+	if currentStart > 0 {
+		chunks = append(chunks, chunkRange{startLine: currentStart, endLine: len(lines)})
+	}
+
+	for _, chunk := range chunks {
+		hasAdded := false
+		var chunkAddedLines []int
+		for l := chunk.startLine; l <= chunk.endLine; l++ {
+			if lineMap[l] {
+				hasAdded = true
+				chunkAddedLines = append(chunkAddedLines, l)
+			}
+		}
+		if !hasAdded {
+			continue
+		}
+
+		var buf strings.Builder
+		buf.WriteString("package main\n")
+		for i := 2; i < chunk.startLine; i++ {
+			buf.WriteString("/* pad */\n")
+		}
+		for i := chunk.startLine - 1; i < chunk.endLine && i < len(lines); i++ {
+			buf.WriteString(lines[i])
+			buf.WriteByte('\n')
+		}
+
+		chunkFset := token.NewFileSet()
+		chunkAST, err := parser.ParseFile(chunkFset, file, buf.String(), parser.ParseComments)
+		if err == nil && chunkAST != nil {
+			chunkFindings := inspectGoAST(chunkFset, chunkAST, file, chunkAddedLines)
+			for _, cf := range chunkFindings {
+				key := fmt.Sprintf("%d:%s", cf.Line, cf.Message)
+				if !seen[key] {
+					seen[key] = true
+					findings = append(findings, cf)
+				}
+			}
+		}
+	}
+	return findings
+}
+
+func inspectGoAST(fset *token.FileSet, f *ast.File, file string, addedLines []int) []Finding {
+	if f == nil || ast.IsGenerated(f) {
 		return nil
 	}
 

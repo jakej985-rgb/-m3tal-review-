@@ -26,6 +26,7 @@ It provides actionable findings, records review trails (history), and provides a
 - **Optional Local Scanners**: `--with-tools` runs installed `gitleaks`, `gosec`, and `osv-scanner` binaries using fixed command arguments and five-minute timeouts. Missing tools and execution failures are reported as incomplete checks. Gitleaks report output is redacted and only finding metadata is saved. OSV Scanner may need its local vulnerability database or network access, depending on its configuration. No scanner is invoked unless requested.
 - **Code Quality**: Identifies `TODO`/`FIXME`/`XXX` comments and Markdown task headings, plus likely debug output in source files. String literals and non-source artifacts are excluded.
 - **Independent Repository Linting**: Dedicated `lint` command runs `gofmt` and `go vet` across the entire repository to enforce formatting and catch subtle bugs without interfering with staged-only diff reviews.
+- **Dependency & License Hygiene**: Dedicated `check-deps` command (and `audit --check-deps`) analyzes Go module dependencies (`go.mod` and `go.sum`), detects unused direct dependencies, duplicate/conflicting module versions, and enforces configurable dependency license allowlist/denylist rules and unknown-license policy.
 - **Review History**: Maintains a JSONL log of previous reviews with atomic writes and durable recovery.
 - **Detailed Reports**: Saves full review results as JSON files.
 
@@ -39,7 +40,12 @@ Findings are assigned to `security`, `review`, `confidence`, `risk`, or `drift` 
   "forbidden_paths": ["internal/legacy/**"],
   "require_together": [
     {"when_changed": "api/openapi.yaml", "also_change": ["docs/api/**"]}
-  ]
+  ],
+  "license_policy": {
+    "allow": ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC"],
+    "deny": ["GPL-3.0", "AGPL-3.0"],
+    "allow_unknown": false
+  }
 }
 ```
 
@@ -65,6 +71,7 @@ All findings come from deterministic heuristics; see `m3tal-review list-rules` f
 | --- | --- |
 | `hardcoded-credential` | Credential-looking name/value assignments in source. |
 | `exposed-secret` | High-confidence secret formats: PEM private keys and provider tokens (AWS, GitHub, GitLab, Slack, OpenAI, S... |
+| `high-entropy-secret` | Entropy-based secret detection: high-entropy strings guarded by character sets (Hex, Base64, Base58), length gates, and secret contexts. |
 | `secret-file` | Committed files that look like secret material by name. |
 | `secret-material` | Credential material in source: URLs with passwords, cloud keys, tokens. |
 | `hardcoded-session-secret` | Session/JWT secrets hardcoded in source. |
@@ -320,6 +327,46 @@ m3tal-review repair --dry-run
 m3tal-review repair --yes
 m3tal-review repair --history
 ```
+
+### Report Validation
+
+Validate report files or report directories against schema, required fields, finding IDs, check statuses, and path agreement without modifying files:
+
+```bash
+m3tal-review validate-report <path>
+m3tal-review validate-report .m3tal-review/reports/ --format json
+```
+
+### History Pruning & Retention
+
+Prune historical reports and history log entries deterministically and safely while preserving recovery-critical artifacts:
+
+```bash
+m3tal-review history prune --older-than 30d
+m3tal-review history prune --keep 10 --dry-run
+m3tal-review history prune --max-size 10MB --format json
+```
+
+### Suppression Audit History
+
+Track and inspect suppression additions, edits, expiry, and removals with cryptographic tamper-evident audit trails:
+
+```bash
+m3tal-review suppressions audit
+m3tal-review suppressions audit --verify
+m3tal-review suppressions audit --actor alice --rule code-slop --format json
+```
+
+### Policy Dry-Run and Config Diff
+
+Validate proposed policies and preview effective configuration differences without executing analysis or mutating files:
+
+```bash
+m3tal-review config diff proposed-policy.json
+m3tal-review policy diff proposed-policy.json
+m3tal-review policy dry-run proposed-policy.json --format json
+```
+
 
 
 ### Environment variables

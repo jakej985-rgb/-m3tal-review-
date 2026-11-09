@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/jakej985-rgb/m3tal-review/internal/deps"
 	"github.com/jakej985-rgb/m3tal-review/internal/git"
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 	"github.com/jakej985-rgb/m3tal-review/internal/review/language"
@@ -189,6 +190,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 		force := len(commandArgs) > 0 && commandArgs[0] == "--force"
 		return installHook(force)
 
+	case "check-deps":
+		return commandCheckDeps(commandArgs)
+
 	case "check":
 		workingDir, err := os.Getwd()
 		if err != nil {
@@ -270,7 +274,6 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return cfgErr
 		}
 		applyUserConfig(&options, cfg)
-		profile, withTools := options.Profile, options.WithTools
 		workingDir, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get working directory: %w", err)
@@ -382,7 +385,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return err
 		}
 
-		rules := defaultRules(repositoryRoot)
+		rules := defaultRulesWithOptions(repositoryRoot, options.Degraded)
 		if options.Base != "" {
 			rules = workingTreeRules(rules)
 		}
@@ -390,211 +393,35 @@ func executeWithArgs(command string, commandArgs []string) error {
 		engine := review.NewEngine(rules...)
 
 		findings := engine.Run(diff)
-		var confidenceChecks []review.CheckResult
-		if profile == "full" {
-			checkFindings, results := runGoConfidenceChecks(repositoryRoot)
-			findings = append(findings, checkFindings...)
-			confidenceChecks = results
-		}
-		if withTools {
-			toolFindings, results := runOptionalLocalTools(repositoryRoot)
-			findings = append(findings, toolFindings...)
-			confidenceChecks = append(confidenceChecks, results...)
-		}
-		findings = review.GroupFindings(findings)
-		workingTree := options.Base != ""
-		findings = review.ApplyFindingFilters(diff, findings, repositoryRoot, workingTree)
-		if options.Baseline != "" {
-			baseline, err := loadBaseline(options.Baseline)
-			if err != nil {
-				return err
-			}
-			findings = filterBaseline(findings, baseline)
-		}
-		findings = filterFindingsByPath(findings, options.Include, options.Exclude)
-		findings = sortFindings(findings, options.SortBy)
-		if options.MaxFindings > 0 && len(findings) > options.MaxFindings {
-			findings = findings[:options.MaxFindings]
-		}
-		if options.WriteBaseline != "" {
-			if err := writeBaseline(options.WriteBaseline, findings); err != nil {
-				return err
-			}
-			fmt.Println("Baseline written:", displayText(options.WriteBaseline))
-		}
-		if options.CheckRun {
-			if err := postCheckRun(findings, options.CheckRunSHA); err != nil {
-				return fmt.Errorf("post check run: %w", err)
-			}
-			fmt.Println("Check run posted.")
-		}
-		if options.PRComment {
-			if err := postPRComment(repositoryRoot, findings); err != nil {
-				return fmt.Errorf("post pr comment: %w", err)
-			}
-			fmt.Println("PR comment posted.")
-		}
 
-		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: unable to determine current commit SHA: %s\n", displayText(err.Error()))
-			currentSHA = "unavailable"
-		}
-		// tool version is a global `version`
-
-		report := review.NewReport(
-			runID,
-			repositoryRoot,
-			branch,
-			currentSHA,
-			currentSHA,
-			diffHash(diff),
-			version,
-			stagedFiles,
-			findings,
-		)
-		report.Profile = profile
-		report.Checks = append(report.Checks, confidenceChecks...)
-		if len(unanalyzedFiles) > 0 {
-			report.UnanalyzedFiles = unanalyzedFiles
-			report.Passed = false
-			report.Summary = "Review incomplete. Some staged files could not be analyzed."
-		}
-		if review.ValidateCommitSHA(currentSHA) == nil {
-			if att, err := review.GenerateAttestation(&report, ""); err == nil {
-				report.Attestation = &att
-			}
-		}
-
-		review.AttachSnippetsToReport(&report, diff, repositoryRoot, false)
-
-		reportPath := filepath.Join(
-			repositoryRoot,
-			".m3tal-review",
-			"reports",
-			runID+".json",
-		)
-		historyPath := filepath.Join(repositoryRoot, ".m3tal-review", "history.jsonl")
-		if err := ensureReviewStorageSafe(repositoryRoot, reportPath, historyPath); err != nil {
-			return err
-		}
-		attachFindingChanges(repositoryRoot, historyPath, &report)
-
-		if err := review.WriteReport(reportPath, report); err != nil {
-			return err
-		}
-
-		historyEntry := review.NewHistoryEntry(report)
-
-		if err := review.AppendHistory(historyPath, historyEntry); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to append to history log (report was successfully saved to %s): %s\n", displayText(reportPath), displayText(err.Error()))
-		}
-
-		fmt.Println(displayText(report.Summary))
-		fmt.Println("Profile:", profile)
-		printFindingChanges(report.FindingChanges)
-		printCheckResults(report.Checks)
-		fmt.Println("Security checks are heuristic; see README for coverage and limitations.")
-		fmt.Println("Run ID:", displayText(report.RunID))
-		fmt.Println("Report:", displayText(reportPath))
-		if len(report.UnanalyzedFiles) > 0 {
-			fmt.Println("Not fully analyzed (binary, unsupported source language, submodule, or file-mode changes):")
-			for _, file := range report.UnanalyzedFiles {
-				fmt.Println("  ", displayText(file))
-			}
-		}
-
-		switch options.Format {
-		case "sarif":
-			out, err := formatFindingsSarif(report.Findings)
-			if err != nil {
-				return err
-			}
-			fmt.Println(out)
-		case "github":
-			fmt.Print(formatFindingsGitHub(report.Findings))
-		case "json":
-			out, err := formatFindingsJSON(report.Findings)
-			if err != nil {
-				return err
-			}
-			fmt.Println(out)
-		case "jsonl":
-			out, err := formatFindingsJSONL(report.Findings)
-			if err != nil {
-				return err
-			}
-			fmt.Print(out)
-		case "html":
-			out, err := formatReportHTML(report)
-			if err != nil {
-				return err
-			}
-			fmt.Println(out)
-		case "junit":
-			fmt.Print(formatFindingsJUnit(report.Findings))
-		case "codeclimate":
-			out, err := formatFindingsCodeClimate(report.Findings)
-			if err != nil {
-				return err
-			}
-			fmt.Println(out)
-		default:
-			if options.SummaryOnly {
-				break
-			}
-			for _, finding := range report.Findings {
-				location := displayText(finding.File)
-				if finding.Line > 0 {
-					location = fmt.Sprintf("%s:%d", location, finding.Line)
-				}
-				fmt.Printf(
-					"[%s] %s: %s (%s)\n",
-					displayText(finding.Severity),
-					location,
-					displayText(finding.Message),
-					displayText(finding.Rule),
-				)
-				if finding.Remediation != "" {
-					fmt.Printf("  Remediation: %s\n", displayText(finding.Remediation))
-				}
-				if options.Snippets && finding.Snippet != "" {
-					lines := strings.Split(strings.TrimRight(finding.Snippet, "\n"), "\n")
-					for _, l := range lines {
-						fmt.Printf("  %s\n", displayText(l))
-					}
-				}
-			}
-		}
-
-		if options.FailOn != "" {
-			threshold := severityRank(options.FailOn)
-			blocking := 0
-			for _, finding := range report.Findings {
-				if severityRank(finding.Severity) >= threshold {
-					blocking++
-				}
-			}
-			if blocking == 0 && len(report.UnanalyzedFiles) == 0 {
-				return nil
-			}
-			if len(report.UnanalyzedFiles) > 0 {
-				return fmt.Errorf("review found %d issue(s) at or above %s and could not analyze %d staged file(s)", blocking, options.FailOn, len(report.UnanalyzedFiles))
-			}
-			return fmt.Errorf("review found %d issue(s) at or above %s", blocking, options.FailOn)
-		}
-
-		if !report.Passed {
-			if len(report.UnanalyzedFiles) > 0 && len(report.Findings) == 0 {
-				return fmt.Errorf("review incomplete: %d staged file(s) could not be analyzed", len(report.UnanalyzedFiles))
-			}
-			if len(report.UnanalyzedFiles) > 0 {
-				return fmt.Errorf("review found %d issue(s) and could not analyze %d staged file(s)", len(report.Findings), len(report.UnanalyzedFiles))
-			}
-			return fmt.Errorf("review found %d issue(s)", len(report.Findings))
-		}
-
-		return nil
+		return RunPipeline(RunnerConfig{
+			Scope:           "staged",
+			RepositoryRoot:  repositoryRoot,
+			Branch:          branch,
+			RunID:           runID,
+			Profile:         options.Profile,
+			WithTools:       options.WithTools,
+			ToolPaths:       options.ToolPaths,
+			Baseline:        options.Baseline,
+			WriteBaseline:   options.WriteBaseline,
+			Include:         options.Include,
+			Exclude:         options.Exclude,
+			SortBy:          options.SortBy,
+			MaxFindings:     options.MaxFindings,
+			Format:          options.Format,
+			Snippets:        options.Snippets,
+			SummaryOnly:     options.SummaryOnly,
+			FailOn:          options.FailOn,
+			Version:         version,
+			Diff:            diff,
+			StagedFiles:     stagedFiles,
+			UnanalyzedFiles: unanalyzedFiles,
+			InitialFindings: findings,
+			WorkingTreeDiff: options.Base != "",
+			CheckRun:        options.CheckRun,
+			CheckRunSHA:     options.CheckRunSHA,
+			PRComment:       options.PRComment,
+		})
 
 	case "audit":
 		options, err := parseAuditOptions(commandArgs)
@@ -625,7 +452,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if err != nil {
 			return err
 		}
-		rules := filterRules(workingTreeRules(defaultRules(repositoryRoot)), options.Only, options.Skip)
+		rules := filterRules(workingTreeRules(defaultRulesWithOptions(repositoryRoot, options.Degraded)), options.Only, options.Skip)
 		findings, reviewedFiles, unanalyzedFiles, snapshotHash, coverage, err := analyzeWorkingTree(repositoryRoot, options, rules)
 		if err != nil {
 			return err
@@ -640,154 +467,52 @@ func executeWithArgs(command string, commandArgs []string) error {
 				}
 			}
 		}
-		if options.Baseline != "" {
-			baseline, err := loadBaseline(options.Baseline)
-			if err != nil {
-				return err
-			}
-			findings = filterBaseline(findings, baseline)
-		}
-		findings = filterFindingsByPath(findings, options.Include, options.Exclude)
-		if options.WriteBaseline != "" {
-			if err := writeBaseline(options.WriteBaseline, findings); err != nil {
-				return err
-			}
-			fmt.Println("Baseline written:", displayText(options.WriteBaseline))
-		}
-		var confidenceChecks []review.CheckResult
-		if options.Profile == "full" {
-			checkFindings, results := runGoConfidenceChecks(repositoryRoot)
-			findings = append(findings, checkFindings...)
-			confidenceChecks = results
-		}
-		if options.WithTools {
-			toolFindings, results := runOptionalLocalTools(repositoryRoot)
-			findings = append(findings, toolFindings...)
-			confidenceChecks = append(confidenceChecks, results...)
-		}
-		findings = review.GroupFindings(findings)
-		currentSHA, err := git.CurrentCommitSHA(repositoryRoot)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: unable to determine current commit SHA: %s\n", displayText(err.Error()))
-			currentSHA = "unavailable"
-		}
-		report := review.NewReport(runID, repositoryRoot, branch, currentSHA, currentSHA, snapshotHash, version, reviewedFiles, findings)
-		report.Profile = options.Profile
-		report.Checks = append(report.Checks, confidenceChecks...)
-		report.Scope = "working-tree"
-		report.Coverage = coverage
-		if review.ValidateCommitSHA(currentSHA) == nil {
-			if att, err := review.GenerateAttestation(&report, snapshotHash); err == nil {
-				report.Attestation = &att
-			}
-		}
-		if len(unanalyzedFiles) > 0 {
-			report.UnanalyzedFiles = unanalyzedFiles
-			report.Passed = false
-			report.Summary = "Audit incomplete. Some working-tree files could not be analyzed."
-		} else if !report.Passed {
-			report.Summary = "Audit found findings that require attention."
-		} else if len(findings) > 0 {
-			report.Summary = "Audit passed with informational risk signals."
-		}
-		review.AttachSnippetsToReport(&report, "", repositoryRoot, true)
-		reportPath := filepath.Join(repositoryRoot, ".m3tal-review", "reports", runID+".json")
-		historyPath := filepath.Join(repositoryRoot, ".m3tal-review", "history.jsonl")
-		if err := ensureReviewStorageSafe(repositoryRoot, reportPath, historyPath); err != nil {
-			return err
-		}
-		attachFindingChanges(repositoryRoot, historyPath, &report)
-		if err := review.WriteReport(reportPath, report); err != nil {
-			return err
-		}
-		if err := review.AppendHistory(historyPath, review.NewHistoryEntry(report)); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to append to history log (report was successfully saved to %s): %s\n", displayText(reportPath), displayText(err.Error()))
-		}
-		fmt.Println(displayText(report.Summary))
-		fmt.Println("Scope: working-tree")
-		fmt.Println("Profile:", options.Profile)
-		printFindingChanges(report.FindingChanges)
-		printCheckResults(report.Checks)
-		fmt.Printf("Scan limits: %d files, %d bytes; ignored files included: %t\n", options.MaxFiles, options.MaxBytes, options.IncludeIgnored)
-		fmt.Println("Security checks are heuristic; see README for coverage and limitations.")
-		fmt.Println("Run ID:", displayText(runID))
-		fmt.Println("Report:", displayText(reportPath))
-		switch options.Format {
-		case "sarif":
-			out, err := formatFindingsSarif(report.Findings)
-			if err != nil {
-				return err
-			}
-			fmt.Println(out)
-		case "github":
-			fmt.Print(formatFindingsGitHub(report.Findings))
-		case "json":
-			out, err := formatFindingsJSON(report.Findings)
-			if err != nil {
-				return err
-			}
-			fmt.Println(out)
-		case "jsonl":
-			out, err := formatFindingsJSONL(report.Findings)
-			if err != nil {
-				return err
-			}
-			fmt.Print(out)
-		case "html":
-			out, err := formatReportHTML(report)
-			if err != nil {
-				return err
-			}
-			fmt.Println(out)
-		case "junit":
-			fmt.Print(formatFindingsJUnit(report.Findings))
-		case "codeclimate":
-			out, err := formatFindingsCodeClimate(report.Findings)
-			if err != nil {
-				return err
-			}
-			fmt.Println(out)
-		default:
-			for _, finding := range report.Findings {
-				location := displayText(finding.File)
-				if finding.Line > 0 {
-					location = fmt.Sprintf("%s:%d", location, finding.Line)
+		if options.CheckDeps {
+			policyConfig, _ := review.ReadLicensePolicyConfig(repositoryRoot, true)
+			licensePolicy := deps.LicensePolicy{AllowUnknown: false}
+			if policyConfig != nil {
+				licensePolicy.Allow = policyConfig.Allow
+				licensePolicy.Deny = policyConfig.Deny
+				if policyConfig.AllowUnknown != nil {
+					licensePolicy.AllowUnknown = *policyConfig.AllowUnknown
 				}
-				fmt.Printf("[%s] %s: %s (%s)\n", displayText(finding.Severity), location, displayText(finding.Message), displayText(finding.Rule))
-				if options.Snippets && finding.Snippet != "" {
-					lines := strings.Split(strings.TrimRight(finding.Snippet, "\n"), "\n")
-					for _, l := range lines {
-						fmt.Printf("  %s\n", displayText(l))
+			}
+			_, depFindings, err := deps.CheckDependencies(repositoryRoot, deps.CheckOptions{LicensePolicy: licensePolicy})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: dependency analysis failed: %s\n", displayText(err.Error()))
+			} else {
+				for _, df := range depFindings {
+					if ruleAllowed(options.Only, options.Skip, df.Rule) {
+						findings = append(findings, df)
 					}
 				}
 			}
 		}
-		if options.FailOn != "" {
-			threshold := severityRank(options.FailOn)
-			blocking := 0
-			for _, finding := range report.Findings {
-				if severityRank(finding.Severity) >= threshold {
-					blocking++
-				}
-			}
-			if blocking > 0 || len(report.UnanalyzedFiles) > 0 {
-				return fmt.Errorf("audit found %d issue(s) at or above %s", blocking, options.FailOn)
-			}
-			return nil
-		}
-		if len(report.UnanalyzedFiles) > 0 {
-			fmt.Println("Unanalyzed files:")
-			for _, file := range report.UnanalyzedFiles {
-				fmt.Println("  ", displayText(file))
-			}
-		}
-		if !report.Passed {
-			if len(report.UnanalyzedFiles) > 0 {
-				return fmt.Errorf("audit incomplete: %d file(s) could not be analyzed", len(report.UnanalyzedFiles))
-			}
-			return fmt.Errorf("audit found %d issue(s)", len(report.Findings))
-		}
-		return nil
+		return RunPipeline(RunnerConfig{
+			Scope:           "working-tree",
+			RepositoryRoot:  repositoryRoot,
+			Branch:          branch,
+			RunID:           runID,
+			Profile:         options.Profile,
+			WithTools:       options.WithTools,
+			ToolPaths:       options.ToolPaths,
+			Baseline:        options.Baseline,
+			WriteBaseline:   options.WriteBaseline,
+			Include:         options.Include,
+			Exclude:         options.Exclude,
+			Format:          options.Format,
+			Snippets:        options.Snippets,
+			FailOn:          options.FailOn,
+			Version:         version,
+			ReviewedFiles:   reviewedFiles,
+			UnanalyzedFiles: unanalyzedFiles,
+			InitialFindings: findings,
+			SnapshotHash:    snapshotHash,
+			Coverage:        coverage,
+			MaxFiles:        options.MaxFiles,
+			MaxBytes:        options.MaxBytes,
+			IncludeIgnored:  options.IncludeIgnored,
+		})
 
 	case "history":
 		workingDir, err := os.Getwd()
@@ -807,6 +532,10 @@ func executeWithArgs(command string, commandArgs []string) error {
 		)
 		if err := ensureReviewStorageSafe(repositoryRoot, historyPath); err != nil {
 			return err
+		}
+
+		if len(commandArgs) >= 1 && commandArgs[0] == "prune" {
+			return commandHistoryPrune(repositoryRoot, commandArgs[1:])
 		}
 
 		entries, err := review.ReadHistory(historyPath)
@@ -1008,6 +737,18 @@ func executeWithArgs(command string, commandArgs []string) error {
 	case "repair":
 		return commandRepair(commandArgs)
 
+	case "validate-report":
+		return runValidateReport(commandArgs)
+
+	case "suppressions", "suppression":
+		return runSuppressionsCommand(commandArgs)
+
+	case "config":
+		return runConfigCommand(commandArgs)
+
+	case "policy":
+		return runPolicyCommand(commandArgs)
+
 	case "help":
 		printHelp()
 		return nil
@@ -1032,6 +773,7 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.PermissionsRule{RepositoryRoot: repositoryRoot},
 		review.SlopRule{RepositoryRoot: repositoryRoot},
 		review.SecretRule{RepositoryRoot: repositoryRoot},
+		review.EntropyRule{RepositoryRoot: repositoryRoot},
 		review.TraversalRule{RepositoryRoot: repositoryRoot},
 		review.CryptoRule{RepositoryRoot: repositoryRoot},
 		review.DeserializationRule{RepositoryRoot: repositoryRoot},
@@ -1040,6 +782,19 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.SQLiRule{RepositoryRoot: repositoryRoot},
 	}
 	return append(rules, review.ExtraRules(repositoryRoot)...)
+}
+
+func defaultRulesWithOptions(repositoryRoot string, degraded bool) []review.Rule {
+	rules := defaultRules(repositoryRoot)
+	if degraded {
+		for i, r := range rules {
+			if slopRule, ok := r.(review.SlopRule); ok {
+				slopRule.Degraded = true
+				rules[i] = slopRule
+			}
+		}
+	}
+	return rules
 }
 
 func runGoConfidenceChecks(repositoryRoot string) ([]review.Finding, []review.CheckResult) {
@@ -1104,6 +859,8 @@ func printFindingChanges(changes *review.FindingChanges) {
 type auditOptions struct {
 	IncludeIgnored bool
 	WithTools      bool
+	ToolPaths      map[string]string
+	Degraded       bool
 	MaxFiles       int
 	MaxBytes       int64
 	Profile        string
@@ -1117,11 +874,19 @@ type auditOptions struct {
 	Baseline       string
 	WriteBaseline  string
 	VulnScan       bool
+	CheckDeps      bool
 	seen           map[string]bool
 }
 
 func defaultAuditOptions() auditOptions {
-	return auditOptions{MaxFiles: 10000, MaxBytes: 128 << 20, Profile: "fast", Format: "text", seen: map[string]bool{}}
+	return auditOptions{
+		MaxFiles:  10000,
+		MaxBytes:  128 << 20,
+		Profile:   "fast",
+		Format:    "text",
+		ToolPaths: make(map[string]string),
+		seen:      map[string]bool{},
+	}
 }
 
 func parseAuditOptions(args []string) (auditOptions, error) {
@@ -1190,6 +955,8 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 			options.WithTools = true
 		case arg == "--vuln-scan":
 			options.VulnScan = true
+		case arg == "--check-deps":
+			options.CheckDeps = true
 		case arg == "--profile":
 			if i+1 >= len(args) {
 				return auditOptions{}, fmt.Errorf("--profile requires fast or full")
@@ -1230,7 +997,45 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 			} else {
 				options.MaxBytes = value
 			}
+		case arg == "--degraded" || arg == "--allow-degraded":
+			options.Degraded = true
+		case arg == "--tool-path":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("%s requires a value", arg)
+			}
+			i++
+			parts := strings.SplitN(args[i], "=", 2)
+			if len(parts) == 2 {
+				options.ToolPaths[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			}
+		case arg == "--gitleaks-path" || arg == "--gosec-path" || arg == "--osv-scanner-path":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("%s requires a path", arg)
+			}
+			i++
+			toolName := strings.TrimSuffix(strings.TrimPrefix(arg, "--"), "-path")
+			options.ToolPaths[toolName] = args[i]
 		default:
+			if strings.HasPrefix(arg, "--tool-path=") {
+				v := strings.TrimPrefix(arg, "--tool-path=")
+				parts := strings.SplitN(v, "=", 2)
+				if len(parts) == 2 {
+					options.ToolPaths[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+				}
+				break
+			}
+			if strings.HasPrefix(arg, "--gitleaks-path=") {
+				options.ToolPaths["gitleaks"] = strings.TrimPrefix(arg, "--gitleaks-path=")
+				break
+			}
+			if strings.HasPrefix(arg, "--gosec-path=") {
+				options.ToolPaths["gosec"] = strings.TrimPrefix(arg, "--gosec-path=")
+				break
+			}
+			if strings.HasPrefix(arg, "--osv-scanner-path=") {
+				options.ToolPaths["osv-scanner"] = strings.TrimPrefix(arg, "--osv-scanner-path=")
+				break
+			}
 			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets] [--baseline file] [--write-baseline file]", arg)
 		}
 	}
@@ -1505,15 +1310,27 @@ func printHelp() {
 	fmt.Println("    --with-tools        Run installed gitleaks, gosec, and osv-scanner binaries")
 	fmt.Println("    --check-run        Post a GitHub Check Run with annotations")
 	fmt.Println("    --pr-comment       Comment findings on the current PR via gh")
+	fmt.Println("  check-deps [path]   Analyze Go module hygiene and license policy")
+	fmt.Println("    --format text|json|jsonl")
+	fmt.Println("    --strict          Fail on any hygiene or license finding")
+	fmt.Println("    --allow-licenses  Allowlist of approved SPDX licenses")
+	fmt.Println("    --deny-licenses   Denylist of forbidden SPDX licenses")
+	fmt.Println("    --allow-unknown   Permit unknown/missing dependency licenses")
 	fmt.Println("  audit")
 	fmt.Println("    --profile fast|full  Add local Go format, vet, and test checks in full mode")
 	fmt.Println("    --with-tools        Run installed gitleaks, gosec, and osv-scanner binaries")
 	fmt.Println("    --vuln-scan        Query OSV for known CVEs in manifests (network)")
+	fmt.Println("    --check-deps       Run Go module hygiene and license policy checks")
 	fmt.Println("    --include-ignored  Include ignored untracked files (bounded by scan limits)")
 	fmt.Println("    --max-files N      Set the maximum files to read (default 10000)")
 	fmt.Println("    --max-bytes N      Set the maximum total bytes to read (default 134217728)")
 	fmt.Println("  history [--last N] [--status S] [--scope S] [--grep text] [--format json]")
 	fmt.Println("  history show <run-id> [--format json|jsonl|html]")
+	fmt.Println("  history prune [--older-than <duration>] [--keep <count>] [--max-size <bytes/mb>] [--dry-run]")
+	fmt.Println("  validate-report <path> [--format json|text]")
+	fmt.Println("  suppressions audit [--actor <name>] [--rule <rule>] [--file <path>] [--verify]")
+	fmt.Println("  config diff [proposed-file] [--base <path>] [--format json|text]")
+	fmt.Println("  policy diff|dry-run [proposed-file] [--format json|text]")
 	fmt.Println("  show <run-id>")
 	fmt.Println("  diff <file.patch>   Review an arbitrary patch file")
 	fmt.Println("  stdin               Review a diff from stdin")

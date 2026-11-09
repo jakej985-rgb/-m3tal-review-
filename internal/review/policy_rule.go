@@ -21,7 +21,15 @@ type reviewPolicy struct {
 	Rules           map[string]policyRuleTuning `json:"rules,omitempty"`
 	// Paths maps a repo-path glob to per-rule tuning, e.g.
 	// {"paths": {"*_test.go": {"code-slop": {"severity": "info"}}}}.
-	Paths map[string]map[string]policyRuleTuning `json:"paths,omitempty"`
+	Paths         map[string]map[string]policyRuleTuning `json:"paths,omitempty"`
+	LicensePolicy *LicensePolicyConfig                   `json:"license_policy,omitempty"`
+}
+
+// LicensePolicyConfig specifies allowed, denied, and unknown license rules.
+type LicensePolicyConfig struct {
+	Allow        []string `json:"allow,omitempty"`
+	Deny         []string `json:"deny,omitempty"`
+	AllowUnknown *bool    `json:"allow_unknown,omitempty"`
 }
 
 // policyRuleTuning lets a repository disable a rule or override the severity
@@ -35,6 +43,10 @@ type pathCoupling struct {
 	WhenChanged string   `json:"when_changed"`
 	AlsoChange  []string `json:"also_change"`
 }
+
+type ReviewPolicy = reviewPolicy
+type PolicyRuleTuning = policyRuleTuning
+type PathCoupling = pathCoupling
 
 type RiskRule struct {
 	RepositoryRoot string
@@ -234,6 +246,15 @@ func policyErrorFinding(err error) []Finding {
 		Message:     "Project review policy could not be loaded: " + err.Error(),
 		Remediation: "Fix the JSON policy file or remove it, then rerun the review.",
 	}}
+}
+
+// ReadLicensePolicyConfig reads the license policy configuration from .m3tal-review-policy.json.
+func ReadLicensePolicyConfig(repositoryRoot string, workingTree bool) (*LicensePolicyConfig, error) {
+	policy, err := readReviewPolicy(repositoryRoot, workingTree)
+	if err != nil {
+		return nil, err
+	}
+	return policy.LicensePolicy, nil
 }
 
 var _ Rule = RiskRule{}

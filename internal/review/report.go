@@ -10,6 +10,8 @@ type CheckResult struct {
 	Category string `json:"category"`
 	Status   string `json:"status"`
 	Message  string `json:"message,omitempty"`
+	Version  string `json:"version,omitempty"`
+	Path     string `json:"path,omitempty"`
 }
 
 type FindingChanges struct {
@@ -19,6 +21,7 @@ type FindingChanges struct {
 }
 
 type Report struct {
+	SchemaVersion   string             `json:"schema_version,omitempty"`
 	Scope           string             `json:"scope,omitempty"`
 	Profile         string             `json:"profile,omitempty"`
 	RunID           string             `json:"run_id"`
@@ -72,6 +75,7 @@ func NewReport(
 	}
 
 	return Report{
+		SchemaVersion: "1.0.0",
 		Scope:         "staged",
 		RunID:         runID,
 		Timestamp:     time.Now().UTC(),

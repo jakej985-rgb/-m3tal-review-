@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,22 +24,99 @@ type localTool struct {
 	run      func(context.Context, string) ([]review.Finding, error)
 }
 
+type localToolSpec struct {
+	name        string
+	category    string
+	minVersion  string
+	versionArgs []string
+	runExec     func(ctx context.Context, execPath, repositoryRoot string) ([]review.Finding, error)
+}
+
 func runOptionalLocalTools(repositoryRoot string) ([]review.Finding, []review.CheckResult) {
-	tools := []localTool{
-		{name: "gitleaks", category: "security", run: runGitleaks},
-		{name: "gosec", category: "security", run: runGosec},
-		{name: "osv-scanner", category: "security", run: runOSVScanner},
+	return runOptionalLocalToolsWithOverrides(repositoryRoot, nil)
+}
+
+func runOptionalLocalToolsWithOverrides(repositoryRoot string, overrides map[string]string) ([]review.Finding, []review.CheckResult) {
+	toolSpecs := []localToolSpec{
+		{name: "gitleaks", category: "security", minVersion: "8.0.0", versionArgs: []string{"version"}, runExec: runGitleaksExec},
+		{name: "gosec", category: "security", minVersion: "2.0.0", versionArgs: []string{"-version"}, runExec: runGosecExec},
+		{name: "osv-scanner", category: "security", minVersion: "1.0.0", versionArgs: []string{"--version"}, runExec: runOSVScannerExec},
 	}
+
 	var findings []review.Finding
-	results := make([]review.CheckResult, 0, len(tools))
-	for _, tool := range tools {
-		if _, err := exec.LookPath(tool.name); err != nil {
-			results = append(results, review.CheckResult{Name: tool.name, Category: tool.category, Status: "unavailable", Message: "executable not found on PATH"})
-			findings = append(findings, review.Finding{Category: "confidence", Rule: "tool-" + tool.name, Severity: "high", Message: tool.name + " is unavailable; the requested scanner did not run", Remediation: "Install the scanner or rerun without --with-tools."})
+	results := make([]review.CheckResult, 0, len(toolSpecs))
+
+	for _, tool := range toolSpecs {
+		resolvedPath, isExplicit, err := resolveToolExecutable(tool.name, overrides)
+		if err != nil {
+			status := "unavailable"
+			msg := "executable not found on PATH"
+			if isExplicit {
+				status = "failed"
+				msg = fmt.Sprintf("invalid executable override for %s: %s", tool.name, displayText(err.Error()))
+			}
+			results = append(results, review.CheckResult{
+				Name:     tool.name,
+				Category: tool.category,
+				Status:   status,
+				Message:  msg,
+				Path:     resolvedPath,
+			})
+			findings = append(findings, review.Finding{
+				Category:    "confidence",
+				Rule:        "tool-" + tool.name,
+				Severity:    "high",
+				Message:     fmt.Sprintf("%s is unavailable: %s", displayText(tool.name), msg),
+				Remediation: "Install the scanner or check the configured executable path.",
+			})
 			continue
 		}
+
+		// Enforce version compatibility
+		version, err := getToolVersion(context.Background(), resolvedPath, tool.versionArgs)
+		if err != nil {
+			msg := fmt.Sprintf("failed to determine %s version: %s (requires >= %s)", displayText(tool.name), displayText(err.Error()), tool.minVersion)
+			results = append(results, review.CheckResult{
+				Name:     tool.name,
+				Category: tool.category,
+				Status:   "unavailable",
+				Message:  msg,
+				Path:     resolvedPath,
+			})
+			findings = append(findings, review.Finding{
+				Category:    "confidence",
+				Rule:        "tool-" + tool.name,
+				Severity:    "high",
+				Message:     msg + "; scanner did not run",
+				Remediation: fmt.Sprintf("Ensure %s is functional and meets version requirement >= %s.", displayText(tool.name), tool.minVersion),
+			})
+			continue
+		}
+
+		compat, err := checkVersionCompatibility(version, tool.minVersion)
+		if err != nil || !compat {
+			msg := fmt.Sprintf("incompatible version %s (requires >= %s)", displayText(version), tool.minVersion)
+			results = append(results, review.CheckResult{
+				Name:     tool.name,
+				Category: tool.category,
+				Status:   "unavailable",
+				Message:  msg,
+				Version:  version,
+				Path:     resolvedPath,
+			})
+			findings = append(findings, review.Finding{
+				Category:    "confidence",
+				Rule:        "tool-" + tool.name,
+				Severity:    "high",
+				Message:     fmt.Sprintf("%s version %s is incompatible (requires >= %s); scanner did not run", displayText(tool.name), displayText(version), tool.minVersion),
+				Remediation: fmt.Sprintf("Upgrade %s to version >= %s or rerun without --with-tools.", displayText(tool.name), tool.minVersion),
+			})
+			continue
+		}
+
+		// Compatible version resolved
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		toolFindings, err := tool.run(ctx, repositoryRoot)
+		toolFindings, err := tool.runExec(ctx, resolvedPath, repositoryRoot)
 		timedOut := ctx.Err() == context.DeadlineExceeded
 		cancel()
 		if err != nil {
@@ -46,8 +124,21 @@ func runOptionalLocalTools(repositoryRoot string) ([]review.Finding, []review.Ch
 			if timedOut {
 				message = "command exceeded the 5 minute time limit"
 			}
-			results = append(results, review.CheckResult{Name: tool.name, Category: tool.category, Status: "failed", Message: message})
-			findings = append(findings, review.Finding{Category: tool.category, Rule: "tool-" + tool.name, Severity: "high", Message: tool.name + " could not complete: " + message, Remediation: "Check the scanner installation and rerun the requested tool scan."})
+			results = append(results, review.CheckResult{
+				Name:     tool.name,
+				Category: tool.category,
+				Status:   "failed",
+				Message:  message,
+				Version:  version,
+				Path:     resolvedPath,
+			})
+			findings = append(findings, review.Finding{
+				Category:    tool.category,
+				Rule:        "tool-" + tool.name,
+				Severity:    "high",
+				Message:     tool.name + " could not complete: " + message,
+				Remediation: "Check the scanner installation and rerun the requested tool scan.",
+			})
 			continue
 		}
 		findings = append(findings, toolFindings...)
@@ -57,9 +148,121 @@ func runOptionalLocalTools(repositoryRoot string) ([]review.Finding, []review.Ch
 			status = "findings"
 			message = fmt.Sprintf("%d finding(s)", len(toolFindings))
 		}
-		results = append(results, review.CheckResult{Name: tool.name, Category: tool.category, Status: status, Message: message})
+		results = append(results, review.CheckResult{
+			Name:     tool.name,
+			Category: tool.category,
+			Status:   status,
+			Message:  message,
+			Version:  version,
+			Path:     resolvedPath,
+		})
 	}
 	return findings, results
+}
+
+func resolveToolExecutable(toolName string, overrides map[string]string) (string, bool, error) {
+	// 1. Explicit overrides map
+	if overrides != nil {
+		if path, ok := overrides[toolName]; ok && strings.TrimSpace(path) != "" {
+			trimmed := strings.TrimSpace(path)
+			if err := validateExecutablePath(trimmed); err != nil {
+				return trimmed, true, err
+			}
+			return trimmed, true, nil
+		}
+	}
+
+	// 2. Specific environment variables
+	envKey := "M3TAL_" + strings.ToUpper(strings.ReplaceAll(toolName, "-", "_")) + "_PATH"
+	if envPath := strings.TrimSpace(os.Getenv(envKey)); envPath != "" {
+		if err := validateExecutablePath(envPath); err != nil {
+			return envPath, true, err
+		}
+		return envPath, true, nil
+	}
+	genericEnv := "M3TAL_TOOL_PATH_" + strings.ToUpper(strings.ReplaceAll(toolName, "-", "_"))
+	if envPath := strings.TrimSpace(os.Getenv(genericEnv)); envPath != "" {
+		if err := validateExecutablePath(envPath); err != nil {
+			return envPath, true, err
+		}
+		return envPath, true, nil
+	}
+
+	// 3. System PATH lookup
+	found, err := exec.LookPath(toolName)
+	if err != nil {
+		return "", false, err
+	}
+	if err := validateExecutablePath(found); err != nil {
+		return found, false, err
+	}
+	return found, false, nil
+}
+
+func validateExecutablePath(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("file not found: %w", err)
+	}
+	if fi.IsDir() {
+		return errors.New("path is a directory")
+	}
+	if fi.Mode()&0111 == 0 {
+		return errors.New("file is not executable")
+	}
+	return nil
+}
+
+var semverRegex = regexp.MustCompile(`(?i)\bv?(\d+)\.(\d+)(?:\.(\d+))?`)
+
+func parseSemver(output string) (string, int, int, int, error) {
+	matches := semverRegex.FindStringSubmatch(output)
+	if len(matches) < 3 {
+		return "", 0, 0, 0, fmt.Errorf("no semver found in output: %s", displayText(strings.TrimSpace(output)))
+	}
+	major, err1 := strconv.Atoi(matches[1])
+	minor, err2 := strconv.Atoi(matches[2])
+	patch := 0
+	if len(matches) > 3 && matches[3] != "" {
+		patch, _ = strconv.Atoi(matches[3])
+	}
+	if err1 != nil || err2 != nil {
+		return "", 0, 0, 0, fmt.Errorf("invalid semver digits: %s", matches[0])
+	}
+	return fmt.Sprintf("%d.%d.%d", major, minor, patch), major, minor, patch, nil
+}
+
+func checkVersionCompatibility(actual, minRequired string) (bool, error) {
+	_, aMaj, aMin, aPatch, err := parseSemver(actual)
+	if err != nil {
+		return false, err
+	}
+	_, rMaj, rMin, rPatch, err := parseSemver(minRequired)
+	if err != nil {
+		return false, err
+	}
+	if aMaj != rMaj {
+		return aMaj > rMaj, nil
+	}
+	if aMin != rMin {
+		return aMin > rMin, nil
+	}
+	return aPatch >= rPatch, nil
+}
+
+func getToolVersion(ctx context.Context, execPath string, args []string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, execPath, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return "", fmt.Errorf("failed to run %s %v: %w", execPath, args, err)
+	}
+	vStr, _, _, _, err := parseSemver(string(out))
+	if err != nil {
+		return "", fmt.Errorf("could not parse version from output: %w", err)
+	}
+	return vStr, nil
 }
 
 // --- Gitleaks Schema & Parsing ---
@@ -151,12 +354,16 @@ func parseGitleaksReport(data []byte, runErr error) ([]review.Finding, error) {
 }
 
 func runGitleaks(ctx context.Context, repositoryRoot string) ([]review.Finding, error) {
+	return runGitleaksExec(ctx, "gitleaks", repositoryRoot)
+}
+
+func runGitleaksExec(ctx context.Context, execPath, repositoryRoot string) ([]review.Finding, error) {
 	reportPath, cleanup, err := tempToolReport("gitleaks-*.json")
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
-	_, runErr := runCommand(ctx, repositoryRoot, "gitleaks", "dir", "--no-banner", "--redact=100", "--report-format", "json", "--report-path", reportPath, ".")
+	_, runErr := runCommand(ctx, repositoryRoot, execPath, "dir", "--no-banner", "--redact=100", "--report-format", "json", "--report-path", reportPath, ".")
 	data, readErr := os.ReadFile(reportPath)
 	if readErr != nil {
 		return nil, toolCommandError(runErr, readErr)
@@ -276,12 +483,16 @@ func parseGosecReport(data []byte, runErr error) ([]review.Finding, error) {
 }
 
 func runGosec(ctx context.Context, repositoryRoot string) ([]review.Finding, error) {
+	return runGosecExec(ctx, "gosec", repositoryRoot)
+}
+
+func runGosecExec(ctx context.Context, execPath, repositoryRoot string) ([]review.Finding, error) {
 	reportPath, cleanup, err := tempToolReport("gosec-*.json")
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
-	_, runErr := runCommand(ctx, repositoryRoot, "gosec", "-fmt=json", "-out="+reportPath, "./...")
+	_, runErr := runCommand(ctx, repositoryRoot, execPath, "-fmt=json", "-out="+reportPath, "./...")
 	data, readErr := os.ReadFile(reportPath)
 	if readErr != nil {
 		return nil, toolCommandError(runErr, readErr)
@@ -442,7 +653,11 @@ func parseOSVSeverity(severities []osvSeverityObj) (normalized string, raw strin
 }
 
 func runOSVScanner(ctx context.Context, repositoryRoot string) ([]review.Finding, error) {
-	output, runErr := runCommandOutput(ctx, repositoryRoot, "osv-scanner", "scan", "source", "--recursive", "--format", "json", ".")
+	return runOSVScannerExec(ctx, "osv-scanner", repositoryRoot)
+}
+
+func runOSVScannerExec(ctx context.Context, execPath, repositoryRoot string) ([]review.Finding, error) {
+	output, runErr := runCommandOutput(ctx, repositoryRoot, execPath, "scan", "source", "--recursive", "--format", "json", ".")
 	return parseOSVScannerReport(output, runErr, repositoryRoot)
 }
 

@@ -22,6 +22,7 @@ var ruleCatalog = []ruleDoc{
 	{"debug-leftover", "Likely debug output: fmt.Print*, console.log, println, debugger, breakpoint, etc.", "fmt.Println(\"debug\")"},
 	{"hardcoded-credential", "Credential-looking name/value assignments in source.", "password = \"hunter2\""},
 	{"exposed-secret", "High-confidence secret formats: PEM private keys and provider tokens (AWS, GitHub, GitLab, Slack, OpenAI, Stripe, Google, npm).", "AKIA..."},
+	{"high-entropy-secret", "Entropy-based secret detection: high-entropy strings guarded by character sets (Hex, Base64, Base58), length gates, and secret contexts.", "apiKey = \"4f7a9c8b2e1d0f5a3b6c8e9d1a2f4b7c89abcdef\""},
 	{"path-traversal", "File APIs fed by request input or os.Args without sanitization.", "os.Open(r.URL.Path)"},
 	{"weak-cryptography", "MD5/SHA-1/DES/RC4 for security purposes; math/rand/random/Math.random for token-like values.", "md5.Sum(data)"},
 	{"unsafe-deserialization", "pickle/marshal/yaml.load/unserialize/node-serialize of untrusted data.", "pickle.loads(blob)"},

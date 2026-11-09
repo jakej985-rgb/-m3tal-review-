@@ -11,6 +11,7 @@ import (
 type SlopRule struct {
 	RepositoryRoot string
 	WorkingTree    bool
+	Degraded       bool
 }
 
 func (SlopRule) Name() string {
@@ -34,7 +35,11 @@ func (r SlopRule) Check(diff string) []Finding {
 			Source:      source,
 		})
 	}
-	return slop.SlopRule{RepositoryRoot: r.RepositoryRoot, WorkingTree: r.WorkingTree}.Analyze(files)
+	return slop.SlopRule{
+		RepositoryRoot: r.RepositoryRoot,
+		WorkingTree:    r.WorkingTree,
+		Degraded:       r.Degraded,
+	}.Analyze(files)
 }
 
 func completeAddedFile(fd FileDiff) string {

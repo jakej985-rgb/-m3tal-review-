@@ -46,7 +46,7 @@ func (e *Engine) Run(diff string) []Finding {
 
 func categoryForRule(rule string) string {
 	switch rule {
-	case "hardcoded-credential", "world-writable-file-mode", "insecure-tls-verification", "risky-shell-execution":
+	case "hardcoded-credential", "exposed-secret", "high-entropy-secret", "world-writable-file-mode", "insecure-tls-verification", "risky-shell-execution":
 		return "security"
 	case "review-risk":
 		return "risk"

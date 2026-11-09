@@ -13,6 +13,8 @@ import (
 type reviewOptions struct {
 	Profile       string
 	WithTools     bool
+	ToolPaths     map[string]string
+	Degraded      bool
 	Only          []string
 	Skip          []string
 	FailOn        string
@@ -38,7 +40,13 @@ type reviewOptions struct {
 }
 
 func parseReviewOptions(args []string) (reviewOptions, error) {
-	options := reviewOptions{Profile: "fast", Format: "text", MaxDiffSize: 64 << 20, seen: map[string]bool{}}
+	options := reviewOptions{
+		Profile:     "fast",
+		Format:      "text",
+		MaxDiffSize: 64 << 20,
+		ToolPaths:   make(map[string]string),
+		seen:        map[string]bool{},
+	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		value := ""
@@ -180,7 +188,56 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 			options.Format = v
 		case "--snippets":
 			options.Snippets = true
+		case "--degraded", "--allow-degraded":
+			options.Degraded = true
+		case "--tool-path":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			parts := strings.SplitN(v, "=", 2)
+			if len(parts) == 2 {
+				options.ToolPaths[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			}
+		case "--gitleaks-path":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.ToolPaths["gitleaks"] = v
+		case "--gosec-path":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.ToolPaths["gosec"] = v
+		case "--osv-scanner-path":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.ToolPaths["osv-scanner"] = v
 		default:
+			if strings.HasPrefix(arg, "--tool-path=") {
+				v := strings.TrimPrefix(arg, "--tool-path=")
+				parts := strings.SplitN(v, "=", 2)
+				if len(parts) == 2 {
+					options.ToolPaths[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+				}
+				break
+			}
+			if strings.HasPrefix(arg, "--gitleaks-path=") {
+				options.ToolPaths["gitleaks"] = strings.TrimPrefix(arg, "--gitleaks-path=")
+				break
+			}
+			if strings.HasPrefix(arg, "--gosec-path=") {
+				options.ToolPaths["gosec"] = strings.TrimPrefix(arg, "--gosec-path=")
+				break
+			}
+			if strings.HasPrefix(arg, "--osv-scanner-path=") {
+				options.ToolPaths["osv-scanner"] = strings.TrimPrefix(arg, "--osv-scanner-path=")
+				break
+			}
 			return options, fmt.Errorf("unknown review option %q; usage: m3tal-review review [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--base ref] [--baseline file] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets]", arg)
 		}
 	}
@@ -297,6 +354,9 @@ func workingTreeRules(rules []review.Rule) []review.Rule {
 			typed.WorkingTree = true
 			rules[i] = typed
 		case review.SecretRule:
+			typed.WorkingTree = true
+			rules[i] = typed
+		case review.EntropyRule:
 			typed.WorkingTree = true
 			rules[i] = typed
 		case review.TraversalRule:
