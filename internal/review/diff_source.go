@@ -261,7 +261,10 @@ func sourceBlocks(diff, repositoryRoot string, workingTree bool) []diffSourceBlo
 func sourceBlocksUncached(diff, repositoryRoot string, workingTree bool) []diffSourceBlock {
 	var blocks []diffSourceBlock
 	for _, fileDiff := range ParseDiff(diff) {
-		fileBlocks := diffSourceBlocksForFile(diff, fileDiff.Path)
+		// Performance optimization: Generate diff source blocks directly from fileDiff
+		// instead of re-parsing the entire diff via diffSourceBlocksForFile(diff, fileDiff.Path),
+		// eliminating O(N^2) diff re-parsing and linear searches for multi-file reviews.
+		fileBlocks := fileDiffSourceBlocks(fileDiff)
 		if source, err := readRuleSource(repositoryRoot, fileDiff.Path, workingTree); err == nil {
 			fileBlocks = []diffSourceBlock{fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)}
 		}

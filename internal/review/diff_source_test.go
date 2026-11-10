@@ -59,3 +59,28 @@ func BenchmarkFileDiffSourceBlocks(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkSourceBlocksUncached measures building source blocks for a multi-file diff.
+// Using direct fileDiffSourceBlocks instead of re-parsing the unified diff avoids an O(N^2)
+// full diff scan and drastically cuts latency and allocations.
+func BenchmarkSourceBlocksUncached(b *testing.B) {
+	var diffBuilder strings.Builder
+	for i := 0; i < 50; i++ {
+		name := fmt.Sprintf("pkg/file%d.go", i)
+		diffBuilder.WriteString("diff --git a/" + name + " b/" + name + "\n")
+		diffBuilder.WriteString("--- a/" + name + "\n")
+		diffBuilder.WriteString("+++ b/" + name + "\n")
+		diffBuilder.WriteString("@@ -1,5 +1,6 @@\n")
+		diffBuilder.WriteString(" package pkg\n")
+		diffBuilder.WriteString("+func Run() {\n")
+		diffBuilder.WriteString("+    x := 1\n")
+		diffBuilder.WriteString(" }\n")
+	}
+	diff := diffBuilder.String()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = sourceBlocksUncached(diff, "/tmp/nonexistent-root", false)
+	}
+}
