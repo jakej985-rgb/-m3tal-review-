@@ -19,7 +19,7 @@ func TestDetectLicenseFixtures(t *testing.T) {
 		{"Unknown fixture", "testdata/licenses/unknown-pkg/LICENSE", "Unknown"},
 	}
 
-	root := "/home/m3tal/apps/m3tal-review"
+	root := filepath.Join("..", "..")
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(root, filepath.FromSlash(tc.file))

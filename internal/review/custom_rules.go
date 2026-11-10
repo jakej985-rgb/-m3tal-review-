@@ -292,6 +292,10 @@ func ParseCustomRules(data []byte) (*CustomRulesConfig, error) {
 
 // LoadCustomRulesFile reads, parses, and strictly validates a custom rules file.
 func LoadCustomRulesFile(path string, repoRoot string) ([]Rule, error) {
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("custom rules file %q must not be a symbolic link", path)
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read custom rules file %q: %w", path, err)
