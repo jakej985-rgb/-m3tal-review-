@@ -327,14 +327,18 @@ func analyzeBraceSlop(file, language, source string, added map[int]bool) []Findi
 	tokens := lexBraceSource(source)
 	if err := braceStructureError(tokens); err != nil {
 		langName := language
+		severity := "high"
 		remediation := "Fix mismatched braces or delimiters, then rerun the review."
 		if strings.HasSuffix(strings.ToLower(file), ".jsx") || strings.HasSuffix(strings.ToLower(file), ".tsx") {
 			langName = "JSX/TSX"
+			// JSX/TSX brace errors are frequently analyzer limitations on valid
+			// syntax (fragments, generics, text braces) rather than real defects.
+			severity = "low"
 			remediation = "Ensure JSX tags and curly brace expressions are properly closed, or add file to .m3tal-review-ignore."
 		}
 		return []Finding{{
 			Rule:        "code-slop-analysis-error",
-			Severity:    "high",
+			Severity:    severity,
 			File:        file,
 			Line:        0,
 			Message:     "Could not safely analyze " + langName + " structure: " + err.Error(),

@@ -229,7 +229,12 @@ func ChiPack(repoRoot string) FrameworkPack {
 			ruleRuntime: ruleRuntime{repositoryRoot: repoRoot},
 			name:        "chi-missing-recovery",
 			severity:    "medium",
-			remediation: "Add r.Use(middleware.Recoverer) to router middleware chain.",
+			// Files that wire up any Recoverer (chi's or a custom one such as
+			// apiMiddleware.Recoverer) or call recover() directly are covered.
+			suppress: regexp.MustCompile(`(?i)Recoverer|recover\s*\(\s*\)`),
+			// Test routers legitimately omit recovery middleware.
+			excludePattern: regexp.MustCompile(`_test\.go$`),
+			remediation:    "Add r.Use(middleware.Recoverer) to router middleware chain.",
 			patterns: []langPattern{
 				{
 					language: language.LanguageGo,

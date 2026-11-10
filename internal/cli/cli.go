@@ -416,34 +416,37 @@ func executeWithArgs(command string, commandArgs []string) error {
 		progress.Stage(3, 4, "Running review pipeline and integrations")
 
 		return RunPipeline(RunnerConfig{
-			Scope:           "staged",
-			RepositoryRoot:  repositoryRoot,
-			Branch:          branch,
-			RunID:           runID,
-			Profile:         options.Profile,
-			WithTools:       options.WithTools,
-			ToolPaths:       options.ToolPaths,
-			Baseline:        options.Baseline,
-			WriteBaseline:   options.WriteBaseline,
-			Include:         options.Include,
-			Exclude:         options.Exclude,
-			SortBy:          options.SortBy,
-			MaxFindings:     options.MaxFindings,
-			Format:          options.Format,
-			Snippets:        options.Snippets,
-			SummaryOnly:     options.SummaryOnly,
-			FailOn:          options.FailOn,
-			Version:         version,
-			Diff:            diff,
-			StagedFiles:     stagedFiles,
-			UnanalyzedFiles: unanalyzedFiles,
-			InitialFindings: findings,
-			WorkingTreeDiff: options.Base != "",
-			Checks:          frameworkChecks,
-			CheckRun:        options.CheckRun,
-			CheckRunSHA:     options.CheckRunSHA,
-			PRComment:       options.PRComment,
-			Progress:        progress,
+			Scope:                 "staged",
+			RepositoryRoot:        repositoryRoot,
+			Branch:                branch,
+			RunID:                 runID,
+			Profile:               options.Profile,
+			WithTools:             options.WithTools,
+			ToolPaths:             options.ToolPaths,
+			Baseline:              options.Baseline,
+			WriteBaseline:         options.WriteBaseline,
+			Include:               options.Include,
+			Exclude:               options.Exclude,
+			SortBy:                options.SortBy,
+			MaxFindings:           options.MaxFindings,
+			Format:                options.Format,
+			Snippets:              options.Snippets,
+			SummaryOnly:           options.SummaryOnly,
+			FailOn:                options.FailOn,
+			Version:               version,
+			Diff:                  diff,
+			StagedFiles:           stagedFiles,
+			UnanalyzedFiles:       unanalyzedFiles,
+			InitialFindings:       findings,
+			WorkingTreeDiff:       options.Base != "",
+			Checks:                frameworkChecks,
+			CheckRun:              options.CheckRun,
+			CheckRunSHA:           options.CheckRunSHA,
+			PRComment:             options.PRComment,
+			PluginDir:             reviewPluginDir(options.PluginDir),
+			AllowRepoPlugins:      options.AllowRepoPlugins,
+			RepoPluginAllowSHA256: cfg.PluginAllowSHA256,
+			Progress:              progress,
 		})
 
 	case "audit":
@@ -535,31 +538,34 @@ func executeWithArgs(command string, commandArgs []string) error {
 		}
 		progress.Stage(3, 4, "Executing audit pipeline and finalizing report")
 		return RunPipeline(RunnerConfig{
-			Scope:           "working-tree",
-			RepositoryRoot:  repositoryRoot,
-			Branch:          branch,
-			RunID:           runID,
-			Profile:         options.Profile,
-			WithTools:       options.WithTools,
-			ToolPaths:       options.ToolPaths,
-			Baseline:        options.Baseline,
-			WriteBaseline:   options.WriteBaseline,
-			Include:         options.Include,
-			Exclude:         options.Exclude,
-			Format:          options.Format,
-			Snippets:        options.Snippets,
-			FailOn:          options.FailOn,
-			Version:         version,
-			ReviewedFiles:   reviewedFiles,
-			UnanalyzedFiles: unanalyzedFiles,
-			InitialFindings: findings,
-			SnapshotHash:    snapshotHash,
-			Coverage:        coverage,
-			Checks:          frameworkChecks,
-			MaxFiles:        options.MaxFiles,
-			MaxBytes:        options.MaxBytes,
-			IncludeIgnored:  options.IncludeIgnored,
-			Progress:        progress,
+			Scope:                 "working-tree",
+			RepositoryRoot:        repositoryRoot,
+			Branch:                branch,
+			RunID:                 runID,
+			Profile:               options.Profile,
+			WithTools:             options.WithTools,
+			ToolPaths:             options.ToolPaths,
+			Baseline:              options.Baseline,
+			WriteBaseline:         options.WriteBaseline,
+			Include:               options.Include,
+			Exclude:               options.Exclude,
+			Format:                options.Format,
+			Snippets:              options.Snippets,
+			FailOn:                options.FailOn,
+			Version:               version,
+			ReviewedFiles:         reviewedFiles,
+			UnanalyzedFiles:       unanalyzedFiles,
+			InitialFindings:       findings,
+			SnapshotHash:          snapshotHash,
+			Coverage:              coverage,
+			Checks:                frameworkChecks,
+			MaxFiles:              options.MaxFiles,
+			MaxBytes:              options.MaxBytes,
+			IncludeIgnored:        options.IncludeIgnored,
+			PluginDir:             reviewPluginDir(options.PluginDir),
+			AllowRepoPlugins:      options.AllowRepoPlugins,
+			RepoPluginAllowSHA256: cfg.PluginAllowSHA256,
+			Progress:              progress,
 		})
 
 	case "history":
@@ -777,6 +783,12 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.SecretRule{RepositoryRoot: repositoryRoot},
 		review.EntropyRule{RepositoryRoot: repositoryRoot},
 		review.TraversalRule{RepositoryRoot: repositoryRoot},
+		review.TaintRule{RepositoryRoot: repositoryRoot},
+		review.ScopeDefaultRule{RepositoryRoot: repositoryRoot},
+		review.PluginTrustRule{RepositoryRoot: repositoryRoot},
+		review.PrivilegedExecRule{RepositoryRoot: repositoryRoot},
+		review.ProcessKillRule{RepositoryRoot: repositoryRoot},
+		review.CredentialQueryRule{RepositoryRoot: repositoryRoot},
 		review.CryptoRule{RepositoryRoot: repositoryRoot},
 		review.DeserializationRule{RepositoryRoot: repositoryRoot},
 		review.EvalRule{RepositoryRoot: repositoryRoot},
@@ -859,28 +871,30 @@ func printFindingChanges(changes *review.FindingChanges) {
 }
 
 type auditOptions struct {
-	IncludeIgnored bool
-	WithTools      bool
-	ToolPaths      map[string]string
-	Degraded       bool
-	MaxFiles       int
-	MaxBytes       int64
-	Profile        string
-	Only           []string
-	Skip           []string
-	Include        []string
-	Exclude        []string
-	FailOn         string
-	Format         string
-	Snippets       bool
-	Baseline       string
-	WriteBaseline  string
-	VulnScan       bool
-	CheckDeps      bool
-	Framework      []string
-	RulesFile      string
-	Progress       *bool
-	seen           map[string]bool
+	IncludeIgnored   bool
+	WithTools        bool
+	ToolPaths        map[string]string
+	Degraded         bool
+	MaxFiles         int
+	MaxBytes         int64
+	Profile          string
+	Only             []string
+	Skip             []string
+	Include          []string
+	Exclude          []string
+	FailOn           string
+	Format           string
+	Snippets         bool
+	Baseline         string
+	WriteBaseline    string
+	VulnScan         bool
+	CheckDeps        bool
+	Framework        []string
+	RulesFile        string
+	PluginDir        string
+	AllowRepoPlugins bool
+	Progress         *bool
+	seen             map[string]bool
 }
 
 func defaultAuditOptions() auditOptions {
@@ -1044,6 +1058,17 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 		case strings.HasPrefix(arg, "--rules="):
 			_, v, _ := strings.Cut(arg, "=")
 			options.RulesFile = v
+		case arg == "--plugin-dir":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("--plugin-dir requires a path")
+			}
+			i++
+			options.PluginDir = args[i]
+		case strings.HasPrefix(arg, "--plugin-dir="):
+			_, v, _ := strings.Cut(arg, "=")
+			options.PluginDir = v
+		case arg == "--allow-repo-plugins":
+			options.AllowRepoPlugins = true
 		default:
 			if strings.HasPrefix(arg, "--tool-path=") {
 				v := strings.TrimPrefix(arg, "--tool-path=")

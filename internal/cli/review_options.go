@@ -11,32 +11,34 @@ import (
 )
 
 type reviewOptions struct {
-	Profile       string
-	WithTools     bool
-	ToolPaths     map[string]string
-	Degraded      bool
-	Only          []string
-	Skip          []string
-	FailOn        string
-	Base          string
-	Baseline      string
-	Format        string
-	Snippets      bool
-	WriteBaseline string
-	CheckRun      bool
-	CheckRunSHA   string
-	PRComment     bool
-	Unstaged      bool
-	Include       []string
-	Exclude       []string
-	SortBy        string
-	SummaryOnly   bool
-	MaxFindings   int
-	MaxDiffSize   int64
-	Rule          string
-	Framework     []string
-	RulesFile     string
-	Progress      *bool
+	Profile          string
+	WithTools        bool
+	ToolPaths        map[string]string
+	Degraded         bool
+	Only             []string
+	Skip             []string
+	FailOn           string
+	Base             string
+	Baseline         string
+	Format           string
+	Snippets         bool
+	WriteBaseline    string
+	CheckRun         bool
+	CheckRunSHA      string
+	PRComment        bool
+	Unstaged         bool
+	Include          []string
+	Exclude          []string
+	SortBy           string
+	SummaryOnly      bool
+	MaxFindings      int
+	MaxDiffSize      int64
+	Rule             string
+	Framework        []string
+	RulesFile        string
+	PluginDir        string
+	AllowRepoPlugins bool
+	Progress         *bool
 	// seen records which flags were explicitly passed, so user config
 	// defaults only fill in flags the user did not set.
 	seen map[string]bool
@@ -238,6 +240,14 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 				return options, err
 			}
 			options.RulesFile = v
+		case "--plugin-dir":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.PluginDir = v
+		case "--allow-repo-plugins":
+			options.AllowRepoPlugins = true
 		default:
 			if strings.HasPrefix(arg, "--tool-path=") {
 				v := strings.TrimPrefix(arg, "--tool-path=")
@@ -396,6 +406,24 @@ func workingTreeRules(rules []review.Rule) []review.Rule {
 			typed.WorkingTree = true
 			rules[i] = typed
 		case review.SQLiRule:
+			typed.WorkingTree = true
+			rules[i] = typed
+		case review.TaintRule:
+			typed.WorkingTree = true
+			rules[i] = typed
+		case review.ScopeDefaultRule:
+			typed.WorkingTree = true
+			rules[i] = typed
+		case review.PluginTrustRule:
+			typed.WorkingTree = true
+			rules[i] = typed
+		case review.PrivilegedExecRule:
+			typed.WorkingTree = true
+			rules[i] = typed
+		case review.ProcessKillRule:
+			typed.WorkingTree = true
+			rules[i] = typed
+		case review.CredentialQueryRule:
 			typed.WorkingTree = true
 			rules[i] = typed
 		}

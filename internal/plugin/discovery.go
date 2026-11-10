@@ -3,6 +3,8 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -58,6 +60,12 @@ func (e *ExecPlugin) Metadata() PluginMetadata {
 
 func (e *ExecPlugin) Capabilities() PluginCapabilities {
 	return e.caps
+}
+
+// ExecutablePath returns the plugin's executable path. It is used for
+// allowlist verification of untrusted (repository-local) plugins.
+func (e *ExecPlugin) ExecutablePath() string {
+	return e.path
 }
 
 func (e *ExecPlugin) Analyze(ctx context.Context, in PluginInput) (PluginOutput, error) {
@@ -118,6 +126,31 @@ func (e *ExecPlugin) Analyze(ctx context.Context, in PluginInput) (PluginOutput,
 
 // DiscoverPlugins scans a directory for executable plugins or manifest files.
 func DiscoverPlugins(pluginDir string) ([]AnalyzerPlugin, error) {
+	return discoverPlugins(pluginDir, nil)
+}
+
+// DiscoverPluginsAllowlisted scans a directory like DiscoverPlugins but only
+// considers executables whose SHA-256 (hex, lowercase) is in allowlist. The
+// check runs before any --manifest probe, so unlisted binaries are never
+// executed. An empty allowlist discovers nothing.
+func DiscoverPluginsAllowlisted(pluginDir string, allowlist map[string]bool) ([]AnalyzerPlugin, error) {
+	if len(allowlist) == 0 {
+		return nil, nil
+	}
+	return discoverPlugins(pluginDir, func(execPath string) bool {
+		data, err := os.ReadFile(execPath)
+		if err != nil {
+			return false
+		}
+		sum := sha256.Sum256(data)
+		return allowlist[hex.EncodeToString(sum[:])]
+	})
+}
+
+// discoverPlugins implements plugin discovery. When execAllowed is non-nil it
+// is consulted for every candidate executable path before probing or loading,
+// which keeps untrusted binaries from being executed during discovery.
+func discoverPlugins(pluginDir string, execAllowed func(string) bool) ([]AnalyzerPlugin, error) {
 	info, err := os.Stat(pluginDir)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -142,7 +175,7 @@ func DiscoverPlugins(pluginDir string) ([]AnalyzerPlugin, error) {
 
 		// 1. JSON manifest discovery
 		if strings.HasSuffix(name, ".json") && !entry.IsDir() {
-			p, err := loadPluginFromManifest(fullPath, pluginDir)
+			p, err := loadPluginFromManifest(fullPath, pluginDir, execAllowed)
 			if err == nil && p != nil {
 				discovered = append(discovered, p)
 			}
@@ -153,7 +186,7 @@ func DiscoverPlugins(pluginDir string) ([]AnalyzerPlugin, error) {
 		if entry.IsDir() {
 			manifestPath := filepath.Join(fullPath, "plugin.json")
 			if _, statErr := os.Stat(manifestPath); statErr == nil {
-				p, err := loadPluginFromManifest(manifestPath, fullPath)
+				p, err := loadPluginFromManifest(manifestPath, fullPath, execAllowed)
 				if err == nil && p != nil {
 					discovered = append(discovered, p)
 				}
@@ -164,6 +197,10 @@ func DiscoverPlugins(pluginDir string) ([]AnalyzerPlugin, error) {
 		// 3. Direct executable plugin binary named m3tal-review-plugin-*
 		if strings.HasPrefix(name, "m3tal-review-plugin-") && !entry.IsDir() {
 			pluginShortName := strings.TrimPrefix(name, "m3tal-review-plugin-")
+			// Verify trust before probing: --manifest executes the binary.
+			if execAllowed != nil && !execAllowed(fullPath) {
+				continue
+			}
 			if ValidateExecutable(fullPath) == nil {
 				meta, caps, err := probePluginExecutable(fullPath)
 				if err != nil {
@@ -184,7 +221,7 @@ func DiscoverPlugins(pluginDir string) ([]AnalyzerPlugin, error) {
 	return discovered, nil
 }
 
-func loadPluginFromManifest(manifestPath, baseDir string) (AnalyzerPlugin, error) {
+func loadPluginFromManifest(manifestPath, baseDir string, execAllowed func(string) bool) (AnalyzerPlugin, error) {
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return nil, err
@@ -197,6 +234,10 @@ func loadPluginFromManifest(manifestPath, baseDir string) (AnalyzerPlugin, error
 	execPath := manifest.Executable
 	if !filepath.IsAbs(execPath) {
 		execPath = filepath.Join(baseDir, execPath)
+	}
+	// Verify trust before the executable is ever run.
+	if execAllowed != nil && !execAllowed(execPath) {
+		return nil, fmt.Errorf("plugin executable %s is not allowlisted", execPath)
 	}
 
 	meta := PluginMetadata{

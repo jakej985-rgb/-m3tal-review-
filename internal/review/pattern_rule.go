@@ -53,6 +53,15 @@ type patternRule struct {
 	rawPatterns []langPattern
 	// anyLanguage allows patterns with LanguageUnknown to apply to all files.
 	anyLanguage bool
+	// suppress, when set, skips the entire file block when it matches the
+	// file's full source (file-level false-positive guards).
+	suppress *regexp.Regexp
+	// excludePattern, when set, skips files whose path matches it.
+	excludePattern *regexp.Regexp
+	// matchAbsent, when set, suppresses individual matches whose matched text
+	// contains the pattern (for guards that live inside the matched construct,
+	// e.g. timeout fields inside an http.Server literal).
+	matchAbsent *regexp.Regexp
 }
 
 func (r *patternRule) Name() string { return r.name }
@@ -62,6 +71,12 @@ func (r *patternRule) Check(diff string) []Finding {
 	seen := make(map[string]bool)
 	for _, block := range sourceBlocks(diff, r.repositoryRoot, r.workingTree) {
 		if r.filePattern != nil && !r.filePattern.MatchString(block.file) {
+			continue
+		}
+		if r.excludePattern != nil && r.excludePattern.MatchString(block.file) {
+			continue
+		}
+		if r.suppress != nil && r.suppress.MatchString(block.text) {
 			continue
 		}
 		fileLanguage := (language.CodeChecker{}).Language(block.file)
@@ -74,6 +89,9 @@ func (r *patternRule) Check(diff string) []Finding {
 				continue
 			}
 			for _, match := range p.pattern.FindAllStringIndex(code, -1) {
+				if r.matchAbsent != nil && r.matchAbsent.MatchString(code[match[0]:match[1]]) {
+					continue
+				}
 				if !matchTouchesAdded(block, code, match[0], match[1]) {
 					continue
 				}
@@ -102,6 +120,9 @@ func (r *patternRule) Check(diff string) []Finding {
 					continue
 				}
 				for _, match := range p.pattern.FindAllStringIndex(block.text, -1) {
+					if r.matchAbsent != nil && r.matchAbsent.MatchString(block.text[match[0]:match[1]]) {
+						continue
+					}
 					if !matchTouchesAdded(block, block.text, match[0], match[1]) {
 						continue
 					}

@@ -58,8 +58,14 @@ type RunnerConfig struct {
 	Progress ProgressReporter
 
 	// Plugin analyzers
-	PluginRegistry *plugin.Registry
-	PluginDir      string
+	PluginRegistry   *plugin.Registry
+	PluginDir        string
+	AllowRepoPlugins bool
+	// RepoPluginAllowSHA256 lists SHA-256 hashes (hex) of repository-local
+	// plugin executables the user explicitly trusts. Repository plugins are
+	// only executed when AllowRepoPlugins is set AND their executable hash is
+	// on this list; an empty list loads no repository plugins.
+	RepoPluginAllowSHA256 []string
 }
 
 // RunPipeline executes the shared review-runner pipeline for both review and audit.
@@ -90,13 +96,26 @@ func RunPipeline(cfg RunnerConfig) error {
 	if cfg.PluginRegistry != nil {
 		pluginRegistry = cfg.PluginRegistry
 	} else {
-		pluginDir := cfg.PluginDir
-		if pluginDir == "" && cfg.RepositoryRoot != "" {
-			pluginDir = filepath.Join(cfg.RepositoryRoot, ".m3tal-review", "plugins")
+		pluginDirs := make([]string, 0, 2)
+		if cfg.PluginDir != "" {
+			pluginDirs = append(pluginDirs, cfg.PluginDir)
 		}
-		if pluginDir != "" {
-			if discovered, err := plugin.DiscoverPlugins(pluginDir); err == nil && len(discovered) > 0 {
-				pluginRegistry = plugin.NewRegistry()
+		pluginRegistry = discoverPluginRegistry(pluginDirs)
+		// Plugins inside the scanned repository are untrusted code: they are
+		// only loaded when the user explicitly opts in AND the executable's
+		// SHA-256 is on the user's allowlist.
+		if cfg.AllowRepoPlugins && cfg.RepositoryRoot != "" {
+			repoDir := filepath.Join(cfg.RepositoryRoot, ".m3tal-review", "plugins")
+			allowed := make(map[string]bool, len(cfg.RepoPluginAllowSHA256))
+			for _, h := range cfg.RepoPluginAllowSHA256 {
+				allowed[strings.ToLower(strings.TrimSpace(h))] = true
+			}
+			// Discovery verifies each executable's hash before any --manifest
+			// probe, so unlisted binaries are never executed.
+			if discovered, err := plugin.DiscoverPluginsAllowlisted(repoDir, allowed); err == nil && len(discovered) > 0 {
+				if pluginRegistry == nil {
+					pluginRegistry = plugin.NewRegistry()
+				}
 				for _, p := range discovered {
 					_ = pluginRegistry.Register(p)
 				}
@@ -377,4 +396,23 @@ func RunPipeline(cfg RunnerConfig) error {
 	}
 
 	return nil
+}
+
+// discoverPluginRegistry loads plugins from each trusted directory. Earlier
+// directories win on name conflicts.
+func discoverPluginRegistry(dirs []string) *plugin.Registry {
+	var registry *plugin.Registry
+	for _, dir := range dirs {
+		discovered, err := plugin.DiscoverPlugins(dir)
+		if err != nil || len(discovered) == 0 {
+			continue
+		}
+		if registry == nil {
+			registry = plugin.NewRegistry()
+		}
+		for _, p := range discovered {
+			_ = registry.Register(p)
+		}
+	}
+	return registry
 }

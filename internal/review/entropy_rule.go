@@ -168,8 +168,47 @@ func looksLikePlaceholderEntropy(token string) bool {
 	return false
 }
 
+// isGeneratedDataFile reports whether the path is a lockfile, checksum
+// manifest, or generated artifact whose high-entropy strings are hashes,
+// digests, or package integrity values rather than credentials.
+func isGeneratedDataFile(filePath string) bool {
+	base := strings.ToLower(filepath.Base(filePath))
+	switch base {
+	case "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+		"go.sum", "cargo.lock", "gemfile.lock", "composer.lock", "poetry.lock",
+		"pubspec.lock", "packages.lock.json", "flake.lock":
+		return true
+	}
+	if strings.HasSuffix(base, ".sum") || strings.HasSuffix(base, ".lock") ||
+		strings.HasSuffix(base, ".min.js") || strings.HasSuffix(base, ".min.css") {
+		return true
+	}
+	// Docs and CI workflows: high-entropy strings there are overwhelmingly
+	// hashes, SHAs, and checksums; real credential formats are still caught by
+	// the dedicated secret rules.
+	ext := strings.ToLower(filepath.Ext(base))
+	if ext == ".md" || ext == ".markdown" || ext == ".rst" || ext == ".mdx" {
+		return true
+	}
+	slashPath := "/" + strings.TrimPrefix(filepath.ToSlash(filePath), "/")
+	if strings.Contains(slashPath, "/docs/") || strings.Contains(slashPath, "/.github/workflows/") {
+		return true
+	}
+	// Package manager artifact directories (e.g. dists/, vendor bundles)
+	return strings.Contains(slashPath, "/dists/") ||
+		strings.Contains(slashPath, "/vendor/")
+}
+
 func isCommonNonSecret(token string) bool {
 	if uuidPattern.MatchString(token) {
+		return true
+	}
+	// Email addresses and URLs are high-entropy but not credentials.
+	if strings.Contains(token, "@") && strings.Contains(token, ".") {
+		return true
+	}
+	// Bot/no-reply emails such as 123+github-actions[bot]@users.noreply.github.com
+	if strings.Contains(token, "[bot]") || strings.Contains(token, "noreply") {
 		return true
 	}
 	if strings.HasPrefix(token, "http://") || strings.HasPrefix(token, "https://") || strings.HasPrefix(token, "git@") {
@@ -193,6 +232,9 @@ func (r EntropyRule) Check(diff string) []Finding {
 	seen := make(map[string]bool)
 
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if isGeneratedDataFile(block.file) {
+			continue
+		}
 		// Limit block scanning if excessively large to protect against untrusted hostile diffs
 		lines := strings.Split(block.text, "\n")
 		offset := 0

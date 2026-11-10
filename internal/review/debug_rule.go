@@ -63,6 +63,11 @@ func debugFindingsForBlock(block diffSourceBlock) []Finding {
 		if debugPattern.message == "Debug print statement detected" && isCLIOutputFile(block.file) {
 			continue
 		}
+		// Dev tooling (CI helper scripts, build/test tooling) legitimately logs
+		// to stdout/stderr; debug leftovers there are not shipped-code defects.
+		if debugPattern.message != "Debugger statement detected" && isToolingFile(block.file) {
+			continue
+		}
 		for _, match := range debugPattern.pattern.FindAllStringIndex(code, -1) {
 			if !matchTouchesAdded(block, code, match[0], match[1]) {
 				continue
@@ -84,4 +89,16 @@ func debugFindingsForBlock(block diffSourceBlock) []Finding {
 func isCLIOutputFile(file string) bool {
 	clean := "/" + strings.TrimPrefix(path.Clean(file), "/") + "/"
 	return strings.Contains(clean, "/internal/cli/") || strings.Contains(clean, "/cmd/")
+}
+
+// isToolingFile reports whether the path is development/CI tooling rather
+// than shipped application code.
+func isToolingFile(file string) bool {
+	clean := "/" + strings.TrimPrefix(path.Clean(file), "/") + "/"
+	for _, dir := range []string{"/.github/", "/scripts/", "/tools/", "/test/", "/tests/", "/testing/", "/examples/", "/benchmarks/"} {
+		if strings.Contains(clean, dir) {
+			return true
+		}
+	}
+	return false
 }

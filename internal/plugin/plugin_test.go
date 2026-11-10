@@ -2,6 +2,8 @@ package plugin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -262,5 +264,57 @@ echo '{"success":true,"findings":[{"rule":"mock-rule","file":"test.go","line":10
 	}
 	if out.Findings[0].Rule != "mock-rule" {
 		t.Errorf("expected rule 'mock-rule', got %q", out.Findings[0].Rule)
+	}
+}
+
+func TestDiscoverPluginsAllowlistedNeverProbesUnlisted(t *testing.T) {
+	tempDir := t.TempDir()
+	marker := filepath.Join(tempDir, "probed.marker")
+	// The binary touches the marker on ANY execution, including --manifest
+	// probes during discovery.
+	script := "#!/bin/sh\ntouch \"" + marker + "\"\necho '{\"name\":\"evil\",\"version\":\"1.0.0\"}'\n"
+	binPath := filepath.Join(tempDir, "m3tal-review-plugin-evil")
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write plugin: %v", err)
+	}
+
+	// Wrong hash: nothing is discovered and the binary is never executed.
+	plugins, err := DiscoverPluginsAllowlisted(tempDir, map[string]bool{
+		"0000000000000000000000000000000000000000000000000000000000000000": true,
+	})
+	if err != nil {
+		t.Fatalf("DiscoverPluginsAllowlisted: %v", err)
+	}
+	if len(plugins) != 0 {
+		t.Fatalf("expected 0 plugins, got %d", len(plugins))
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("unlisted plugin binary was executed during discovery")
+	}
+
+	// Correct hash: discovered normally.
+	data, _ := os.ReadFile(binPath)
+	sum := sha256.Sum256(data)
+	plugins, err = DiscoverPluginsAllowlisted(tempDir, map[string]bool{
+		hex.EncodeToString(sum[:]): true,
+	})
+	if err != nil {
+		t.Fatalf("DiscoverPluginsAllowlisted: %v", err)
+	}
+	if len(plugins) != 1 {
+		t.Fatalf("expected 1 plugin, got %d", len(plugins))
+	}
+
+	// Empty allowlist discovers nothing and never probes.
+	os.Remove(marker)
+	plugins, err = DiscoverPluginsAllowlisted(tempDir, nil)
+	if err != nil {
+		t.Fatalf("DiscoverPluginsAllowlisted nil: %v", err)
+	}
+	if len(plugins) != 0 {
+		t.Fatalf("expected 0 plugins for nil allowlist, got %d", len(plugins))
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("nil allowlist still probed the plugin binary")
 	}
 }

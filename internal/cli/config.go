@@ -26,9 +26,14 @@ type userConfig struct {
 	RulesFile         string             `json:"rules,omitempty"`
 	LanguageOverrides map[string]string  `json:"language_overrides,omitempty"`
 	Lint              *review.LintConfig `json:"lint,omitempty"`
+	PluginDir         string             `json:"plugin_dir,omitempty"`
+	// PluginAllowSHA256 lists SHA-256 hashes (hex) of repository-local plugin
+	// executables the user trusts. Repo plugins require --allow-repo-plugins
+	// plus a matching hash here.
+	PluginAllowSHA256 []string `json:"plugin_allow_sha256,omitempty"`
 }
 
-func userConfigPath() (string, error) {
+func userConfigDir() (string, error) {
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
 		home, err := os.UserHomeDir()
@@ -37,7 +42,37 @@ func userConfigPath() (string, error) {
 		}
 		dir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(dir, "m3tal-review", "config.json"), nil
+	return filepath.Join(dir, "m3tal-review"), nil
+}
+
+func userConfigPath() (string, error) {
+	dir, err := userConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
+}
+
+// defaultPluginDir is the trusted plugin directory inside the user config
+// directory. Unlike <repo>/.m3tal-review/plugins, files here are installed by
+// the user, not by the repository being reviewed.
+func defaultPluginDir() string {
+	dir, err := userConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "plugins")
+}
+
+// reviewPluginDir resolves the plugin directory for a run: an explicit
+// --plugin-dir or config plugin_dir wins, otherwise the trusted user config
+// plugins directory is used. The repository's own .m3tal-review/plugins is
+// never used unless AllowRepoPlugins is set.
+func reviewPluginDir(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	return defaultPluginDir()
 }
 
 func loadUserConfig() (userConfig, error) {
@@ -114,6 +149,9 @@ func applyUserConfig(options *reviewOptions, cfg userConfig) {
 	if !options.seen["--rules"] && cfg.RulesFile != "" {
 		options.RulesFile = cfg.RulesFile
 	}
+	if !options.seen["--plugin-dir"] && cfg.PluginDir != "" {
+		options.PluginDir = cfg.PluginDir
+	}
 }
 
 // applyUserConfigAudit fills audit options the user did not explicitly set.
@@ -155,6 +193,9 @@ func applyUserConfigAudit(options *auditOptions, cfg userConfig) {
 	}
 	if !options.seen["--rules"] && cfg.RulesFile != "" {
 		options.RulesFile = cfg.RulesFile
+	}
+	if !options.seen["--plugin-dir"] && cfg.PluginDir != "" {
+		options.PluginDir = cfg.PluginDir
 	}
 }
 

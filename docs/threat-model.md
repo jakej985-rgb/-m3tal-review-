@@ -9,12 +9,14 @@ calls except when explicitly asked (`--with-tools` scanners, `--check-run`).
 
 ## What it is NOT
 
-- **Not a security analyzer.** Findings are pattern matches and AST heuristics,
-  not proof of vulnerability. A finding means "this looks risky — review it",
-  not "this is exploitable".
-- **Not a replacement for gosec, eslint, CodeQL, or a SAST pipeline.** It has no
-  dataflow analysis, no type resolution beyond Go's stdlib AST, no inter-file
-  reasoning, and no vulnerability database.
+- **Not a security analyzer.** Findings are pattern matches, AST heuristics,
+  and limited intra-file taint tracking, not proof of vulnerability. A finding
+  means "this looks risky — review it", not "this is exploitable".
+- **Not a replacement for gosec, eslint, CodeQL, or a SAST pipeline.** It has
+  no interprocedural or cross-file dataflow, no type resolution beyond Go's
+  stdlib AST, and no vulnerability database. The `request-taint` rule tracks
+  request sources through simple assignments within a single file only; it
+  does not follow values across functions, packages, or goroutines.
 - **Not exhaustive.** Masked-mode rules cannot see inside string literals;
   several detectors therefore only fire on code-shaped signals. Obfuscated,
   dynamically constructed, or semantically disguised issues will be missed.
@@ -49,6 +51,24 @@ Reviewed repositories are treated as hostile:
   still be sensitive.
 - `raw`-mode rules match inside comments and strings; they can fire on
   documentation examples.
+
+## Severity rubric
+
+Findings are calibrated so severity reflects practical exploitability, not
+mere pattern presence:
+
+- **critical** — committed live credential or key material.
+- **high** — issues reachable from untrusted input with serious impact:
+  injection, traversal to privileged operations, auth bypass, RCE-adjacent
+  exec, wildcard permission defaults.
+- **medium** — supply-chain and defense-in-depth concerns: unpinned actions,
+  missing server timeouts, permissive CORS/WebSocket origins, credential
+  propagation to subprocesses, plaintext secret storage.
+- **low** — hygiene and informational: debug leftovers, log injection,
+  timing-unsafe comparisons (impractical remotely), analyzer limitations.
+
+Severity is a prioritization hint, not a verdict; always verify reachability
+and authentication requirements before treating a finding as an incident.
 
 ## Recommended usage
 

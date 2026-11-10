@@ -131,6 +131,11 @@ Per repository root (gitignored in this repo; consumers should gitignore it):
 ## Config and state outside the repo
 
 - `~/.config/m3tal-review/config.json` — user defaults (`profile`,
-  `fail_on`, `format`, `only`, `skip`); CLI flags override.
+  `fail_on`, `format`, `only`, `skip`, `plugin_dir`,
+  `plugin_allow_sha256`); CLI flags override.
+- `~/.config/m3tal-review/plugins/` — trusted external analyzer plugins,
+  loaded by default. Plugins under `<repo>/.m3tal-review/plugins` are
+  untrusted: they require `--allow-repo-plugins` plus a SHA-256 match in
+  `plugin_allow_sha256`, verified before any `--manifest` probe.
 - `~/.cache/m3tal-review/` — incremental audit cache.
 - `M3TAL_RULE_TIMEOUT`, `M3TAL_DEBUG` — environment tuning.

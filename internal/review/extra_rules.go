@@ -162,7 +162,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageTypeScript, regexp.MustCompile(`createDecipher\s*\(`), "Deprecated createDecipher without IV parameter"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
-			name: "timing-unsafe-compare", severity: "medium",
+			name: "timing-unsafe-compare", severity: "low",
 			remediation: "Use constant-time comparison (crypto/subtle ConstantTimeCompare or hmac.Equal in Go; hmac.compare_digest in Python; crypto.timingSafeEqual in Node.js).",
 			patterns: []langPattern{
 				{language.LanguagePython, regexp.MustCompile(`(?i)(?:\b(?:password|passwd|secret|token|api_?key|signature|mac|hash|digest)\w*\s*={2,3}\s*|={2,3}\s*(?:password|passwd|secret|token|api_?key|signature|mac|hash|digest)\w*\b)`), "Possible timing-unsafe comparison of secret material"},
@@ -211,7 +211,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageTypeScript, regexp.MustCompile(`document\.cookie\s*=[^;]{0,120}?remember`), "Remember-me cookie; verify expiry and rotation policy"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
-			name: "web-storage-secrets", severity: "high",
+			name: "web-storage-secrets", severity: "medium",
 			raw:         true,
 			remediation: "Do not store tokens/credentials in web storage; they are readable by any XSS. Prefer secure, HttpOnly cookies for session tokens.",
 			patterns: []langPattern{
@@ -269,7 +269,11 @@ func ExtraRules(repositoryRoot string) []Rule {
 			name: "pipe-to-shell", severity: "high",
 			raw:         true,
 			anyLanguage: true,
-			remediation: "Download scripts to a file, verify a checksum/signature, then execute.",
+			// Documentation and markdown show install instructions, not executed
+			// code; comment lines (shell #, C //) are likewise not executable.
+			excludePattern: regexp.MustCompile(`(?i)\.(?:md|markdown|mdx|rst|txt)$|(?:^|/)(?:docs?|examples?)/`),
+			skipLine:       regexp.MustCompile(`^\s*(?:#|//|<!--)`),
+			remediation:    "Download scripts to a file, verify a checksum/signature, then execute.",
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`(?:curl|wget)[^\n|]{0,120}?\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b`), "Remote script piped directly to a shell"},
 				{language.LanguageUnknown, regexp.MustCompile(`curl\b[^\n|]{0,140}?(?:\s-k\b|--insecure\b|--proto[=\s]+"?-?all)`), "Insecure curl flags may disable TLS verification"},
@@ -323,7 +327,10 @@ func ExtraRules(repositoryRoot string) []Rule {
 			name:        "secret-material", severity: "critical",
 			remediation: "Remove the credential, rotate it, and load secrets from environment or a secrets manager.",
 			patterns: []langPattern{
-				{language.LanguageUnknown, regexp.MustCompile(`[a-z][a-z0-9+.-]*://[^/\s:@]+:[^@\s]{6,}@`), "URL with embedded credentials"},
+				// The password must start with a literal character: credentials
+				// that are entirely CI-templated (${{ secrets.X }}, ${VAR}, $VAR)
+				// commit no secret material and are covered by actions-credential-url.
+				{language.LanguageUnknown, regexp.MustCompile(`[a-z][a-z0-9+.-]*://[^/\s:@]+:[^$\s@][^@\s]{5,}@`), "URL with embedded credentials"},
 				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AGE-SECRET-KEY-1|BEGIN PGP PRIVATE KEY|npm_[A-Za-z0-9]{30,}|pypi-AgEI|dckr_pat_|glpat-[A-Za-z0-9_-]{15,}|AIza[0-9A-Za-z_-]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{25,}|shpat_[a-fA-F0-9]{20,}|xapp-[A-Za-z0-9-]{10,}|dop_v1_[a-f0-9]{30,}|lin_api_[A-Za-z0-9]{30,}|sq0csp-[A-Za-z0-9_-]{20,}|DefaultEndpointsProtocol|SharedAccessSignature=|Endpoint=sb://|(?m)^\s*machine\s+\S[^\n]*\b(?:login|password|account)\s+\S`), "Cloud/API credential material in source"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
@@ -338,15 +345,16 @@ func ExtraRules(repositoryRoot string) []Rule {
 			raw:  true,
 			name: "server-timeouts", severity: "medium",
 			remediation: "Configure ReadHeaderTimeout/IdleTimeout/WriteTimeout to mitigate Slowloris.",
+			matchAbsent: regexp.MustCompile(`Timeout`),
 			patterns: []langPattern{
-				{language.LanguageGo, regexp.MustCompile(`http\.ListenAndServe\s*\(|http\.Server\s*\{[^}]{0,200}`), "HTTP server without visible timeout configuration"},
+				{language.LanguageGo, regexp.MustCompile(`http\.ListenAndServe\s*\(|http\.Server\s*\{[^}]{0,300}`), "HTTP server without visible timeout configuration"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "websocket-origin", severity: "high",
 			raw:         true,
 			remediation: "Validate the Origin header in WebSocket handlers; accepting wildcard '*' or unconditionally returning true allows cross-site WebSocket hijacking (CSWSH).",
 			patterns: []langPattern{
-				{language.LanguageGo, regexp.MustCompile(`(?s)CheckOrigin.{0,300}?return\s+true`), "WebSocket CheckOrigin accepts any origin"},
+				{language.LanguageGo, regexp.MustCompile(`(?s)CheckOrigin\s*[:=]\s*func\([^)]*\)\s*bool\s*\{\s*return\s+true\s*;?\s*\}`), "WebSocket CheckOrigin accepts any origin"},
 				{language.LanguageJavaScript, regexp.MustCompile(`(?i)(?:verifyClient\s*:\s*(?:\([^)]*\)|function|\w+)\s*=>?\s*(?:\{[^{}]*return\s+true|true)|cors\s*:\s*(?:true|["']\*["']|\{\s*origin\s*:\s*["']\*["']))`), "WebSocket server allows any origin without validation"},
 				{language.LanguageTypeScript, regexp.MustCompile(`(?i)(?:verifyClient\s*:\s*(?:\([^)]*\)|function|\w+)\s*=>?\s*(?:\{[^{}]*return\s+true|true)|cors\s*:\s*(?:true|["']\*["']|\{\s*origin\s*:\s*["']\*["']))`), "WebSocket server allows any origin without validation"},
 				{language.LanguagePython, regexp.MustCompile(`(?i)(?:websockets\.serve\([^)]*origins\s*=\s*(?:None|\[\]|["']\*["'])|def\s+check_origin\s*\([^)]*\)\s*:\s*(?:return\s+True|pass))`), "WebSocket handler allows any origin without validation"},
@@ -543,11 +551,11 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageTypeScript, regexp.MustCompile(`(?i)new\s+WebSocket\s*\([^)\n]*[?&](?:api_?key|access_?token|auth_?token|token)=`), "WebSocket URL contains authentication token in query parameter"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
-			name: "plaintext-secret-storage", severity: "high",
+			name: "plaintext-secret-storage", severity: "medium",
 			anyLanguage: true,
 			remediation: "Store cryptographically salted one-way hashes (e.g. SHA-256, Argon2, bcrypt) of API keys and tokens rather than recoverable plaintext credentials.",
 			patterns: []langPattern{
-				{language.LanguageUnknown, regexp.MustCompile(`(?i)\bCREATE\s+TABLE\b[\s\S]{0,300}?\b(?:api_?key|raw_?secret|plaintext_?(?:token|secret|password)|auth_?token)\b\s+(?:VARCHAR|TEXT|CHAR|STRING)\b`), "Table schema defines column for plaintext secret storage"},
+				{language.LanguageUnknown, regexp.MustCompile(`(?i)\bCREATE\s+TABLE\b[\s\S]{0,300}?\b(?:api_?keys?|raw_?secrets?|plaintext_?\w+|auth_?tokens?|tokens?|secrets?|passwords?|passwd)\b\s+(?:VARCHAR|TEXT|CHAR|STRING)\b`), "Table schema defines column for plaintext secret storage"},
 				{language.LanguageUnknown, regexp.MustCompile(`(?i)\b(?:JSON\.stringify|json\.dump|yaml\.dump)\s*\([^)]{0,160}?\b(?:raw_?secret|api_?keys|plaintext_?(?:password|token|secret))\b`), "Plaintext secret persisted or serialized directly"},
 				{language.LanguageGo, regexp.MustCompile(`(?i)\b(?:db|collection|storage|repo)\.(?:Exec|Insert|Save|Write|Put)\s*\([^)]{0,160}?\b(?:rawSecret|apiKey|plaintextToken|authSecret)\b`), "Plaintext secret written to database or storage without hashing"},
 				{language.LanguagePython, regexp.MustCompile(`(?i)\b(?:db|collection|storage|repo)\.(?:insert|save|write|put|execute)\s*\([^)]{0,160}?\b(?:raw_secret|api_key|plaintext_token|auth_secret)\b`), "Plaintext secret written to database or storage without hashing"},

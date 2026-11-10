@@ -66,8 +66,8 @@ func isPlaceholderValue(value string) bool {
 			return true
 		}
 	}
-	// Masked values such as "xxxxxxxx" or "********".
-	return strings.Trim(value, "x*.") == ""
+	// Masked values such as "xxxxxxxx", "********" or UI masks like "••••".
+	return strings.Trim(value, "x*•·.-_") == ""
 }
 
 func isConfigStyleFile(file string) bool {
@@ -82,11 +82,25 @@ func isConfigStyleFile(file string) bool {
 	return false
 }
 
+// isGeneratedDependencyFile reports whether the path is a generated lockfile
+// or checksum manifest. These contain package names, version ranges, and
+// integrity hashes that look like credentials but are not.
+func isGeneratedDependencyFile(file string) bool {
+	base := strings.ToLower(path.Base(file))
+	switch base {
+	case "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+		"go.sum", "cargo.lock", "gemfile.lock", "composer.lock", "poetry.lock",
+		"pubspec.lock", "packages.lock.json", "flake.lock":
+		return true
+	}
+	return strings.HasSuffix(base, ".sum")
+}
+
 func (r SecurityRule) Check(diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 	for _, fileDiff := range ParseDiff(diff) {
-		if len(fileDiff.AddedLines) == 0 {
+		if len(fileDiff.AddedLines) == 0 || isGeneratedDependencyFile(fileDiff.Path) {
 			continue
 		}
 		// Performance optimization: Generate diff source blocks directly from fileDiff
@@ -101,6 +115,11 @@ func (r SecurityRule) Check(diff string) []Finding {
 				nameStart, nameEnd := match[2], match[3]
 				name := block.text[nameStart:nameEnd]
 				if !isCredentialName(name) || offsetInComment(block.file, block.text, nameStart) {
+					continue
+				}
+				// Member access (obj.token, key.secret) reads a field rather than
+				// assigning a literal; skip it to avoid JSX/template FPs.
+				if nameStart > 0 && (block.text[nameStart-1] == '.' || block.text[nameStart-1] == ']') {
 					continue
 				}
 				if !isConfigStyleFile(block.file) && (nameStart >= len(code) || !code[nameStart]) {
@@ -124,7 +143,7 @@ func (r SecurityRule) Check(diff string) []Finding {
 		}
 	}
 	for _, added := range AddedDiffLines(diff) {
-		if !isConfigStyleFile(added.File) || isCommentOnlyLine(added.File, added.Text) {
+		if !isConfigStyleFile(added.File) || isGeneratedDependencyFile(added.File) || isCommentOnlyLine(added.File, added.Text) {
 			continue
 		}
 		name, value := findConfigCredential(added.Text)

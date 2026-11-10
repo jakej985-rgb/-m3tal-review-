@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -209,6 +211,118 @@ func TestRunPipelineFailOnThreshold(t *testing.T) {
 		t.Errorf("expected error with FailOn high, got nil")
 	} else if !strings.Contains(err.Error(), "found 1 issue(s) at or above high") {
 		t.Errorf("unexpected error text: %v", err)
+	}
+}
+
+func writeMarkerPlugin(t *testing.T, dir, name, markerPath string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	script := "#!/bin/sh\ntouch \"" + markerPath + "\"\necho '{\"name\":\"" + name + "\",\"version\":\"1.0.0\"}'\n"
+	path := filepath.Join(dir, "m3tal-review-plugin-"+name)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write plugin: %v", err)
+	}
+}
+
+func TestRunPipelineDoesNotLoadRepoPluginsByDefault(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+	runID, err := review.NewRunID()
+	if err != nil {
+		t.Fatalf("NewRunID: %v", err)
+	}
+
+	marker := filepath.Join(repoDir, "repo-plugin-ran.marker")
+	writeMarkerPlugin(t, filepath.Join(repoDir, ".m3tal-review", "plugins"), "evil", marker)
+
+	cfg := RunnerConfig{
+		Scope:           "staged",
+		RepositoryRoot:  repoDir,
+		Branch:          "master",
+		RunID:           runID,
+		Profile:         "fast",
+		Format:          "text",
+		Version:         "test",
+		Diff:            "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -1,3 +1,4 @@\n package main\n+// comment\n func main() {}\n",
+		StagedFiles:     []string{"main.go"},
+		InitialFindings: nil,
+	}
+
+	if err := RunPipeline(cfg); err != nil {
+		t.Fatalf("RunPipeline: %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("repository plugin executed without opt-in; marker exists (stat err=%v)", err)
+	}
+}
+
+func TestRunPipelineRepoPluginsRequireOptIn(t *testing.T) {
+	repoDir := setupTestGitRepo(t)
+
+	marker := filepath.Join(repoDir, "repo-plugin-ran.marker")
+	writeMarkerPlugin(t, filepath.Join(repoDir, ".m3tal-review", "plugins"), "evil", marker)
+
+	newCfg := func() RunnerConfig {
+		runID, _ := review.NewRunID()
+		return RunnerConfig{
+			Scope:           "staged",
+			RepositoryRoot:  repoDir,
+			Branch:          "master",
+			RunID:           runID,
+			Profile:         "fast",
+			Format:          "text",
+			Version:         "test",
+			Diff:            "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -1,3 +1,4 @@\n package main\n+// comment\n func main() {}\n",
+			StagedFiles:     []string{"main.go"},
+			InitialFindings: nil,
+		}
+	}
+
+	// Explicit --plugin-dir outside the repo loads plugins without opt-in.
+	trustedDir := t.TempDir()
+	trustedMarker := filepath.Join(trustedDir, "trusted-ran.marker")
+	writeMarkerPlugin(t, trustedDir, "trusted", trustedMarker)
+
+	cfg := newCfg()
+	cfg.PluginDir = trustedDir
+	if err := RunPipeline(cfg); err != nil {
+		t.Fatalf("RunPipeline trusted dir: %v", err)
+	}
+	if _, err := os.Stat(trustedMarker); err != nil {
+		t.Fatalf("expected trusted plugin to run, marker missing: %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("repo plugin ran alongside trusted plugin without opt-in")
+	}
+
+	// --allow-repo-plugins alone is not enough: repository plugin executables
+	// must also have their SHA-256 on the user's allowlist (fail closed).
+	cfg2 := newCfg()
+	cfg2.AllowRepoPlugins = true
+	cfg2.PluginDir = ""
+	if err := RunPipeline(cfg2); err != nil {
+		t.Fatalf("RunPipeline allow repo plugins: %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("repo plugin ran with opt-in but no hash allowlist")
+	}
+
+	// With the executable's SHA-256 allowlisted, the repo plugin runs.
+	pluginPath := filepath.Join(repoDir, ".m3tal-review", "plugins", "m3tal-review-plugin-evil")
+	pluginBytes, err := os.ReadFile(pluginPath)
+	if err != nil {
+		t.Fatalf("read plugin: %v", err)
+	}
+	sum := sha256.Sum256(pluginBytes)
+	cfg3 := newCfg()
+	cfg3.AllowRepoPlugins = true
+	cfg3.RepoPluginAllowSHA256 = []string{hex.EncodeToString(sum[:])}
+	if err := RunPipeline(cfg3); err != nil {
+		t.Fatalf("RunPipeline allowlisted repo plugin: %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("expected allowlisted repo plugin to run, marker missing: %v", err)
 	}
 }
 

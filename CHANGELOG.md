@@ -24,8 +24,38 @@
 - `audit --vuln-scan`: opt-in OSV API lookup for known CVEs in
   go.mod/package.json/requirements.txt (`dependency-cve` findings)
 - `review --pr-comment`: post findings summary to the current PR via `gh`
+- External analyzer plugins: `--plugin-dir`, `plugin_dir` user config, and
+  `~/.config/m3tal-review/plugins`; repository-local plugins now require the
+  explicit `--allow-repo-plugins` opt-in (previously loaded automatically)
+- Repository plugin executables must additionally match a SHA-256 hash in the
+  `plugin_allow_sha256` user config; the hash is verified before any
+  `--manifest` probe, so unlisted binaries are never executed
 - Incremental audit cache (`~/.cache/m3tal-review`), `history show
   --format json`, user config defaults for `audit`
+- New detection rules: `request-taint` (intra-file taint from request input
+  to filesystem/serving/exec sinks), `wildcard-default-scope`,
+  `plugin-trust`, `privileged-pkg-exec`, `process-kill-abuse`, and
+  `credential-in-query`
+
+### Changed
+- False-positive reductions: `chi-missing-recovery` accepts custom Recoverer
+  middleware and skips test files; `pipe-to-shell` ignores comments/docs;
+  `secret-material` ignores CI-templated credentials; `hardcoded-credential`
+  ignores member access, UI masks, and lockfiles; `high-entropy-secret`
+  skips lockfiles/checksums/docs/workflows; `debug-leftover` skips tooling
+  dirs; `timing-unsafe-compare` and `web-storage-secrets` demoted to
+  low/medium; JSX/TSX analyzer errors report at low severity;
+  `plaintext-secret-storage` widened to token/secret/password columns
+- `auditCacheSchema` bumped to 2 after detector semantics changed
+- Fixed audit analyzing staged (index) content instead of working-tree
+  content for the new taint/trust rule types: `workingTreeRules` now enables
+  `WorkingTree` on `request-taint`, `wildcard-default-scope`, `plugin-trust`,
+  `privileged-pkg-exec`, `process-kill-abuse`, and `credential-in-query`
+- `plugin-trust` no longer flags `"plugins"` path elements inside anchored
+  `filepath.Join` calls as working-directory-relative
+- `server-timeouts` recognizes `http.Server` literals that configure timeout
+  fields; `websocket-origin` only fires when `CheckOrigin` unconditionally
+  returns true
 
 ### Notes
 - Detector rules are heuristic; see `docs/threat-model.md` for scope and
