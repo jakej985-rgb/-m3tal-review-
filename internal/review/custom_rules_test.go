@@ -362,3 +362,24 @@ func TestFindCustomRulesFile(t *testing.T) {
 		t.Errorf("expected explicit %q, got %q", explicit, found)
 	}
 }
+
+func TestLoadCustomRulesFileRejectsSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "target-rules.yaml")
+	if err := os.WriteFile(targetPath, []byte("version: '1.0'\nrules: []\n"), 0644); err != nil {
+		t.Fatalf("failed to write target rules: %v", err)
+	}
+
+	symlinkPath := filepath.Join(tmpDir, "symlink-rules.yaml")
+	if err := os.Symlink(targetPath, symlinkPath); err != nil {
+		t.Skipf("symlink creation not supported: %v", err)
+	}
+
+	_, err := LoadCustomRulesFile(symlinkPath, tmpDir)
+	if err == nil {
+		t.Fatalf("expected error loading custom rules from symlink, got nil")
+	}
+	if !strings.Contains(err.Error(), "must not be a symbolic link") {
+		t.Fatalf("expected symlink rejection message, got: %v", err)
+	}
+}
