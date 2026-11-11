@@ -461,6 +461,36 @@ func TestEvaluateLicensePolicyWithFilesAttribution(t *testing.T) {
 	}
 }
 
+// A module nested inside another nested module must not have its source
+// files counted once per ancestor.
+func TestCheckDependenciesNestedGoFilesNotDoubleCounted(t *testing.T) {
+	tmpDir := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(tmpDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("plugins/a/go.mod", "module example.com/a\n\ngo 1.21\n")
+	write("plugins/a/main.go", "package main\n\nfunc main() {}\n")
+	write("plugins/a/child/go.mod", "module example.com/a/child\n\ngo 1.21\n")
+	write("plugins/a/child/main.go", "package main\n\nfunc main() {}\n")
+
+	report, _, err := CheckDependencies(tmpDir, CheckOptions{})
+	if err != nil {
+		t.Fatalf("CheckDependencies failed: %v", err)
+	}
+	if report.NestedModules != 2 {
+		t.Fatalf("expected 2 nested modules, got %d", report.NestedModules)
+	}
+	if report.TotalGoFiles != 2 {
+		t.Fatalf("expected 2 unique Go files, got %d", report.TotalGoFiles)
+	}
+}
+
 // Nested modules get the same go.sum / duplicate-require checks as root.
 func TestCheckDependenciesNestedHygiene(t *testing.T) {
 	tmpDir := t.TempDir()

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
@@ -86,6 +87,17 @@ type nestedRequire struct {
 	file string
 }
 
+// underCountedModule reports whether dir lies inside any of the given module
+// directories (whose source scans therefore already include dir's files).
+func underCountedModule(dir string, counted []string) bool {
+	for _, c := range counted {
+		if strings.HasPrefix(dir, c+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 func appendUnique(list []string, s string) []string {
 	for _, v := range list {
 		if v == s {
@@ -106,6 +118,7 @@ func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []ne
 	rootMod := filepath.Join(root, "go.mod")
 	var findings []review.Finding
 	var requires []nestedRequire
+	var countedDirs []string
 
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -141,10 +154,13 @@ func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []ne
 		report.NestedModules++
 		report.DirectDeps += modReport.DirectDeps
 		report.IndirectDeps += modReport.IndirectDeps
-		// A root module's source scan already walks nested directories;
-		// only count nested files when there is no root module.
-		if !report.IsGoModule {
+		// A module's source scan already walks nested directories, including
+		// child modules. Only count files for top-most modules: skip when
+		// there is a root module, or when an ancestor nested module was
+		// already counted (WalkDir visits parents before children).
+		if !report.IsGoModule && !underCountedModule(modDir, countedDirs) {
 			report.TotalGoFiles += modReport.TotalGoFiles
+			countedDirs = append(countedDirs, modDir)
 		}
 		for i := range modFindings {
 			file := modFindings[i].File
