@@ -702,14 +702,33 @@ func (r TaintRule) checkPackage(blocks []diffSourceBlock) []Finding {
 			Severity:    best.severity,
 			Confidence:  best.confidence,
 			File:        block.file,
-			Line:        hits[0].line,
-			Signature:   fn.name,
+			Line:        best.line,
+			Signature:   taintFuncSignature(segText, fn.name),
 			Message:     fmt.Sprintf("%s sink(s) reached by %s in %s (%s, %d site%s)%s", best.kind, via, fn.name, strings.Join(calls, ", "), len(hits), map[bool]string{true: "", false: "s"}[len(hits) == 1], best.suffix),
 			Remediation: "Validate and constrain request-derived values before filesystem, serving, or exec sinks; prefer filepath.Base/allowlists and reject path separators.",
 			Evidence:    ev,
 		})
 	}
 	return findings
+}
+
+// taintFuncSignature returns a stable identity for a function's rolled-up
+// request-taint finding. It uses the normalized declaration header (up to
+// the parameter list) so methods with the same name on different receivers
+// (e.g. (*A).Save vs (*B).Save) do not collapse into one grouped finding.
+func taintFuncSignature(segText, name string) string {
+	header := segText
+	if nl := strings.IndexByte(header, '\n'); nl >= 0 {
+		header = header[:nl]
+	}
+	if idx := strings.Index(header, name+"("); idx >= 0 {
+		header = header[:idx+len(name)]
+	}
+	header = strings.Join(strings.Fields(header), " ")
+	if !strings.HasPrefix(header, "func") {
+		return name
+	}
+	return header
 }
 
 // splitTopLevelArgs splits a call argument list on commas at paren depth 0.

@@ -558,7 +558,7 @@ func writeBoth(path, data string) error {
 	if len(f.Evidence) < 2 {
 		t.Fatalf("expected evidence for both sink sites, got %+v", f.Evidence)
 	}
-	if f.Signature != "writeBoth" {
+	if f.Signature != "func writeBoth" {
 		t.Fatalf("expected function signature, got %q", f.Signature)
 	}
 }
@@ -607,5 +607,69 @@ func main() {
 	}
 	if hit.Severity != "high" {
 		t.Fatalf("expected high severity for direct handler sink, got %s", hit.Severity)
+	}
+}
+
+// Same-named methods on different receivers must not share a finding
+// signature, otherwise GroupFindings merges unrelated flows.
+func TestTaintRuleSameNamedMethodsDistinctSignatures(t *testing.T) {
+	src := `package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+)
+
+type RPCRequest struct {
+	Params json.RawMessage ` + "`json:\"params,omitempty\"`" + `
+}
+
+type A struct{}
+type B struct{}
+
+func (a *A) Save() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var req RPCRequest
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			continue
+		}
+		var params struct {
+			Path string ` + "`json:\"path\"`" + `
+		}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			continue
+		}
+		_ = os.WriteFile(params.Path, []byte("a"), 0644)
+	}
+}
+
+func (b *B) Save() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var req RPCRequest
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			continue
+		}
+		var params struct {
+			Path string ` + "`json:\"path\"`" + `
+		}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			continue
+		}
+		_ = os.Remove(params.Path)
+	}
+}
+`
+	findings := (TaintRule{}).Check(goDiff("plugin/main.go", src))
+	sigs := map[string]bool{}
+	for _, f := range findings {
+		if f.Rule == "request-taint" {
+			sigs[f.Signature] = true
+		}
+	}
+	if len(sigs) != 2 {
+		t.Fatalf("expected 2 distinct signatures for (*A).Save and (*B).Save, got %v", sigs)
 	}
 }
