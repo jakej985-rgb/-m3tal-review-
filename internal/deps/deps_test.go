@@ -431,3 +431,67 @@ func TestCheckDependenciesNestedModules(t *testing.T) {
 		t.Fatalf("expected findings attributed to plugins/a/go.mod, got %+v", findings)
 	}
 }
+
+// License findings for a module required by several manifests are emitted
+// once per requiring manifest; unmapped modules fall back to root go.mod.
+func TestEvaluateLicensePolicyWithFilesAttribution(t *testing.T) {
+	licenses := map[string]LicenseInfo{
+		"example.com/lgpl":     {License: "LGPL-3.0"},
+		"example.com/rootonly": {License: "GPL-3.0"},
+	}
+	modFiles := map[string][]string{
+		"example.com/lgpl": {"plugins/a/go.mod", "plugins/b/go.mod"},
+	}
+	findings := EvaluateLicensePolicyWithFiles(licenses, LicensePolicy{Allow: []string{"MIT"}}, modFiles)
+	files := map[string]bool{}
+	for _, f := range findings {
+		files[f.File+"|"+f.Metadata["package"]] = true
+	}
+	for _, want := range []string{
+		"plugins/a/go.mod|example.com/lgpl",
+		"plugins/b/go.mod|example.com/lgpl",
+		"go.mod|example.com/rootonly",
+	} {
+		if !files[want] {
+			t.Fatalf("missing finding %q, got %+v", want, findings)
+		}
+	}
+	if len(findings) != 3 {
+		t.Fatalf("expected 3 findings, got %d: %+v", len(findings), findings)
+	}
+}
+
+// Nested modules get the same go.sum / duplicate-require checks as root.
+func TestCheckDependenciesNestedHygiene(t *testing.T) {
+	tmpDir := t.TempDir()
+	nested := filepath.Join(tmpDir, "plugins", "a")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mod := "module example.com/a\n\ngo 1.21\n\nrequire example.com/lib v1.0.0\nrequire example.com/lib v1.1.0\n"
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte(mod), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sum := "example.com/lib v1.0.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n" +
+		"example.com/lib v1.0.0 h1:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=\n"
+	if err := os.WriteFile(filepath.Join(nested, "go.sum"), []byte(sum), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, findings, err := CheckDependencies(tmpDir, CheckOptions{})
+	if err != nil {
+		t.Fatalf("CheckDependencies failed: %v", err)
+	}
+	var sawDup, sawSum bool
+	for _, f := range findings {
+		if f.Rule == "go-module-duplicate-dependency" && f.File == "plugins/a/go.mod" {
+			sawDup = true
+		}
+		if f.Rule == "go-sum-checksum-conflict" && f.File == "plugins/a/go.sum" {
+			sawSum = true
+		}
+	}
+	if !sawDup || !sawSum {
+		t.Fatalf("expected nested duplicate-require and go.sum conflict findings (dup=%v sum=%v), got %+v", sawDup, sawSum, findings)
+	}
+}

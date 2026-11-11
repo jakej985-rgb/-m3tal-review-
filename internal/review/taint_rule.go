@@ -717,12 +717,13 @@ func (r TaintRule) checkPackage(blocks []diffSourceBlock) []Finding {
 // the parameter list) so methods with the same name on different receivers
 // (e.g. (*A).Save vs (*B).Save) do not collapse into one grouped finding.
 func taintFuncSignature(segText, name string) string {
+	// Cut at the method name rather than the first newline so receivers
+	// split across lines (`func (\n\ta *A) Save(`) still include the type.
 	header := segText
-	if nl := strings.IndexByte(header, '\n'); nl >= 0 {
-		header = header[:nl]
-	}
 	if idx := strings.Index(header, name+"("); idx >= 0 {
 		header = header[:idx+len(name)]
+	} else if nl := strings.IndexByte(header, '\n'); nl >= 0 {
+		header = header[:nl]
 	}
 	header = strings.Join(strings.Fields(header), " ")
 	if !strings.HasPrefix(header, "func") {

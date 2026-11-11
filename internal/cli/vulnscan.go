@@ -66,6 +66,9 @@ type depRef struct {
 	Ecosystem string
 	Version   string
 	File      string
+	// AlsoFiles lists other manifests requiring the same name+version.
+	// OSV is queried once; findings are emitted for every manifest.
+	AlsoFiles []string
 }
 
 var (
@@ -135,14 +138,17 @@ func collectDependencies(root string) []depRef {
 	walk(root, 0)
 	// The same module version may be required by several manifests; the
 	// vulnerability is identical, so query OSV once per unique dep.
-	seen := make(map[[3]string]bool, len(deps))
+	seen := make(map[[3]string]int, len(deps))
 	uniq := deps[:0]
 	for _, d := range deps {
 		k := [3]string{d.Name, d.Ecosystem, d.Version}
-		if seen[k] {
+		if idx, ok := seen[k]; ok {
+			if uniq[idx].File != d.File {
+				uniq[idx].AlsoFiles = append(uniq[idx].AlsoFiles, d.File)
+			}
 			continue
 		}
-		seen[k] = true
+		seen[k] = len(uniq)
 		uniq = append(uniq, d)
 	}
 	deps = uniq
@@ -266,10 +272,8 @@ func queryOSV(ctx context.Context, deps []depRef) ([]review.Finding, error) {
 			break
 		}
 		d := deps[i]
+		files := append([]string{d.File}, d.AlsoFiles...)
 		for _, v := range result.Vulns {
-			if len(findings) >= maxVulnFindings {
-				return findings, nil
-			}
 			id := v.ID
 			if id == "" {
 				id = "OSV-UNKNOWN"
@@ -278,21 +282,26 @@ func queryOSV(ctx context.Context, deps []depRef) ([]review.Finding, error) {
 			msg = strings.TrimSpace(msg)
 			sev := cvssSeverity(v.Severity)
 			rawSev := cvssRawScore(v.Severity)
-			findings = append(findings, review.Finding{
-				Category:    "security",
-				Rule:        "dependency-cve",
-				Rules:       []string{"dependency-cve"},
-				Analyzers:   []string{"osv-api"},
-				Severity:    sev,
-				RawSeverity: rawSev,
-				Confidence:  "high",
-				AdvisoryID:  id,
-				AdvisoryIDs: []string{id},
-				File:        d.File,
-				Line:        1,
-				Message:     msg,
-				Remediation: "Upgrade " + d.Name + " to a non-vulnerable version (see " + id + ").",
-			})
+			for _, file := range files {
+				if len(findings) >= maxVulnFindings {
+					return findings, nil
+				}
+				findings = append(findings, review.Finding{
+					Category:    "security",
+					Rule:        "dependency-cve",
+					Rules:       []string{"dependency-cve"},
+					Analyzers:   []string{"osv-api"},
+					Severity:    sev,
+					RawSeverity: rawSev,
+					Confidence:  "high",
+					AdvisoryID:  id,
+					AdvisoryIDs: []string{id},
+					File:        file,
+					Line:        1,
+					Message:     msg,
+					Remediation: "Upgrade " + d.Name + " to a non-vulnerable version (see " + id + ").",
+				})
+			}
 		}
 	}
 	return findings, nil
