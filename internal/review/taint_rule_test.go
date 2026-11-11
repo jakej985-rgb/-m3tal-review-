@@ -505,3 +505,201 @@ func TestPlaintextSecretStorageCatchesTokenColumn(t *testing.T) {
 		t.Fatal("api_keys token TEXT column not flagged")
 	}
 }
+
+// Two functions reusing the same identifier must not share taint: only the
+// handler that derives debPath from request input may flag.
+func TestTaintRuleScopesTaintPerFunction(t *testing.T) {
+	src := `package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"os/exec"
+)
+
+type Req struct {
+	Package string ` + "`json:\"package\"`" + `
+}
+
+func InstallPlugin(w http.ResponseWriter, r *http.Request) {
+	var req Req
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	target := req.Package
+	debPath, _ := findPluginDeb(target)
+	cmd := exec.Command("sudo", "dpkg", "-i", debPath)
+	_ = cmd.Run()
+}
+
+func DownloadPluginDeb(w http.ResponseWriter, r *http.Request) {
+	debPath := "/var/cache/pkgs/tool.deb"
+	http.ServeFile(w, r, debPath)
+}
+`
+	findings := (TaintRule{}).Check(goDiff("api/plugins.go", src))
+	var taint []Finding
+	for _, f := range findings {
+		if f.Rule == "request-taint" {
+			taint = append(taint, f)
+		}
+	}
+	if len(taint) != 1 {
+		t.Fatalf("expected exactly 1 request-taint finding (InstallPlugin only), got %+v", taint)
+	}
+	if taint[0].Line > 20 {
+		t.Fatalf("finding should be in InstallPlugin (exec.Command ~line 18), got line %d", taint[0].Line)
+	}
+}
+
+// A sanitizer/validator call on the tainted identifier clears the flow.
+func TestTaintRuleClearsSanitizedIdentifier(t *testing.T) {
+	src := `package api
+
+import (
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func UninstallPlugin(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if _, err := sanitizePluginName(name); err != nil {
+		http.Error(w, "bad name", 400)
+		return
+	}
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".config", "m3tal", "plugins", name)
+	_ = os.RemoveAll(dir)
+}
+`
+	for _, f := range (TaintRule{}).Check(goDiff("api/plugins.go", src)) {
+		if f.Rule == "request-taint" {
+			t.Fatalf("sanitized name still flagged: %+v", f)
+		}
+	}
+}
+
+// Transformer-style guards: assignment through filepath.Base stays clean.
+func TestTaintRuleClearsTransformedIdentifier(t *testing.T) {
+	src := `package api
+
+import (
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func ServeIcon(w http.ResponseWriter, r *http.Request) {
+	raw := chi.URLParam(r, "file")
+	name := filepath.Base(raw)
+	_ = os.Remove(name)
+}
+`
+	for _, f := range (TaintRule{}).Check(goDiff("api/icons.go", src)) {
+		if f.Rule == "request-taint" {
+			t.Fatalf("filepath.Base-transformed value flagged: %+v", f)
+		}
+	}
+}
+
+// Unguarded taint in a function that validates elsewhere downgrades to medium.
+func TestTaintRuleDowngradesGuardedFunction(t *testing.T) {
+	src := `package api
+
+import (
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func Handler(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if _, err := sanitizePluginName(name); err != nil {
+		return
+	}
+	other := chi.URLParam(r, "other")
+	_ = os.RemoveAll(filepath.Join("/tmp/x", other))
+}
+`
+	var found *Finding
+	for _, f := range (TaintRule{}).Check(goDiff("api/x.go", src)) {
+		if f.Rule == "request-taint" {
+			cp := f
+			found = &cp
+		}
+	}
+	if found == nil {
+		t.Fatal("expected request-taint finding for unguarded 'other'")
+	}
+	if found.Severity != "medium" || found.Confidence != "medium" {
+		t.Fatalf("guarded-function finding = severity %s confidence %s; want medium/medium", found.Severity, found.Confidence)
+	}
+}
+
+// Manifest-declared names are taint sources in manifest-parsing files.
+func TestTaintRuleCatchesManifestNameToPath(t *testing.T) {
+	src := `package plugins
+
+import (
+	"os"
+	"path/filepath"
+
+	"gopkg.in/yaml.v3"
+)
+
+type Spec struct {
+	Name string ` + "`yaml:\"name\"`" + `
+}
+
+type Manifest struct {
+	Spec Spec ` + "`yaml:\"spec\"`" + `
+}
+
+func LoadConfig(m *Manifest) {
+	var m2 Manifest
+	_ = yaml.Unmarshal([]byte(""), &m2)
+	p := filepath.Join("/etc/plugins", m.Spec.Name, "config.json")
+	_, _ = os.ReadFile(p)
+}
+`
+	var found bool
+	for _, f := range (TaintRule{}).Check(goDiff("pkg/plugins/host.go", src)) {
+		if f.Rule == "request-taint" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("manifest-declared name reaching path sink not flagged")
+	}
+}
+
+// Env assignments with credential names flag even without os.Environ().
+func TestPluginTrustCatchesEnvAssignWithoutEnviron(t *testing.T) {
+	src := `package plugins
+
+import "os/exec"
+
+func start() {
+	cmd := exec.Command("./plugin")
+	cmd.Env = append(pluginBaseEnv(),
+		"M3TAL_API_KEY="+coreKey,
+		"M3TAL_API_TOKEN="+coreKey,
+	)
+	_ = cmd.Start()
+}
+`
+	var envCred bool
+	for _, f := range (PluginTrustRule{}).Check(goDiff("pkg/plugins/host.go", src)) {
+		if f.Rule == "plugin-trust" && strings.Contains(f.Message, "Credential-bearing") {
+			envCred = true
+		}
+	}
+	if !envCred {
+		t.Fatal("credential env assignment without os.Environ() not flagged")
+	}
+}

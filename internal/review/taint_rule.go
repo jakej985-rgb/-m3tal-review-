@@ -24,9 +24,16 @@ var (
 	goTaintBodyDecodeRe   = regexp.MustCompile(`json\.NewDecoder\([^)]*\.Body[^)]*\)\.Decode\s*\(\s*&?([A-Za-z_]\w*)`)
 	goTaintSinkRe         = regexp.MustCompile(`\b(?:os\.(?:RemoveAll|Remove|Rename|MkdirAll|WriteFile|Create|OpenFile|ReadFile|ReadDir|Stat|Lstat)|ioutil\.(?:ReadFile|WriteFile|ReadDir|TempFile)|http\.(?:ServeFile|ServeContent)|exec\.Command(?:Context)?|plugin\.Open)\s*\(`)
 	goTaintDirectSourceRe = regexp.MustCompile(`chi\.URLParam|\.URL\.Query\(\)\.Get|\.FormValue|\.PostFormValue|\.PathValue`)
-	goTaintAssignRe       = regexp.MustCompile(`(?m)^([^\n=;]{1,120}?)\s*(:=|=)\s*([^\n]{0,240})$`)
-	goTaintIdentRe        = regexp.MustCompile(`[A-Za-z_]\w*`)
-	goKeywords            = map[string]bool{
+	// Manifest-declared names (plugin.yaml spec/plugin fields) are attacker-
+	// controlled when a repo ships manifests; seed them as taint sources in
+	// files that parse manifests.
+	// .Manifest.Dir is excluded: it is assigned by plugin discovery
+	// (yaml:"-"), not parsed from the manifest, so it is not attacker input.
+	goManifestSourceRe   = regexp.MustCompile(`\.Manifest\.(?:Metadata|Spec|Config)\b|\.Spec\.(?:Name|Plugin|Command|Path)|\bsec\.Plugin\b|manifest\.\w*(?:Name|Plugin)`)
+	goManifestFileGateRe = regexp.MustCompile(`yaml\.Unmarshal|plugin\.yaml|\.Manifest\b|Manifest\s+\*?\w+|type\s+Manifest\b`)
+	goTaintAssignRe      = regexp.MustCompile(`(?m)^([^\n=;]{1,120}?)\s*(:=|=)\s*([^\n]{0,240})$`)
+	goTaintIdentRe       = regexp.MustCompile(`[A-Za-z_]\w*`)
+	goKeywords           = map[string]bool{
 		"if": true, "for": true, "while": true, "return": true, "var": true,
 		"const": true, "func": true, "else": true, "switch": true, "case": true,
 		"go": true, "defer": true, "range": true, "type": true, "struct": true,
@@ -82,53 +89,195 @@ func (r TaintRule) Check(diff string) []Finding {
 	return findings
 }
 
+// goFuncDeclRe matches top-level Go function/method declarations (column 0).
+// Anonymous funcs are always indented, so they stay inside their enclosing
+// declaration's segment.
+var goFuncDeclRe = regexp.MustCompile(`(?m)^func\s`)
+
+// goGuardCallRe matches calls that sanitize or validate a value: path/base
+// helpers, escaping functions, numeric parsers, and sanitize/validate/verify/
+// clean/escape/allowlist-style wrappers. Tainted data passing through these is
+// treated as guarded.
+var goGuardCallRe = regexp.MustCompile(`\b(?:filepath\.Base|filepath\.Rel|html\.EscapeString|template\.HTMLEscape|strconv\.Atoi|strconv\.ParseInt|strconv\.ParseUint|strconv\.ParseFloat|url\.QueryEscape|url\.PathEscape|sanitize[A-Za-z_]\w*|validate[A-Za-z_]\w*|verify[A-Za-z_]\w*|clean[A-Za-z_]\w*|escape[A-Za-z_]\w*|allowlist\w*|whitelist\w*)\s*\(`)
+
+// goFuncSegment is a top-level function's byte range within a file's code.
+type goFuncSegment struct {
+	start, end int
+}
+
+// goFuncSegments splits masked Go source into per-declaration regions so
+// taint cannot bleed between functions that reuse identifier names (e.g. two
+// handlers both declaring debPath).
+func goFuncSegments(code string) []goFuncSegment {
+	matches := goFuncDeclRe.FindAllStringIndex(code, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	segs := make([]goFuncSegment, 0, len(matches))
+	for i, m := range matches {
+		end := len(code)
+		if i+1 < len(matches) {
+			end = matches[i+1][0]
+		}
+		segs = append(segs, goFuncSegment{start: m[0], end: end})
+	}
+	return segs
+}
+
+// callArgsAt returns the argument text of the call whose '(' is at offset.
+func callArgsAt(code string, offset int) string {
+	open := strings.IndexByte(code[offset:], '(')
+	if open < 0 {
+		return ""
+	}
+	return sinkArgSpan(code, offset+open)
+}
+
+// stripGuardCalls removes sanitizer/validator call expressions (name through
+// closing paren) so tainted idents inside them do not propagate.
+func stripGuardCalls(text string) string {
+	for {
+		m := goGuardCallRe.FindStringIndex(text)
+		if m == nil {
+			return text
+		}
+		// Find the call's closing paren starting from the '(' the regex ended at.
+		open := strings.IndexByte(text[m[0]:], '(')
+		argStart := m[0] + open + 1
+		depth := 1
+		end := -1
+		for i := argStart; i < len(text) && i < argStart+4000; i++ {
+			switch text[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					end = i + 1
+				}
+			}
+			if end >= 0 {
+				break
+			}
+		}
+		if end < 0 {
+			return text
+		}
+		text = text[:m[0]] + " " + text[end:]
+	}
+}
+
+// guardedIdents returns identifiers passed as whole arguments to sanitizer or
+// validator calls within a code segment.
+func guardedIdents(segment string) map[string]bool {
+	out := make(map[string]bool)
+	for _, m := range goGuardCallRe.FindAllStringIndex(segment, -1) {
+		args := callArgsAt(segment, m[1]-1)
+		for _, arg := range splitTopLevelArgs(args) {
+			arg = strings.TrimSpace(arg)
+			ids := goTaintIdentRe.FindAllString(arg, -1)
+			// Only single-identifier arguments count: composite expressions
+			// like req.Package sanitize one field, not the whole struct.
+			if len(ids) == 1 && !goKeywords[ids[0]] {
+				out[ids[0]] = true
+			}
+		}
+	}
+	return out
+}
+
 func (r TaintRule) checkGoBlock(block diffSourceBlock) []Finding {
 	code := string(maskNonCode(block.file, block.text))
-	lines := strings.Split(code, "\n")
+	var findings []Finding
+	for _, seg := range goFuncSegments(code) {
+		findings = append(findings, r.checkFuncSegment(block, code, seg)...)
+	}
+	return findings
+}
+
+func (r TaintRule) checkFuncSegment(block diffSourceBlock, code string, seg goFuncSegment) []Finding {
+	segText := code[seg.start:seg.end]
+	lines := strings.Split(segText, "\n")
 
 	// Seed tainted identifiers from request sources.
 	tainted := make(map[string]bool)
-	for _, m := range goTaintSourceAssignRe.FindAllStringSubmatch(code, -1) {
+	for _, m := range goTaintSourceAssignRe.FindAllStringSubmatch(segText, -1) {
 		for _, id := range goTaintIdentRe.FindAllString(m[1], -1) {
 			if !goKeywords[id] {
 				tainted[id] = true
 			}
 		}
 	}
-	for _, m := range goTaintBodyDecodeRe.FindAllStringSubmatch(code, -1) {
+	for _, m := range goTaintBodyDecodeRe.FindAllStringSubmatch(segText, -1) {
 		tainted[m[1]] = true
+	}
+	// Manifest-declared identifiers only count as sources in files that
+	// actually parse manifests (plugin hosts, config loaders).
+	manifestGate := goManifestFileGateRe.MatchString(segText)
+	if manifestGate {
+		for _, m := range goTaintAssignRe.FindAllStringSubmatch(segText, -1) {
+			if !validAssignLHS(m[1]) || strings.HasPrefix(strings.TrimSpace(m[3]), "=") {
+				continue
+			}
+			cleanRHS := stripGuardCalls(m[3])
+			if !goManifestSourceRe.MatchString(cleanRHS) {
+				continue
+			}
+			if containsTaintedIdent(cleanRHS, tainted) {
+				continue // already tainted via request sources
+			}
+			for _, id := range goTaintIdentRe.FindAllString(m[1], -1) {
+				if !goKeywords[id] {
+					tainted[id] = true
+				}
+			}
+		}
 	}
 	if len(tainted) == 0 {
 		return nil
 	}
 
-	// Propagate taint through simple assignments: `x := f(tainted)` or
-	// `a, b := g(tainted, ...)` taints the LHS identifiers.
-	for pass := 0; pass < taintPropagationPasses; pass++ {
-		changed := false
-		for _, line := range lines {
-			m := goTaintAssignRe.FindStringSubmatch(line)
-			if m == nil || !validAssignLHS(m[1]) {
-				continue
-			}
-			lhs, rhs := m[1], m[3]
-			// Reject comparisons (==, <=, >=, !=): the operator group can match
-			// the first '=' of '==', leaving a rhs that starts with '='.
-			if strings.HasPrefix(strings.TrimSpace(rhs), "=") {
-				continue
-			}
-			if !containsTaintedIdent(rhs, tainted) {
-				continue
-			}
-			for _, id := range goTaintIdentRe.FindAllString(lhs, -1) {
-				if !goKeywords[id] && !tainted[id] {
-					tainted[id] = true
-					changed = true
+	// Sequential flow pass over the segment's lines. Taint evolves in source
+	// order so a validator cleans an identifier from its position onward
+	// instead of being undone by later re-propagation:
+	//  1. identifiers passed whole to a sanitizer/validator call are
+	//     untainted (validation gates like `if _, err := sanitizeX(v)`).
+	//  2. assignments whose RHS is entirely guard call(s) yield sanitized,
+	//     clean values (`p, err := validateX(raw)`), so the LHS is untainted.
+	//  3. assignments whose guard-stripped RHS references tainted identifiers
+	//     taint the LHS (`dir := filepath.Join(base, tainted)`).
+	for _, line := range lines {
+		for id := range guardedIdents(line) {
+			delete(tainted, id)
+		}
+		m := goTaintAssignRe.FindStringSubmatch(line)
+		if m == nil || !validAssignLHS(m[1]) {
+			continue
+		}
+		lhs, rhsRaw := m[1], m[3]
+		// Reject comparisons (==, <=, >=, !=): the operator group can match
+		// the first '=' of '==', leaving a rhs that starts with '='.
+		if strings.HasPrefix(strings.TrimSpace(rhsRaw), "=") {
+			continue
+		}
+		rhs := strings.TrimSpace(stripGuardCalls(rhsRaw))
+		lhsIds := goTaintIdentRe.FindAllString(lhs, -1)
+		if rhs == "" && strings.TrimSpace(rhsRaw) != "" {
+			// RHS was entirely guard call(s): sanitized output.
+			for _, id := range lhsIds {
+				if !goKeywords[id] {
+					delete(tainted, id)
 				}
 			}
+			continue
 		}
-		if !changed {
-			break
+		if !containsTaintedIdent(rhs, tainted) {
+			continue
+		}
+		for _, id := range lhsIds {
+			if !goKeywords[id] {
+				tainted[id] = true
+			}
 		}
 	}
 
@@ -137,22 +286,24 @@ func (r TaintRule) checkGoBlock(block diffSourceBlock) []Finding {
 	// request-controlled *content* written to a fixed path is normal API
 	// behavior, not a vulnerability.
 	var findings []Finding
-	for _, m := range goTaintSinkRe.FindAllStringIndex(code, -1) {
-		callName := sinkCallName(code, m[0])
-		args := sinkArgSpan(code, m[1]-1)
+	funcHasGuards := goGuardCallRe.MatchString(segText)
+	for _, m := range goTaintSinkRe.FindAllStringIndex(segText, -1) {
+		callName := sinkCallName(segText, m[0])
+		args := sinkArgSpan(segText, m[1]-1)
 		if args == "" {
 			continue
 		}
-		scope := taintRelevantArgs(callName, args)
+		scope := stripGuardCalls(taintRelevantArgs(callName, args))
 		if scope == "" {
 			continue
 		}
-		direct := goTaintDirectSourceRe.MatchString(scope)
+		direct := goTaintDirectSourceRe.MatchString(scope) ||
+			(manifestGate && goManifestSourceRe.MatchString(scope))
 		indirect := containsTaintedIdent(scope, tainted)
 		if !direct && !indirect {
 			continue
 		}
-		line := lineAtOffset(block.firstLine, code, m[0])
+		line := lineAtOffset(block.firstLine, code, seg.start+m[0])
 		if !block.addedLines[line] {
 			continue
 		}
@@ -164,13 +315,25 @@ func (r TaintRule) checkGoBlock(block diffSourceBlock) []Finding {
 		if indirect && !direct {
 			via = "variable assigned from request input"
 		}
+		severity := "high"
+		confidence := "high"
+		suffix := ""
+		if funcHasGuards {
+			// The function applies validation somewhere; the sink may still
+			// be reachable through an unguarded path, so keep the signal but
+			// mark it for manual verification.
+			severity = "medium"
+			confidence = "medium"
+			suffix = " (guarded function — verify coverage)"
+		}
 		findings = append(findings, Finding{
 			Category:    "security",
 			Rule:        "request-taint",
-			Severity:    "high",
+			Severity:    severity,
+			Confidence:  confidence,
 			File:        block.file,
 			Line:        line,
-			Message:     fmt.Sprintf("%s sink reached by %s (%s)", kind, via, sinkCallName(code, m[0])),
+			Message:     fmt.Sprintf("%s sink reached by %s (%s)%s", kind, via, sinkCallName(segText, m[0]), suffix),
 			Remediation: "Validate and constrain request-derived values before filesystem, serving, or exec sinks; prefer filepath.Base/allowlists and reject path separators.",
 		})
 	}
@@ -340,6 +503,10 @@ var (
 	pluginAutoStartRe = regexp.MustCompile(`(?i)auto.?start|DiscoverAnd\w*Start|LoadAndStart`)
 	pluginExecRe      = regexp.MustCompile(`\bexec\.Command(?:Context)?\s*\(`)
 	pluginEnvCredRe   = regexp.MustCompile(`os\.Environ\(\)[^;]{0,400}["'][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Za-z0-9_]*=?["']\s*\+`)
+	// pluginEnvCredAssignRe catches credential env vars appended to a
+	// subprocess Env field without requiring os.Environ() passthrough, e.g.
+	// `cmd.Env = append(baseEnv(), "M3TAL_API_KEY="+key)`.
+	pluginEnvCredAssignRe = regexp.MustCompile(`(?s)\b\w+\.Env\s*[:=][^;]{0,800}?["'][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Za-z0-9_]*=?["']`)
 )
 
 func (r PluginTrustRule) Check(diff string) []Finding {
@@ -352,7 +519,7 @@ func (r PluginTrustRule) Check(diff string) []Finding {
 		isPluginFile := strings.Contains(strings.ToLower(block.file), "plugin")
 		hasAutoStart := pluginAutoStartRe.MatchString(code)
 		// Literal-bearing patterns run on raw text (maskNonCode blanks strings).
-		hasEnvCred := pluginEnvCredRe.MatchString(block.text)
+		hasEnvCred := pluginEnvCredRe.MatchString(block.text) || pluginEnvCredAssignRe.MatchString(block.text)
 		if !hasAutoStart && !hasEnvCred && !(isPluginFile && pluginCwdPathRe.MatchString(block.text)) {
 			continue
 		}
@@ -364,7 +531,7 @@ func (r PluginTrustRule) Check(diff string) []Finding {
 func pluginFindingsForBlock(block diffSourceBlock, code string, isPluginFile bool) []Finding {
 	var findings []Finding
 	seen := make(map[int]bool)
-	emit := func(offset int, severity, message, remediation string) {
+	emit := func(offset int, severity, confidence, message, remediation string) {
 		line := lineAtOffset(block.firstLine, code, offset)
 		if seen[line] || !block.addedLines[line] {
 			return
@@ -374,6 +541,7 @@ func pluginFindingsForBlock(block diffSourceBlock, code string, isPluginFile boo
 			Category:    "security",
 			Rule:        "plugin-trust",
 			Severity:    severity,
+			Confidence:  confidence,
 			File:        block.file,
 			Line:        line,
 			Message:     message,
@@ -383,13 +551,15 @@ func pluginFindingsForBlock(block diffSourceBlock, code string, isPluginFile boo
 	// Auto-start files: flag executable launches of discovered plugin commands.
 	if pluginAutoStartRe.MatchString(code) {
 		for _, m := range pluginExecRe.FindAllStringIndex(code, -1) {
-			emit(m[0], "high", "Plugin/subprocess auto-start executes a command discovered at runtime", "Require explicit user consent or an allowlist before executing discovered plugin commands; do not auto-start code found on disk.")
+			emit(m[0], "high", "medium", "Plugin/subprocess auto-start executes a command discovered at runtime", "Require explicit user consent or an allowlist before executing discovered plugin commands; do not auto-start code found on disk.")
 		}
 	}
 	// Credential variables injected into subprocess environments (raw text:
 	// the env var names are string literals that masking would blank).
-	for _, m := range pluginEnvCredRe.FindAllStringIndex(block.text, -1) {
-		emit(m[0], "medium", "Credential-bearing environment variables passed to plugin subprocess", "Pass only the minimum required credentials to plugins; prefer scoped, revocable tokens over primary API keys.")
+	for _, re := range []*regexp.Regexp{pluginEnvCredRe, pluginEnvCredAssignRe} {
+		for _, m := range re.FindAllStringIndex(block.text, -1) {
+			emit(m[0], "medium", "medium", "Credential-bearing environment variables passed to plugin subprocess", "Pass only the minimum required credentials to plugins; prefer scoped, revocable tokens over primary API keys.")
+		}
 	}
 	// CWD-relative plugin search paths in plugin host code. A bare "plugins"
 	// literal is only suspicious outside path-join calls: filepath.Join(home,
@@ -403,7 +573,7 @@ func pluginFindingsForBlock(block diffSourceBlock, code string, isPluginFile boo
 					continue
 				}
 			}
-			emit(m[0], "medium", "Plugin discovery searches a working-directory-relative path", "Resolve plugin directories against the user config/home directory or an explicit trusted path, not the process CWD.")
+			emit(m[0], "medium", "high", "Plugin discovery searches a working-directory-relative path", "Resolve plugin directories against the user config/home directory or an explicit trusted path, not the process CWD.")
 		}
 	}
 	return findings

@@ -164,6 +164,10 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "timing-unsafe-compare", severity: "low",
 			remediation: "Use constant-time comparison (crypto/subtle ConstantTimeCompare or hmac.Equal in Go; hmac.compare_digest in Python; crypto.timingSafeEqual in Node.js).",
+			// Test files and empty-literal comparisons are not secret-vs-secret
+			// timing risks.
+			excludePattern: regexp.MustCompile(`(^|/)[^/]*_test\.go$`),
+			skipLine:       regexp.MustCompile(`==\s*(?:""|''|nil\b|0\b)|!=\s*(?:""|''|nil\b|0\b)`),
 			patterns: []langPattern{
 				{language.LanguagePython, regexp.MustCompile(`(?i)(?:\b(?:password|passwd|secret|token|api_?key|signature|mac|hash|digest)\w*\s*={2,3}\s*|={2,3}\s*(?:password|passwd|secret|token|api_?key|signature|mac|hash|digest)\w*\b)`), "Possible timing-unsafe comparison of secret material"},
 				{language.LanguageJavaScript, regexp.MustCompile(`(?i)(?:\b(?:password|passwd|secret|token|api_?key|signature|hash|digest)\w*\s*===?\s*|===?\s*(?:password|passwd|secret|token|api_?key|signature|hash|digest)\w*\b)`), "Possible timing-unsafe comparison of secret material"},
@@ -397,6 +401,9 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "log-injection", severity: "low",
 			remediation: "Sanitize or encode user input before writing to logs to prevent log forging.",
+			// Lines that pass request data through a sanitizer/escaper are not
+			// raw log-forging vectors.
+			skipLine: regexp.MustCompile(`(?i)(?:sanitize|escape|clean|htmlescape|queryescape|pathexcape|marshal|quote)\w*\s*\(`),
 			patterns: []langPattern{
 				{language.LanguageGo, regexp.MustCompile(`\blog\.\w+\s*\([^)]{0,120}?(?:\.URL\b|\.URI\b|r\.Host|request\.)`), "User-controlled data written to logs"},
 				{language.LanguagePython, regexp.MustCompile(`\b(?:print|logging\.\w+|logger\.\w+)\s*\([^)]{0,120}?request\.`), "User-controlled data written to logs"},

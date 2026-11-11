@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- `cleartext-transport` and `unauthenticated-route` rules: plain-HTTP servers
+  handling credentials, and parameterized routes mounted outside the
+  authenticated `/api` namespace
+- Manifest-declared names (plugin.yaml/spec fields) are taint sources in
+  manifest-parsing files
+- `coverage.complete` flag in audit reports and `confidence` on taint/trust
+  findings
+- `audit --with-slop`: `code-slop` is now skipped by default in audit so
+  security findings are not buried under style noise
 - ~70 deterministic detector rules across injection, secrets/crypto,
   transport, supply-chain/CI, IaC, and language-specific checks
 - Go AST correctness suite (unclosed resources, ignored errors, unchecked
@@ -56,6 +65,13 @@
 - `server-timeouts` recognizes `http.Server` literals that configure timeout
   fields; `websocket-origin` only fires when `CheckOrigin` unconditionally
   returns true
+- `request-taint` is now function-scoped (no cross-function identifier bleed),
+  recognizes sanitizer/validator guards (`filepath.Base`/`Rel`, escaping,
+  `strconv` parsers, `sanitize*`/`validate*` wrappers) and downgrades guarded
+  functions to medium with a "verify coverage" note and `confidence` field
+- `plugin-trust` detects credential env vars appended to `cmd.Env` even
+  without `os.Environ()` passthrough
+- Audit reports expose `coverage.complete`; `auditCacheSchema` bumped to 3
 
 ### Notes
 - Detector rules are heuristic; see `docs/threat-model.md` for scope and

@@ -1321,7 +1321,9 @@ func TestAuditAnalyzesUnstagedAndUntrackedWorkingTreeWithoutChangingIndex(t *tes
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(originalDir) })
-	output, auditErr := captureOutput(func() error { return execute("audit") })
+	// --with-slop: the planted `valid == true` pattern is a code-slop finding,
+	// which audit skips by default.
+	output, auditErr := captureOutput(func() error { return execute("audit", "--with-slop") })
 	if auditErr == nil || !strings.Contains(auditErr.Error(), "audit found") {
 		t.Fatalf("audit error = %v, want finding error; output:\n%s", auditErr, output)
 	}

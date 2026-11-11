@@ -30,6 +30,8 @@ var ruleCatalog = []ruleDoc{
 	{"privileged-pkg-exec", "Package managers or privilege wrappers (sudo, dpkg, apt, systemctl) executed from HTTP handler code.", "exec.Command(\"sudo\", \"dpkg\", \"-i\", debPath)"},
 	{"process-kill-abuse", "Process termination whose target PID may be request-controlled.", "proc.Kill() // pid from chi.URLParam"},
 	{"credential-in-query", "Credentials read from URL query parameters (leak via logs, history, referrers).", "r.URL.Query().Get(\"token\")"},
+	{"cleartext-transport", "Plain-HTTP server serving credential-bearing endpoints with no TLS configuration.", "http.ListenAndServe(\":8080\", handler)"},
+	{"unauthenticated-route", "Parameterized route registered outside the authenticated API namespace in a file that uses auth middleware.", "r.Get(\"/plugins/{name}/*\", handler)"},
 	{"weak-cryptography", "MD5/SHA-1/DES/RC4 for security purposes; math/rand/random/Math.random for token-like values.", "md5.Sum(data)"},
 	{"unsafe-deserialization", "pickle/marshal/yaml.load/unserialize/node-serialize of untrusted data.", "pickle.loads(blob)"},
 	{"dangerous-eval", "eval/exec/new Function/string setTimeout/assert-style dynamic execution.", "eval(userInput)"},
