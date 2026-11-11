@@ -492,3 +492,120 @@ func f(h http.Header) {
 		}
 	}
 }
+
+// Multiple filesystem sinks inside one helper reached only via a call edge
+// roll up into a single medium finding with per-site evidence.
+func TestTaintRuleRollsUpHelperSinks(t *testing.T) {
+	mainSrc := `package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+)
+
+type RPCRequest struct {
+	Params json.RawMessage ` + "`json:\"params,omitempty\"`" + `
+}
+
+func main() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var req RPCRequest
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			continue
+		}
+		var params struct {
+			Path string ` + "`json:\"path\"`" + `
+			Data string ` + "`json:\"data\"`" + `
+		}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			continue
+		}
+		_ = writeBoth(params.Path, params.Data)
+	}
+}
+`
+	helperSrc := `package main
+
+import "os"
+
+func writeBoth(path, data string) error {
+	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+		return err
+	}
+	return os.Remove(path + ".tmp")
+}
+`
+	diff := goPkgDiff(map[string]string{
+		"plugin/main.go":   mainSrc,
+		"plugin/helper.go": helperSrc,
+	})
+	findings := (TaintRule{}).Check(diff)
+	var hits []Finding
+	for _, f := range findings {
+		if f.Rule == "request-taint" && f.File == "plugin/helper.go" {
+			hits = append(hits, f)
+		}
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 rolled-up finding for writeBoth, got %d: %+v", len(hits), hits)
+	}
+	f := hits[0]
+	if f.Severity != "medium" {
+		t.Fatalf("expected medium severity for inferred helper sinks, got %s", f.Severity)
+	}
+	if len(f.Evidence) < 2 {
+		t.Fatalf("expected evidence for both sink sites, got %+v", f.Evidence)
+	}
+	if f.Signature != "writeBoth" {
+		t.Fatalf("expected function signature, got %q", f.Signature)
+	}
+}
+
+// A sink in the RPC handler itself (direct seed taint, no call edge) stays high.
+func TestTaintRuleDirectHandlerSinkStaysHigh(t *testing.T) {
+	mainSrc := `package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+)
+
+type RPCRequest struct {
+	Params json.RawMessage ` + "`json:\"params,omitempty\"`" + `
+}
+
+func main() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var req RPCRequest
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			continue
+		}
+		var params struct {
+			Path string ` + "`json:\"path\"`" + `
+		}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			continue
+		}
+		_ = os.WriteFile(params.Path, []byte("x"), 0644)
+	}
+}
+`
+	diff := goDiff("plugin/main.go", mainSrc)
+	findings := (TaintRule{}).Check(diff)
+	var hit *Finding
+	for i, f := range findings {
+		if f.Rule == "request-taint" {
+			hit = &findings[i]
+		}
+	}
+	if hit == nil {
+		t.Fatalf("expected request-taint finding, got %+v", findings)
+	}
+	if hit.Severity != "high" {
+		t.Fatalf("expected high severity for direct handler sink, got %s", hit.Severity)
+	}
+}

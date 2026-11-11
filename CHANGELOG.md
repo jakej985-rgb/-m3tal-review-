@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### Changed
+- `request-taint` findings roll up per function: multiple sinks in one
+  function produce a single finding with per-site evidence, and sinks
+  reached only through intra-package call edges are capped at medium for
+  filesystem targets (exec/outbound stay high). This removes inflated
+  per-line duplicates on shared helpers like atomicWriteFile/runCmd.
+- `unpinned-action` and `unpinned-image` now key findings by the matched
+  reference, so each distinct unpinned `uses:`/`image:` produces its own
+  finding instead of collapsing into one per file.
+- `audit --vuln-scan` and `check-deps` now cover multi-module repositories:
+  manifests (go.mod, package.json, requirements.txt) are discovered by
+  walking the tree (vendor/node_modules excluded, depth-bounded) instead of
+  only reading root-level files, and `check-deps` reports nested-module
+  hygiene findings plus license checks across all module requirements.
 - `request-taint` is now package-scoped: JSON-RPC plugin packages (stdin
   scanner + `json.Unmarshal(line/req.Params, ...)`) seed taint, and taint
   propagates through intra-package call edges to a bounded fixpoint. Sinks

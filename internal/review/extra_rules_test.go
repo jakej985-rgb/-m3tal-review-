@@ -489,3 +489,22 @@ func TestPhase1PairedPositiveNegativeFixtures(t *testing.T) {
 		})
 	}
 }
+
+func TestUnpinnedActionDistinctSignatures(t *testing.T) {
+	r := rulesByName(t, "unpinned-action")[0]
+	content := "name: ci\non: push\njobs:\n  test:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-go@v5\n      - uses: softprops/action-gh-release@v2\n"
+	findings := r.Check(extraDiff(".github/workflows/ci.yml", content))
+	if len(findings) != 3 {
+		t.Fatalf("expected 3 findings for 3 unpinned uses, got %d: %+v", len(findings), findings)
+	}
+	sigs := map[string]bool{}
+	for _, f := range findings {
+		if f.Signature == "" {
+			t.Fatalf("expected signature from match, got empty: %+v", f)
+		}
+		sigs[f.Signature] = true
+	}
+	if len(sigs) != 3 {
+		t.Fatalf("expected 3 distinct signatures, got %v", sigs)
+	}
+}

@@ -15,8 +15,9 @@ calls except when explicitly asked (`--with-tools` scanners, `--check-run`).
 - **Not a replacement for gosec, eslint, CodeQL, or a SAST pipeline.** It has
   no interprocedural or cross-file dataflow, no type resolution beyond Go's
   stdlib AST, and no vulnerability database. The `request-taint` rule tracks
-  request sources through simple assignments within a single function only; it
-  does not follow values across functions, packages, or goroutines. Tainted
+  request sources through assignments and intra-package call edges (bounded
+  fixpoint); it does not follow values across packages, through interfaces,
+  reflection, or goroutine boundaries. Tainted
   identifiers passed through recognized sanitizer/validator calls
   (`filepath.Base`, `filepath.Rel`, `html.EscapeString`, `strconv` parsers,
   `sanitize*`/`validate*`/`verify*` wrappers) are treated as guarded, and

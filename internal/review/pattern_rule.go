@@ -67,6 +67,10 @@ type patternRule struct {
 	// GitHub context interpolation in workflows).
 	lineSeverityPattern *regexp.Regexp
 	lineSeverity        string
+	// signatureFromMatch, when set, uses the normalized matched text as the
+	// finding signature so distinct matches in one file (e.g. different
+	// unpinned actions) are not collapsed into a single grouped finding.
+	signatureFromMatch bool
 }
 
 func (r *patternRule) Name() string { return r.name }
@@ -119,6 +123,10 @@ func (r *patternRule) Check(diff string) []Finding {
 						r.lineSeverityPattern.MatchString(lineContentAt(block.text, match[0]))) {
 					severity = r.lineSeverity
 				}
+				var signature string
+				if r.signatureFromMatch {
+					signature = strings.Join(strings.Fields(code[match[0]:match[1]]), " ")
+				}
 				findings = append(findings, Finding{
 					Rule:        r.name,
 					Severity:    severity,
@@ -126,6 +134,7 @@ func (r *patternRule) Check(diff string) []Finding {
 					Line:        line,
 					Message:     p.message,
 					Remediation: r.remediation,
+					Signature:   signature,
 				})
 			}
 		}

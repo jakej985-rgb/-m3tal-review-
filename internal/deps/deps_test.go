@@ -389,3 +389,45 @@ import (
 		t.Errorf("expected GPL license violation in findings")
 	}
 }
+
+func TestCheckDependenciesNestedModules(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// No root go.mod: only nested plugin modules.
+	nested := filepath.Join(tmpDir, "plugins", "a")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	badMod := "module example.com/a\n\ngo 1.21\n\nrequire (\n\tgithub.com/x/y v1.0.0\n"
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte(badMod), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// A vendored go.mod must be ignored.
+	vendored := filepath.Join(tmpDir, "plugins", "a", "vendor", "dep")
+	if err := os.MkdirAll(vendored, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vendored, "go.mod"), []byte("module example.com/v\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, findings, err := CheckDependencies(tmpDir, CheckOptions{})
+	if err != nil {
+		t.Fatalf("CheckDependencies failed: %v", err)
+	}
+	if report.NestedModules != 1 {
+		t.Fatalf("expected 1 nested module, got %d", report.NestedModules)
+	}
+	var sawFile bool
+	for _, f := range findings {
+		if f.File == "plugins/a/go.mod" {
+			sawFile = true
+		}
+		if f.File == "plugins/a/vendor/dep/go.mod" {
+			t.Fatalf("vendored go.mod produced finding: %+v", f)
+		}
+	}
+	if !sawFile {
+		t.Fatalf("expected findings attributed to plugins/a/go.mod, got %+v", findings)
+	}
+}

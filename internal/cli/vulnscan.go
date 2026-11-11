@@ -74,30 +74,78 @@ var (
 	npmVersionRe   = regexp.MustCompile(`^[\^~>=\s]*(v?\d+\.\d+\.\d+[^\s,"]*)`)
 )
 
-// collectDependencies parses supported manifests under root and returns
-// pinned dependency references. Missing manifests are ignored; parse
-// failures are non-fatal (that file simply contributes no deps).
+// manifestNames are the dependency manifests collectDependencies understands.
+var manifestNames = map[string]func(string, string) []depRef{
+	"go.mod":           parseGoMod,
+	"package.json":     parsePackageJSON,
+	"requirements.txt": parseRequirements,
+}
+
+// collectDependencies parses supported manifests anywhere under root and
+// returns pinned dependency references. Multi-module repositories (a go.mod
+// per plugin, package.json per workspace package) are all covered. Missing
+// manifests are ignored; parse failures are non-fatal (that file simply
+// contributes no deps). Vendored and dependency directories are skipped.
 func collectDependencies(root string) []depRef {
 	var deps []depRef
-	for _, rel := range []string{"go.mod", "package.json", "requirements.txt"} {
-		path := filepath.Join(root, filepath.FromSlash(rel))
-		info, err := os.Lstat(path)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			continue
+	skipDirs := map[string]bool{
+		".git": true, "vendor": true, "node_modules": true,
+		"dist": true, "build": true, "out": true,
+		".venv": true, "venv": true, "__pycache__": true,
+	}
+	const maxDepth = 8
+	var walk func(dir string, depth int)
+	walk = func(dir string, depth int) {
+		if depth > maxDepth {
+			return
 		}
-		data, err := os.ReadFile(path)
-		if err != nil || len(data) > 4<<20 {
-			continue
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
 		}
-		switch rel {
-		case "go.mod":
-			deps = append(deps, parseGoMod(string(data), rel)...)
-		case "package.json":
-			deps = append(deps, parsePackageJSON(string(data), rel)...)
-		case "requirements.txt":
-			deps = append(deps, parseRequirements(string(data), rel)...)
+		for _, e := range entries {
+			name := e.Name()
+			path := filepath.Join(dir, name)
+			if e.IsDir() {
+				if skipDirs[name] {
+					continue
+				}
+				walk(path, depth+1)
+				continue
+			}
+			parse, ok := manifestNames[name]
+			if !ok {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				continue
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || len(data) > 4<<20 {
+				continue
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				continue
+			}
+			deps = append(deps, parse(string(data), filepath.ToSlash(rel))...)
 		}
 	}
+	walk(root, 0)
+	// The same module version may be required by several manifests; the
+	// vulnerability is identical, so query OSV once per unique dep.
+	seen := make(map[[3]string]bool, len(deps))
+	uniq := deps[:0]
+	for _, d := range deps {
+		k := [3]string{d.Name, d.Ecosystem, d.Version}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		uniq = append(uniq, d)
+	}
+	deps = uniq
 	sort.Slice(deps, func(i, j int) bool {
 		if deps[i].File != deps[j].File {
 			return deps[i].File < deps[j].File

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -127,5 +129,64 @@ func TestRuleAllowed(t *testing.T) {
 	}
 	if ruleAllowed(nil, []string{"x"}, "x") {
 		t.Fatal("skip-list should block")
+	}
+}
+
+func TestCollectDependenciesMultiModule(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		p := root + "/" + rel
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module example.com/root\n\ngo 1.21\n\nrequire github.com/root/dep v1.0.0\n")
+	write("plugins/a/go.mod", "module example.com/plugin-a\n\ngo 1.21\n\nrequire github.com/plugin/dep v2.0.0\n")
+	write("plugins/b/go.mod", "module example.com/plugin-b\n\ngo 1.21\n\nrequire github.com/plugin/dep v2.0.0\nrequire github.com/other/lib v0.1.0\n")
+	write("plugins/b/vendor/x/go.mod", "module example.com/vendored\n\nrequire github.com/should/not v9.9.9\n")
+	write("plugins/b/node_modules/y/package.json", `{"dependencies":{"left-pad":"1.0.0"}}`)
+
+	deps := collectDependencies(root)
+	files := map[string]int{}
+	for _, d := range deps {
+		files[d.File]++
+	}
+	// plugin/dep v2.0.0 is required by both a and b but deduped to one dep,
+	// attributed to whichever manifest was walked first.
+	if files["go.mod"] != 1 || files["plugins/a/go.mod"] != 1 || files["plugins/b/go.mod"] != 1 {
+		t.Fatalf("unexpected dep file distribution: %+v", files)
+	}
+	// Duplicate module+version across manifests is queried once.
+	count := 0
+	for _, d := range deps {
+		if d.Name == "github.com/plugin/dep" && d.Version == "v2.0.0" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected deduped plugin/dep, got %d", count)
+	}
+	for _, d := range deps {
+		if strings.Contains(d.File, "vendor") || strings.Contains(d.File, "node_modules") {
+			t.Fatalf("dep from skipped dir: %+v", d)
+		}
+	}
+}
+
+func TestCollectDependenciesNestedOnly(t *testing.T) {
+	root := t.TempDir()
+	p := root + "/m3tal-compose/go.mod"
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("module example.com/compose\n\ngo 1.21\n\nrequire github.com/moby/moby v24.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deps := collectDependencies(root)
+	if len(deps) != 1 || deps[0].File != "m3tal-compose/go.mod" || deps[0].Name != "github.com/moby/moby" {
+		t.Fatalf("unexpected deps: %+v", deps)
 	}
 }
