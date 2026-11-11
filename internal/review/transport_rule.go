@@ -42,6 +42,12 @@ func (r CleartextTransportRule) Check(diff string) []Finding {
 			if hasTLS && strings.HasPrefix(code[m[0]:], "http.Server") {
 				continue
 			}
+			// With TLS elsewhere in the file, the credential terms may belong
+			// to the TLS listener's routes. Only flag this plaintext listener
+			// when its own handler is tied to credential-bearing code.
+			if hasTLS && !listenerHandlesCreds(block.text, code, m[1]) {
+				continue
+			}
 			line := lineAtOffset(block.firstLine, code, m[0])
 			if !block.addedLines[line] {
 				continue
@@ -59,6 +65,28 @@ func (r CleartextTransportRule) Check(diff string) []Finding {
 		}
 	}
 	return findings
+}
+
+// listenerHandlesCreds reports whether the handler passed to the
+// ListenAndServe call whose '(' ends at callEnd is referenced on any line that
+// also mentions credentials. A nil/default handler or an unparseable argument
+// is treated conservatively as credential-bearing.
+func listenerHandlesCreds(raw, code string, callEnd int) bool {
+	args := splitTopLevelArgs(sinkArgSpan(code, callEnd-1))
+	if len(args) < 2 {
+		return true
+	}
+	handler := strings.TrimSpace(args[1])
+	if handler == "" || handler == "nil" || !regexp.MustCompile(`^\w+$`).MatchString(handler) {
+		return true
+	}
+	identRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(handler) + `\b`)
+	for _, ln := range strings.Split(raw, "\n") {
+		if identRe.MatchString(ln) && cleartextCredRe.MatchString(ln) {
+			return true
+		}
+	}
+	return false
 }
 
 // UnauthenticatedRouteRule flags parameterized/wildcard HTTP routes registered

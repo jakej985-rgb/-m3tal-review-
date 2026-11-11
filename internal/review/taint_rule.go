@@ -167,6 +167,34 @@ func stripGuardCalls(text string) string {
 	}
 }
 
+// splitGoStatements splits masked code on newlines and ';' (string literals
+// are already blanked by masking), returning each statement and its offset.
+func splitGoStatements(code string) ([]string, []int) {
+	var stmts []string
+	var starts []int
+	start := 0
+	for i := 0; i <= len(code); i++ {
+		if i == len(code) || code[i] == '\n' || code[i] == ';' {
+			stmts = append(stmts, code[start:i])
+			starts = append(starts, start)
+			start = i + 1
+		}
+	}
+	return stmts, starts
+}
+
+// stmtIndexAt returns the index of the statement containing offset.
+func stmtIndexAt(starts []int, offset int) int {
+	idx := -1
+	for i, s := range starts {
+		if s > offset {
+			break
+		}
+		idx = i
+	}
+	return idx
+}
+
 // goValidatorCallRe matches validation-style calls that gate their argument
 // (as opposed to transformers whose return value is the clean data).
 var goValidatorCallRe = regexp.MustCompile(`\b(?:sanitize[A-Za-z_]\w*|validate[A-Za-z_]\w*|verify[A-Za-z_]\w*|allowlist\w*|whitelist\w*)\s*\(`)
@@ -211,7 +239,10 @@ func (r TaintRule) checkGoBlock(block diffSourceBlock) []Finding {
 
 func (r TaintRule) checkFuncSegment(block diffSourceBlock, code string, seg goFuncSegment) []Finding {
 	segText := code[seg.start:seg.end]
-	lines := strings.Split(segText, "\n")
+	// Statements (split on newlines and ';') are the unit of flow ordering so
+	// `x := f(t); sink(x)` and `if err := validate(v); err == nil { sink(v) }`
+	// resolve each sink against the state immediately preceding it.
+	lines, stmtStarts := splitGoStatements(segText)
 
 	// Seed tainted identifiers from request sources.
 	tainted := make(map[string]bool)
@@ -326,10 +357,10 @@ func (r TaintRule) checkFuncSegment(block diffSourceBlock, code string, seg goFu
 		}
 		direct := goTaintDirectSourceRe.MatchString(scope) ||
 			(manifestGate && goManifestSourceRe.MatchString(scope))
-		lineIdx := strings.Count(segText[:m[0]], "\n")
+		stmtIdx := stmtIndexAt(stmtStarts, m[0])
 		stateAtSink := tainted
-		if lineIdx < len(snapshots) {
-			stateAtSink = snapshots[lineIdx]
+		if stmtIdx >= 0 && stmtIdx < len(snapshots) {
+			stateAtSink = snapshots[stmtIdx]
 		}
 		indirect := containsTaintedIdent(scope, stateAtSink)
 		if !direct && !indirect {
