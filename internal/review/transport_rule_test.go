@@ -143,3 +143,55 @@ func NewRouter(r chi.Router) chi.Router {
 		}
 	}
 }
+
+// A plain-HTTP health listener alongside a TLS API listener is not flagged.
+func TestCleartextTransportSkipsHealthListenerBesideTLS(t *testing.T) {
+	src := `package api
+
+import "net/http"
+
+func APIHandler(w http.ResponseWriter, r *http.Request) {
+	token := r.Header.Get("Authorization")
+	_ = token
+}
+
+func main() {
+	apiRouter := http.NewServeMux()
+	apiRouter.HandleFunc("/v1", APIHandler)
+	healthRouter := http.NewServeMux()
+	healthRouter.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {})
+	go http.ListenAndServeTLS(":443", "cert.pem", "key.pem", apiRouter)
+	_ = http.ListenAndServe(":8080", healthRouter)
+}
+`
+	for _, f := range (CleartextTransportRule{}).Check(goDiff("cmd/api/main.go", src)) {
+		if f.Rule == "cleartext-transport" {
+			t.Fatalf("health listener flagged: %+v", f)
+		}
+	}
+}
+
+// A plain-HTTP listener serving a credential-bearing router is flagged even
+// when TLS is configured elsewhere in the file.
+func TestCleartextTransportFlagsCredListenerBesideTLS(t *testing.T) {
+	src := `package api
+
+import "net/http"
+
+func main() {
+	apiRouter := http.NewServeMux()
+	apiRouter.HandleFunc("/token", issueToken)
+	go http.ListenAndServeTLS(":443", "cert.pem", "key.pem", apiRouter)
+	_ = http.ListenAndServe(":8080", apiRouter)
+}
+`
+	var found bool
+	for _, f := range (CleartextTransportRule{}).Check(goDiff("cmd/api/main.go", src)) {
+		if f.Rule == "cleartext-transport" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("credential router on plaintext listener not flagged")
+	}
+}

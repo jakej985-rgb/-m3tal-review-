@@ -703,3 +703,83 @@ func start() {
 		t.Fatal("credential env assignment without os.Environ() not flagged")
 	}
 }
+
+// An assignment and a sink sharing a line (separated by ';') must propagate
+// taint to the sink.
+func TestTaintRuleSameLineAssignmentThenSink(t *testing.T) {
+	src := `package api
+
+import (
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func Delete(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	path := filepath.Join("/var/data", name); _ = os.RemoveAll(path)
+}
+`
+	var found bool
+	for _, f := range (TaintRule{}).Check(goDiff("api/delete.go", src)) {
+		if f.Rule == "request-taint" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("same-line assignment followed by sink not flagged")
+	}
+}
+
+// A sink gated by a validator in the same if-statement header is clean.
+func TestTaintRuleSameLineValidatedSink(t *testing.T) {
+	src := `package api
+
+import (
+	"net/http"
+	"os"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func Delete(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := validateName(name); err == nil { _ = os.Remove(name) }
+}
+`
+	for _, f := range (TaintRule{}).Check(goDiff("api/delete.go", src)) {
+		if f.Rule == "request-taint" {
+			t.Fatalf("validated same-line sink flagged: %+v", f)
+		}
+	}
+}
+
+// A validator placed after the sink must not clean the earlier use.
+func TestTaintRuleValidatorAfterSinkStillFlags(t *testing.T) {
+	src := `package api
+
+import (
+	"net/http"
+	"os"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func Delete(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	_ = os.RemoveAll(name)
+	_ = validateName(name)
+}
+`
+	var found bool
+	for _, f := range (TaintRule{}).Check(goDiff("api/delete.go", src)) {
+		if f.Rule == "request-taint" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("sink before validator not flagged")
+	}
+}
