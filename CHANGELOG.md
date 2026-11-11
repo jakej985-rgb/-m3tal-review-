@@ -71,7 +71,7 @@
   functions to medium with a "verify coverage" note and `confidence` field
 - `plugin-trust` detects credential env vars appended to `cmd.Env` even
   without `os.Environ()` passthrough
-- Audit reports expose `coverage.complete`; `auditCacheSchema` bumped to 3
+- Audit reports expose `coverage.complete`; `auditCacheSchema` bumped to 9
 
 ### Notes
 - Detector rules are heuristic; see `docs/threat-model.md` for scope and

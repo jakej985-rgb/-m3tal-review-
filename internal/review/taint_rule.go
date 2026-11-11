@@ -167,11 +167,25 @@ func stripGuardCalls(text string) string {
 	}
 }
 
+// goValidatorCallRe matches validation-style calls that gate their argument
+// (as opposed to transformers whose return value is the clean data).
+var goValidatorCallRe = regexp.MustCompile(`\b(?:sanitize[A-Za-z_]\w*|validate[A-Za-z_]\w*|verify[A-Za-z_]\w*|allowlist\w*|whitelist\w*)\s*\(`)
+
+// validatedIdents returns identifiers passed as whole arguments to
+// validator calls within a line.
+func validatedIdents(segment string) map[string]bool {
+	return guardedIdentsFor(goValidatorCallRe, segment)
+}
+
 // guardedIdents returns identifiers passed as whole arguments to sanitizer or
 // validator calls within a code segment.
 func guardedIdents(segment string) map[string]bool {
+	return guardedIdentsFor(goGuardCallRe, segment)
+}
+
+func guardedIdentsFor(re *regexp.Regexp, segment string) map[string]bool {
 	out := make(map[string]bool)
-	for _, m := range goGuardCallRe.FindAllStringIndex(segment, -1) {
+	for _, m := range re.FindAllStringIndex(segment, -1) {
 		args := callArgsAt(segment, m[1]-1)
 		for _, arg := range splitTopLevelArgs(args) {
 			arg = strings.TrimSpace(arg)
@@ -246,8 +260,21 @@ func (r TaintRule) checkFuncSegment(block diffSourceBlock, code string, seg goFu
 	//     clean values (`p, err := validateX(raw)`), so the LHS is untainted.
 	//  3. assignments whose guard-stripped RHS references tainted identifiers
 	//     taint the LHS (`dir := filepath.Join(base, tainted)`).
-	for _, line := range lines {
-		for id := range guardedIdents(line) {
+	//
+	// Taint is snapshotted at the start of every line so sinks are checked
+	// against the state at their own position: a validator placed after a
+	// sink must not clean the earlier, unvalidated use.
+	snapshots := make([]map[string]bool, len(lines))
+	for i, line := range lines {
+		snap := make(map[string]bool, len(tainted))
+		for id := range tainted {
+			snap[id] = true
+		}
+		snapshots[i] = snap
+		// Only validator-style calls clean their argument in place;
+		// transformers (filepath.Base, escapers, parsers) return a new value
+		// and leave the original identifier tainted.
+		for id := range validatedIdents(line) {
 			delete(tainted, id)
 		}
 		m := goTaintAssignRe.FindStringSubmatch(line)
@@ -299,7 +326,12 @@ func (r TaintRule) checkFuncSegment(block diffSourceBlock, code string, seg goFu
 		}
 		direct := goTaintDirectSourceRe.MatchString(scope) ||
 			(manifestGate && goManifestSourceRe.MatchString(scope))
-		indirect := containsTaintedIdent(scope, tainted)
+		lineIdx := strings.Count(segText[:m[0]], "\n")
+		stateAtSink := tainted
+		if lineIdx < len(snapshots) {
+			stateAtSink = snapshots[lineIdx]
+		}
+		indirect := containsTaintedIdent(scope, stateAtSink)
 		if !direct && !indirect {
 			continue
 		}

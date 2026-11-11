@@ -31,27 +31,32 @@ func (r CleartextTransportRule) Check(diff string) []Finding {
 			continue
 		}
 		code := string(maskNonCode(block.file, block.text))
-		m := cleartextServerRe.FindStringIndex(code)
-		if m == nil {
+		if !cleartextCredRe.MatchString(code) {
 			continue
 		}
-		if cleartextTLSRe.MatchString(code) || !cleartextCredRe.MatchString(code) {
-			continue
+		hasTLS := cleartextTLSRe.MatchString(code)
+		for _, m := range cleartextServerRe.FindAllStringIndex(code, -1) {
+			// http.ListenAndServe is always plaintext regardless of TLS
+			// elsewhere in the file; only http.Server literals may be
+			// configured for TLS (TLSConfig / ServeTLS).
+			if hasTLS && strings.HasPrefix(code[m[0]:], "http.Server") {
+				continue
+			}
+			line := lineAtOffset(block.firstLine, code, m[0])
+			if !block.addedLines[line] {
+				continue
+			}
+			findings = append(findings, Finding{
+				Category:    "security",
+				Rule:        "cleartext-transport",
+				Severity:    "medium",
+				Confidence:  "medium",
+				File:        block.file,
+				Line:        line,
+				Message:     "HTTP server without TLS serves credential-bearing endpoints; tokens and passwords traverse the network in cleartext",
+				Remediation: "Terminate TLS (ListenAndServeTLS, a TLS-terminating reverse proxy, or mTLS) before exposing credential-bearing endpoints; never send API tokens over plain HTTP to remote clients.",
+			})
 		}
-		line := lineAtOffset(block.firstLine, code, m[0])
-		if !block.addedLines[line] {
-			continue
-		}
-		findings = append(findings, Finding{
-			Category:    "security",
-			Rule:        "cleartext-transport",
-			Severity:    "medium",
-			Confidence:  "medium",
-			File:        block.file,
-			Line:        line,
-			Message:     "HTTP server without TLS serves credential-bearing endpoints; tokens and passwords traverse the network in cleartext",
-			Remediation: "Terminate TLS (ListenAndServeTLS, a TLS-terminating reverse proxy, or mTLS) before exposing credential-bearing endpoints; never send API tokens over plain HTTP to remote clients.",
-		})
 	}
 	return findings
 }
