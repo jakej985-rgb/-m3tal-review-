@@ -426,6 +426,12 @@ func workingTreeRules(rules []review.Rule) []review.Rule {
 		case review.CredentialQueryRule:
 			typed.WorkingTree = true
 			rules[i] = typed
+		case review.CleartextTransportRule:
+			typed.WorkingTree = true
+			rules[i] = typed
+		case review.UnauthenticatedRouteRule:
+			typed.WorkingTree = true
+			rules[i] = typed
 		}
 	}
 	return rules

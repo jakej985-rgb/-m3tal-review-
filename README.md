@@ -97,6 +97,8 @@ All findings come from deterministic heuristics; see `m3tal-review list-rules` f
 | `privileged-pkg-exec` | Package managers or privilege wrappers (sudo, dpkg, apt, systemctl) executed from HTTP handler code. |
 | `process-kill-abuse` | Process termination whose target PID may be request-controlled. |
 | `credential-in-query` | Credentials read from URL query parameters (leak via logs, history, referrers). |
+| `cleartext-transport` | Plain-HTTP server serving credential-bearing endpoints with no TLS configuration. |
+| `unauthenticated-route` | Parameterized route registered outside the authenticated API namespace in a file that uses auth middleware. |
 | `sql-injection` | String-built SQL queries via fmt.Sprintf/concat/f-strings/template literals. |
 | `ssrf` | Server-side request forgery: HTTP clients fetching request-controlled URLs. |
 | `command-injection` | Shell/process execution built from request or interpolated data. |
@@ -275,6 +277,10 @@ m3tal-review audit --include-ignored --max-files 20000 --max-bytes 536870912
 ```
 
 Add the Go confidence checks to an audit with `--profile full`.
+
+`audit` skips the `code-slop` rule by default so security findings are not
+drowned in style noise; pass `--with-slop` (or select rules with `--only`/`--skip`)
+to include it.
 
 Run additional installed local security scanners explicitly:
 

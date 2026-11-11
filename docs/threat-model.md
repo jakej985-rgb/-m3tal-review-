@@ -15,8 +15,13 @@ calls except when explicitly asked (`--with-tools` scanners, `--check-run`).
 - **Not a replacement for gosec, eslint, CodeQL, or a SAST pipeline.** It has
   no interprocedural or cross-file dataflow, no type resolution beyond Go's
   stdlib AST, and no vulnerability database. The `request-taint` rule tracks
-  request sources through simple assignments within a single file only; it
-  does not follow values across functions, packages, or goroutines.
+  request sources through simple assignments within a single function only; it
+  does not follow values across functions, packages, or goroutines. Tainted
+  identifiers passed through recognized sanitizer/validator calls
+  (`filepath.Base`, `filepath.Rel`, `html.EscapeString`, `strconv` parsers,
+  `sanitize*`/`validate*`/`verify*` wrappers) are treated as guarded, and
+  findings inside functions that apply validation are downgraded to medium —
+  guards are heuristics, not proofs.
 - **Not exhaustive.** Masked-mode rules cannot see inside string literals;
   several detectors therefore only fire on code-shaped signals. Obfuscated,
   dynamically constructed, or semantically disguised issues will be missed.

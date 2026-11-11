@@ -459,6 +459,12 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return cfgErr
 		}
 		applyUserConfigAudit(&options, cfg)
+		// Audit defaults to security signal: code-slop volume drowns real
+		// findings, so it is skipped unless --with-slop or an explicit
+		// --only/--skip selection is given.
+		if !options.WithSlop && len(options.Only) == 0 {
+			options.Skip = append(options.Skip, "code-slop")
+		}
 		workingDir, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get working directory: %w", err)
@@ -789,6 +795,8 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.PrivilegedExecRule{RepositoryRoot: repositoryRoot},
 		review.ProcessKillRule{RepositoryRoot: repositoryRoot},
 		review.CredentialQueryRule{RepositoryRoot: repositoryRoot},
+		review.CleartextTransportRule{RepositoryRoot: repositoryRoot},
+		review.UnauthenticatedRouteRule{RepositoryRoot: repositoryRoot},
 		review.CryptoRule{RepositoryRoot: repositoryRoot},
 		review.DeserializationRule{RepositoryRoot: repositoryRoot},
 		review.EvalRule{RepositoryRoot: repositoryRoot},
@@ -889,6 +897,7 @@ type auditOptions struct {
 	WriteBaseline    string
 	VulnScan         bool
 	CheckDeps        bool
+	WithSlop         bool
 	Framework        []string
 	RulesFile        string
 	PluginDir        string
@@ -978,6 +987,8 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 			options.Progress = &p
 		case arg == "--with-tools":
 			options.WithTools = true
+		case arg == "--with-slop":
+			options.WithSlop = true
 		case arg == "--vuln-scan":
 			options.VulnScan = true
 		case arg == "--check-deps":
@@ -1090,7 +1101,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				options.ToolPaths["osv-scanner"] = strings.TrimPrefix(arg, "--osv-scanner-path=")
 				break
 			}
-			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets] [--baseline file] [--write-baseline file]", arg)
+			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--with-slop] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets] [--baseline file] [--write-baseline file]", arg)
 		}
 	}
 	return options, nil
@@ -1194,6 +1205,7 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, progress Progr
 		FirstPartyFiles: len(fileSet),
 		VendorFiles:     len(vendorFiles),
 		UnanalyzedFiles: len(unanalyzed),
+		Complete:        len(unanalyzed) == 0,
 	}
 	if len(vendorFiles) > 0 {
 		cov.Exclusions = append(cov.Exclusions, review.ScopeExclusion{
@@ -1376,6 +1388,7 @@ func printHelp() {
 	fmt.Println("  audit")
 	fmt.Println("    --profile fast|full  Add local Go format, vet, and test checks in full mode")
 	fmt.Println("    --with-tools        Run installed gitleaks, gosec, and osv-scanner binaries")
+	fmt.Println("    --with-slop         Include code-slop findings (skipped by default in audit)")
 	fmt.Println("    --vuln-scan        Query OSV for known CVEs in manifests (network)")
 	fmt.Println("    --check-deps       Run Go module hygiene and license policy checks")
 	fmt.Println("    --include-ignored  Include ignored untracked files (bounded by scan limits)")

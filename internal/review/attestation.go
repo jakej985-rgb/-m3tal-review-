@@ -23,6 +23,7 @@ type CoverageMetadata struct {
 	FirstPartyFiles int              `json:"first_party_files"`
 	VendorFiles     int              `json:"vendor_files"`
 	UnanalyzedFiles int              `json:"unanalyzed_files"`
+	Complete        bool             `json:"complete"`
 	Exclusions      []ScopeExclusion `json:"exclusions,omitempty"`
 }
 

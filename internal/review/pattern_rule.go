@@ -96,7 +96,11 @@ func (r *patternRule) Check(diff string) []Finding {
 					continue
 				}
 				line := lineAtOffset(block.firstLine, code, match[0])
-				if r.skipLine != nil && r.skipLine.MatchString(lineContentAt(code, match[0])) {
+				// maskNonCode blanks string literals; check skipLine against the
+				// raw text too so guards like `x == ""` remain visible (offsets
+				// are preserved by masking).
+				if r.skipLine != nil && (r.skipLine.MatchString(lineContentAt(code, match[0])) ||
+					r.skipLine.MatchString(lineContentAt(block.text, match[0]))) {
 					continue
 				}
 				key := block.file + ":" + strconv.Itoa(line)
