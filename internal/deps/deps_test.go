@@ -389,3 +389,175 @@ import (
 		t.Errorf("expected GPL license violation in findings")
 	}
 }
+
+func TestCheckDependenciesNestedModules(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// No root go.mod: only nested plugin modules.
+	nested := filepath.Join(tmpDir, "plugins", "a")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	badMod := "module example.com/a\n\ngo 1.21\n\nrequire (\n\tgithub.com/x/y v1.0.0\n"
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte(badMod), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// A vendored go.mod must be ignored.
+	vendored := filepath.Join(tmpDir, "plugins", "a", "vendor", "dep")
+	if err := os.MkdirAll(vendored, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vendored, "go.mod"), []byte("module example.com/v\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, findings, err := CheckDependencies(tmpDir, CheckOptions{})
+	if err != nil {
+		t.Fatalf("CheckDependencies failed: %v", err)
+	}
+	if report.NestedModules != 1 {
+		t.Fatalf("expected 1 nested module, got %d", report.NestedModules)
+	}
+	var sawFile bool
+	for _, f := range findings {
+		if f.File == "plugins/a/go.mod" {
+			sawFile = true
+		}
+		if f.File == "plugins/a/vendor/dep/go.mod" {
+			t.Fatalf("vendored go.mod produced finding: %+v", f)
+		}
+	}
+	if !sawFile {
+		t.Fatalf("expected findings attributed to plugins/a/go.mod, got %+v", findings)
+	}
+}
+
+// License findings for a module required by several manifests are emitted
+// once per requiring manifest; unmapped modules fall back to root go.mod.
+func TestEvaluateLicensePolicyWithFilesAttribution(t *testing.T) {
+	licenses := map[string]LicenseInfo{
+		"example.com/lgpl":     {License: "LGPL-3.0"},
+		"example.com/rootonly": {License: "GPL-3.0"},
+	}
+	modFiles := map[string][]string{
+		"example.com/lgpl": {"plugins/a/go.mod", "plugins/b/go.mod"},
+	}
+	findings := EvaluateLicensePolicyWithFiles(licenses, LicensePolicy{Allow: []string{"MIT"}}, modFiles)
+	files := map[string]bool{}
+	for _, f := range findings {
+		files[f.File+"|"+f.Metadata["package"]] = true
+	}
+	for _, want := range []string{
+		"plugins/a/go.mod|example.com/lgpl",
+		"plugins/b/go.mod|example.com/lgpl",
+		"go.mod|example.com/rootonly",
+	} {
+		if !files[want] {
+			t.Fatalf("missing finding %q, got %+v", want, findings)
+		}
+	}
+	if len(findings) != 3 {
+		t.Fatalf("expected 3 findings, got %d: %+v", len(findings), findings)
+	}
+}
+
+// A module nested inside another nested module must not have its source
+// files counted once per ancestor.
+func TestCheckDependenciesNestedGoFilesNotDoubleCounted(t *testing.T) {
+	tmpDir := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(tmpDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("plugins/a/go.mod", "module example.com/a\n\ngo 1.21\n")
+	write("plugins/a/main.go", "package main\n\nfunc main() {}\n")
+	write("plugins/a/child/go.mod", "module example.com/a/child\n\ngo 1.21\n")
+	write("plugins/a/child/main.go", "package main\n\nfunc main() {}\n")
+
+	report, _, err := CheckDependencies(tmpDir, CheckOptions{})
+	if err != nil {
+		t.Fatalf("CheckDependencies failed: %v", err)
+	}
+	if report.NestedModules != 2 {
+		t.Fatalf("expected 2 nested modules, got %d", report.NestedModules)
+	}
+	if report.TotalGoFiles != 2 {
+		t.Fatalf("expected 2 unique Go files, got %d", report.TotalGoFiles)
+	}
+}
+
+// Modules under testdata are fixtures (often intentionally broken): they are
+// neither analyzed nor counted, matching collectImportPaths.
+func TestCheckDependenciesNestedTestdataModuleIgnored(t *testing.T) {
+	tmpDir := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(tmpDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("plugins/a/go.mod", "module example.com/a\n\ngo 1.21\n")
+	write("plugins/a/main.go", "package main\n\nfunc main() {}\n")
+	// Deliberately malformed fixture: must not produce findings.
+	write("plugins/a/testdata/fixture/go.mod", "module example.com/fixture\n\nrequire (\n\tgithub.com/x/y v1.0.0\n")
+	write("plugins/a/testdata/fixture/main.go", "package main\n\nfunc main() {}\n")
+
+	report, findings, err := CheckDependencies(tmpDir, CheckOptions{})
+	if err != nil {
+		t.Fatalf("CheckDependencies failed: %v", err)
+	}
+	if report.NestedModules != 1 {
+		t.Fatalf("expected only plugins/a as nested module, got %d", report.NestedModules)
+	}
+	if report.TotalGoFiles != 1 {
+		t.Fatalf("expected 1 Go file (fixture excluded), got %d", report.TotalGoFiles)
+	}
+	for _, f := range findings {
+		if strings.Contains(f.File, "testdata") {
+			t.Fatalf("testdata fixture produced finding: %+v", f)
+		}
+	}
+}
+
+// Nested modules get the same go.sum / duplicate-require checks as root.
+func TestCheckDependenciesNestedHygiene(t *testing.T) {
+	tmpDir := t.TempDir()
+	nested := filepath.Join(tmpDir, "plugins", "a")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mod := "module example.com/a\n\ngo 1.21\n\nrequire example.com/lib v1.0.0\nrequire example.com/lib v1.1.0\n"
+	if err := os.WriteFile(filepath.Join(nested, "go.mod"), []byte(mod), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sum := "example.com/lib v1.0.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n" +
+		"example.com/lib v1.0.0 h1:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=\n"
+	if err := os.WriteFile(filepath.Join(nested, "go.sum"), []byte(sum), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, findings, err := CheckDependencies(tmpDir, CheckOptions{})
+	if err != nil {
+		t.Fatalf("CheckDependencies failed: %v", err)
+	}
+	var sawDup, sawSum bool
+	for _, f := range findings {
+		if f.Rule == "go-module-duplicate-dependency" && f.File == "plugins/a/go.mod" {
+			sawDup = true
+		}
+		if f.Rule == "go-sum-checksum-conflict" && f.File == "plugins/a/go.sum" {
+			sawSum = true
+		}
+	}
+	if !sawDup || !sawSum {
+		t.Fatalf("expected nested duplicate-require and go.sum conflict findings (dup=%v sum=%v), got %+v", sawDup, sawSum, findings)
+	}
+}

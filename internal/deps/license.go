@@ -203,8 +203,17 @@ func containsLicense(list []string, lic string) bool {
 }
 
 // EvaluateLicensePolicy evaluates detected licenses against an allow/deny policy.
+// All findings are attributed to the root go.mod.
 func EvaluateLicensePolicy(licenses map[string]LicenseInfo, policy LicensePolicy) []review.Finding {
-	var findings []review.Finding
+	return EvaluateLicensePolicyWithFiles(licenses, policy, nil)
+}
+
+// EvaluateLicensePolicyWithFiles is EvaluateLicensePolicy with per-module
+// manifest attribution: modFiles maps a module path to every go.mod that
+// requires it, and one finding is emitted per manifest. Modules missing from
+// modFiles are attributed to the root go.mod.
+func EvaluateLicensePolicyWithFiles(licenses map[string]LicenseInfo, policy LicensePolicy, modFiles map[string][]string) []review.Finding {
+	var raw []review.Finding
 
 	// Sort modules deterministically
 	mods := make([]string, 0, len(licenses))
@@ -219,13 +228,14 @@ func EvaluateLicensePolicy(licenses map[string]LicenseInfo, policy LicensePolicy
 
 		// Check denylist first
 		if len(policy.Deny) > 0 && containsLicense(policy.Deny, lic) {
-			findings = append(findings, review.Finding{
+			raw = append(raw, review.Finding{
 				Category:    "security",
 				Rule:        "dependency-license-denied",
 				Severity:    "high",
 				File:        "go.mod",
 				Message:     fmt.Sprintf("Dependency %q uses denied license %q", mod, lic),
 				Remediation: "Replace this dependency or seek an organizational license exception.",
+				Metadata:    map[string]string{"package": mod},
 			})
 			continue
 		}
@@ -233,13 +243,14 @@ func EvaluateLicensePolicy(licenses map[string]LicenseInfo, policy LicensePolicy
 		// Check unknown handling
 		if lic == "Unknown" || lic == "NO-LICENSE" {
 			if !policy.AllowUnknown && (len(policy.Allow) > 0 || len(policy.Deny) > 0) {
-				findings = append(findings, review.Finding{
+				raw = append(raw, review.Finding{
 					Category:    "confidence",
 					Rule:        "dependency-license-unknown",
 					Severity:    "medium",
 					File:        "go.mod",
 					Message:     fmt.Sprintf("Dependency %q has unknown or missing license", mod),
 					Remediation: "Inspect the dependency source and verify license terms, or add to allowlist.",
+					Metadata:    map[string]string{"package": mod},
 				})
 			}
 			continue
@@ -247,16 +258,31 @@ func EvaluateLicensePolicy(licenses map[string]LicenseInfo, policy LicensePolicy
 
 		// Check allowlist
 		if len(policy.Allow) > 0 && !containsLicense(policy.Allow, lic) {
-			findings = append(findings, review.Finding{
+			raw = append(raw, review.Finding{
 				Category:    "security",
 				Rule:        "dependency-license-not-allowed",
 				Severity:    "high",
 				File:        "go.mod",
 				Message:     fmt.Sprintf("Dependency %q has license %q which is not in the allowlist", mod, lic),
 				Remediation: "Verify the license complies with project policy and add it to the allowlist if approved.",
+				Metadata:    map[string]string{"package": mod},
 			})
 		}
 	}
 
+	// Fan out each finding to every manifest that requires the module.
+	var findings []review.Finding
+	for _, f := range raw {
+		files := modFiles[f.Metadata["package"]]
+		if len(files) == 0 {
+			findings = append(findings, f)
+			continue
+		}
+		for _, file := range files {
+			c := f
+			c.File = file
+			findings = append(findings, c)
+		}
+	}
 	return findings
 }

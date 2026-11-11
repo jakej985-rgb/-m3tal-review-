@@ -271,6 +271,13 @@ func ParseGoSum(content string) (*GoSum, []review.Finding) {
 	return sum, findings
 }
 
+// skipSourceDir reports whether a directory is excluded from Go source and
+// module scans: dot-directories, vendor, and testdata fixtures. Shared by
+// collectImportPaths and analyzeNestedGoMods so both walks stay in sync.
+func skipSourceDir(name string) bool {
+	return strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata"
+}
+
 // collectImportPaths scans all Go source files in repoRoot and returns a set of imported package paths.
 func collectImportPaths(repoRoot string) (map[string]bool, int, error) {
 	imports := make(map[string]bool)
@@ -282,8 +289,7 @@ func collectImportPaths(repoRoot string) (map[string]bool, int, error) {
 			return nil
 		}
 		if d.IsDir() {
-			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" {
+			if p != repoRoot && skipSourceDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil

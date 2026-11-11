@@ -118,7 +118,7 @@ func commandCheckDeps(args []string) error {
 		return err
 	}
 
-	if !report.IsGoModule {
+	if !report.IsGoModule && report.NestedModules == 0 {
 		if format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
 			fmt.Println(string(data))

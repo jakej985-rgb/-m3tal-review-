@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -551,7 +552,11 @@ func (r TaintRule) checkPackage(blocks []diffSourceBlock) []Finding {
 		}
 	}
 
-	// Report sinks with converged taint.
+	// Report sinks with converged taint. Hits are collected per function and
+	// rolled up into a single finding: shared helpers (atomicWriteFile,
+	// runCmd) can contain many sink calls, and per-line findings inflate the
+	// count without adding information. Individual sink locations are kept
+	// in Evidence.
 	var findings []Finding
 	seen := make(map[string]bool)
 	for i, fn := range funcs {
@@ -563,6 +568,22 @@ func (r TaintRule) checkPackage(blocks []diffSourceBlock) []Finding {
 		manifestGate := goManifestFileGateRe.MatchString(segText)
 		funcHasGuards := goGuardCallRe.MatchString(segText)
 		paramSet := paramTaint[fn.name]
+		// Provenance: when the function has no local taint seeds, every
+		// tainted identifier inside it derives from call-edge parameters
+		// (local propagation only spreads existing taint). Such sinks are
+		// "inferred" — the risk decision lives at the caller/path
+		// construction, not inside the helper.
+		fnInferred := len(seeds[i]) == 0 && len(paramSet) > 0
+		type sinkHit struct {
+			line       int
+			callName   string
+			kind       string
+			via        string
+			severity   string
+			confidence string
+			suffix     string
+		}
+		var hits []sinkHit
 		for _, m := range goTaintSinkRe.FindAllStringIndex(segText, -1) {
 			callName := sinkCallName(segText, m[0])
 			args := sinkArgSpan(segText, m[1]-1)
@@ -583,18 +604,13 @@ func (r TaintRule) checkPackage(blocks []diffSourceBlock) []Finding {
 				stateAtSink = snapshots[stmtIdx]
 			}
 			scopeTainted := false
-			inferredOnly := false
 			for _, id := range goTaintIdentRe.FindAllString(scope, -1) {
-				if !stateAtSink[id] {
-					continue
-				}
-				scopeTainted = true
-				if paramSet == nil || !paramSet[id] {
-					inferredOnly = false
+				if stateAtSink[id] {
+					scopeTainted = true
 					break
 				}
-				inferredOnly = true
 			}
+			inferredOnly := fnInferred && scopeTainted && !direct
 			fieldPath := !direct && !scopeTainted && goSelectorPathRe.MatchString(scope)
 			if !direct && !scopeTainted && !fieldPath {
 				continue
@@ -634,23 +650,86 @@ func (r TaintRule) checkPackage(blocks []diffSourceBlock) []Finding {
 				severity = "medium"
 				confidence = "medium"
 				suffix = " (config/struct path — verify validation)"
+			case inferredOnly && kind == "filesystem/serving":
+				// Taint reached this helper only through a call edge: the
+				// actual risk decision lives at the call site / path
+				// construction, so report medium rather than inflating
+				// every filesystem call inside shared helpers to high.
+				// exec.Command and outbound requests stay high — a tainted
+				// argument there is dangerous regardless of provenance.
+				severity = "medium"
+				confidence = "medium"
+				suffix = " (inferred cross-function reachability — verify call chain)"
 			case inferredOnly:
 				confidence = "medium"
 				suffix = " (inferred cross-function reachability — verify call chain)"
 			}
-			findings = append(findings, Finding{
-				Category:    "security",
-				Rule:        "request-taint",
-				Severity:    severity,
-				Confidence:  confidence,
-				File:        block.file,
-				Line:        line,
-				Message:     fmt.Sprintf("%s sink reached by %s (%s)%s", kind, via, sinkCallName(segText, m[0]), suffix),
-				Remediation: "Validate and constrain request-derived values before filesystem, serving, or exec sinks; prefer filepath.Base/allowlists and reject path separators.",
-			})
+			hits = append(hits, sinkHit{line: line, callName: callName, kind: kind, via: via, severity: severity, confidence: confidence, suffix: suffix})
 		}
+		if len(hits) == 0 {
+			continue
+		}
+		// Roll up all sinks in this function into one finding.
+		sort.Slice(hits, func(a, b int) bool { return hits[a].line < hits[b].line })
+		sevRank := map[string]int{"low": 0, "medium": 1, "high": 2}
+		best := hits[0]
+		for _, h := range hits[1:] {
+			if sevRank[h.severity] > sevRank[best.severity] ||
+				(h.severity == best.severity && h.confidence == "high" && best.confidence != "high") {
+				best = h
+			}
+		}
+		var ev []FindingEvidence
+		var calls []string
+		seenCall := make(map[string]bool)
+		for _, h := range hits {
+			ev = append(ev, FindingEvidence{Rule: "request-taint", Severity: h.severity, Confidence: h.confidence, Line: h.line, Message: fmt.Sprintf("%s sink (%s)%s", h.kind, h.callName, h.suffix)})
+			if !seenCall[h.callName] {
+				seenCall[h.callName] = true
+				calls = append(calls, h.callName)
+			}
+		}
+		via := hits[0].via
+		for _, h := range hits[1:] {
+			if h.via != via {
+				via = "mixed request-derived sources"
+				break
+			}
+		}
+		findings = append(findings, Finding{
+			Category:    "security",
+			Rule:        "request-taint",
+			Severity:    best.severity,
+			Confidence:  best.confidence,
+			File:        block.file,
+			Line:        best.line,
+			Signature:   taintFuncSignature(segText, fn.name),
+			Message:     fmt.Sprintf("%s sink(s) reached by %s in %s (%s, %d site%s)%s", best.kind, via, fn.name, strings.Join(calls, ", "), len(hits), map[bool]string{true: "", false: "s"}[len(hits) == 1], best.suffix),
+			Remediation: "Validate and constrain request-derived values before filesystem, serving, or exec sinks; prefer filepath.Base/allowlists and reject path separators.",
+			Evidence:    ev,
+		})
 	}
 	return findings
+}
+
+// taintFuncSignature returns a stable identity for a function's rolled-up
+// request-taint finding. It uses the normalized declaration header (up to
+// the parameter list) so methods with the same name on different receivers
+// (e.g. (*A).Save vs (*B).Save) do not collapse into one grouped finding.
+func taintFuncSignature(segText, name string) string {
+	// Cut at the method name rather than the first newline so receivers
+	// split across lines (`func (\n\ta *A) Save(`) still include the type.
+	header := segText
+	if idx := strings.Index(header, name+"("); idx >= 0 {
+		header = header[:idx+len(name)]
+	} else if nl := strings.IndexByte(header, '\n'); nl >= 0 {
+		header = header[:nl]
+	}
+	header = strings.Join(strings.Fields(header), " ")
+	if !strings.HasPrefix(header, "func") {
+		return name
+	}
+	return header
 }
 
 // splitTopLevelArgs splits a call argument list on commas at paren depth 0.

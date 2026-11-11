@@ -62,6 +62,7 @@ type LicensePolicy struct {
 // DepReport provides a summary of module and license hygiene analysis.
 type DepReport struct {
 	IsGoModule    bool                   `json:"is_go_module"`
+	NestedModules int                    `json:"nested_modules,omitempty"`
 	ModulePath    string                 `json:"module_path,omitempty"`
 	GoVersion     string                 `json:"go_version,omitempty"`
 	DirectDeps    int                    `json:"direct_deps"`

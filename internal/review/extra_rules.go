@@ -250,9 +250,10 @@ func ExtraRules(repositoryRoot string) []Rule {
 		// ---- Phase 5: supply chain & CI ----
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "unpinned-action", severity: "medium",
-			remediation: "Pin GitHub Actions to a full commit SHA.",
-			filePattern: regexp.MustCompile(`(?:^|/)\.github/workflows/.*\.ya?ml$`),
-			skipLine:    regexp.MustCompile(`@[0-9a-f]{40}\b`),
+			remediation:        "Pin GitHub Actions to a full commit SHA.",
+			signatureFromMatch: true,
+			filePattern:        regexp.MustCompile(`(?:^|/)\.github/workflows/.*\.ya?ml$`),
+			skipLine:           regexp.MustCompile(`@[0-9a-f]{40}\b`),
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*\S+@\S+\s*$`), "GitHub Action reference is not a full commit SHA"},
 			}},
@@ -291,8 +292,9 @@ func ExtraRules(repositoryRoot string) []Rule {
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "unpinned-image", severity: "medium",
-			remediation: "Pin container images by digest or immutable tag.",
-			filePattern: regexp.MustCompile(`(?:Dockerfile.*|.*\.dockerfile|(?:^|/)(?:docker-)?compose[^/]*\.ya?ml$|(?:^|/)\.github/workflows/.*\.ya?ml$)`),
+			remediation:        "Pin container images by digest or immutable tag.",
+			signatureFromMatch: true,
+			filePattern:        regexp.MustCompile(`(?:Dockerfile.*|.*\.dockerfile|(?:^|/)(?:docker-)?compose[^/]*\.ya?ml$|(?:^|/)\.github/workflows/.*\.ya?ml$)`),
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`(?m)^\s*(?:FROM|image:)\s*[^\s#]+:(?:latest|\$\{[^}]*\})\s*$|(?m)^\s*FROM\s+[^\s@:\n]+\s*$`), "Container image not pinned to an immutable reference"},
 			}},
