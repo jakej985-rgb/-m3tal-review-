@@ -62,6 +62,11 @@ type patternRule struct {
 	// contains the pattern (for guards that live inside the matched construct,
 	// e.g. timeout fields inside an http.Server literal).
 	matchAbsent *regexp.Regexp
+	// lineSeverityPattern, when set, overrides the finding severity for
+	// matches whose source line matches it (e.g. trusted vs attacker-controlled
+	// GitHub context interpolation in workflows).
+	lineSeverityPattern *regexp.Regexp
+	lineSeverity        string
 }
 
 func (r *patternRule) Name() string { return r.name }
@@ -108,9 +113,15 @@ func (r *patternRule) Check(diff string) []Finding {
 					continue
 				}
 				seen[key] = true
+				severity := r.severity
+				if r.lineSeverityPattern != nil && r.lineSeverity != "" &&
+					(r.lineSeverityPattern.MatchString(lineContentAt(code, match[0])) ||
+						r.lineSeverityPattern.MatchString(lineContentAt(block.text, match[0]))) {
+					severity = r.lineSeverity
+				}
 				findings = append(findings, Finding{
 					Rule:        r.name,
-					Severity:    r.severity,
+					Severity:    severity,
 					File:        block.file,
 					Line:        line,
 					Message:     p.message,

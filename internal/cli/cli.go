@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -790,6 +791,8 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.EntropyRule{RepositoryRoot: repositoryRoot},
 		review.TraversalRule{RepositoryRoot: repositoryRoot},
 		review.TaintRule{RepositoryRoot: repositoryRoot},
+		review.ResolvedPathRule{RepositoryRoot: repositoryRoot},
+		review.ClientTimeoutRule{RepositoryRoot: repositoryRoot},
 		review.ScopeDefaultRule{RepositoryRoot: repositoryRoot},
 		review.PluginTrustRule{RepositoryRoot: repositoryRoot},
 		review.PrivilegedExecRule{RepositoryRoot: repositoryRoot},
@@ -1219,13 +1222,18 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, progress Progr
 }
 
 func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []review.Rule, progress ProgressReporter) ([]review.Finding, []string, []string, string, *review.CoverageMetadata, error) {
-	var fileRules, policyRules []review.Rule
+	var fileRules, policyRules, taintRules []review.Rule
 	for _, rule := range rules {
 		switch rule.(type) {
 		case review.RiskRule:
 			// Risk path signals apply to changed paths; a full audit is a repository inventory.
 		case review.PolicyRule:
 			policyRules = append(policyRules, rule)
+		case review.TaintRule:
+			// TaintRule performs package-scoped analysis: request/RPC inputs
+			// propagate through intra-package calls, so it must see all Go
+			// files in a directory together rather than one file per Check.
+			taintRules = append(taintRules, rule)
 		default:
 			fileRules = append(fileRules, rule)
 		}
@@ -1235,7 +1243,9 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 	defer cache.flush()
 	hash := sha256.New()
 	var findings []review.Finding
-	files, unanalyzed, cov, err := walkWorkingTree(repositoryRoot, options, progress, func(_ string, fileDiff string) {
+	goGroups := make(map[string][]string)
+	var goDirs []string
+	files, unanalyzed, cov, err := walkWorkingTree(repositoryRoot, options, progress, func(filePath, fileDiff string) {
 		_, _ = hash.Write([]byte(fileDiff))
 		fileFindings, ok := cache.get(fileDiff)
 		if !ok {
@@ -1243,9 +1253,23 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 			cache.put(fileDiff, fileFindings)
 		}
 		findings = append(findings, review.ApplyFindingFilters(fileDiff, fileFindings, repositoryRoot, true)...)
+		if len(taintRules) > 0 && strings.HasSuffix(filePath, ".go") {
+			dir := path.Dir(filePath)
+			if _, ok := goGroups[dir]; !ok {
+				goDirs = append(goDirs, dir)
+			}
+			goGroups[dir] = append(goGroups[dir], fileDiff)
+		}
 	})
 	if err != nil {
 		return nil, nil, nil, "", nil, err
+	}
+	for _, dir := range goDirs {
+		combined := strings.Join(goGroups[dir], "")
+		for _, tr := range taintRules {
+			taintFindings := tr.Check(combined)
+			findings = append(findings, review.ApplyFindingFilters(combined, taintFindings, repositoryRoot, true)...)
+		}
 	}
 	if len(policyRules) > 0 {
 		findings = append(findings, review.NewEngine(policyRules...).Run(pathsOnlyDiff(files))...)

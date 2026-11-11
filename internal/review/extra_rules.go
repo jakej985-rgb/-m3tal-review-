@@ -13,7 +13,8 @@ func ExtraRules(repositoryRoot string) []Rule {
 		// ---- Phase 3: injection & execution ----
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "ssrf", severity: "high",
-			remediation: "Validate and allowlist outbound URLs; do not fetch user-supplied URLs directly.",
+			remediation:    "Validate and allowlist outbound URLs; do not fetch user-supplied URLs directly.",
+			excludePattern: regexp.MustCompile(`(?:_test\.[a-z]+|(?:^|/)testdata/|(?:^|/)tests?/fixtures?/)`),
 			patterns: []langPattern{
 				{language.LanguageGo, regexp.MustCompile(`\b(?:http\.(?:Get|Post|NewRequest)|client\.(?:Get|Post|Do))\s*\([^)]{0,160}?(?:\.URL\b|\.RawQuery\b|r\.FormValue|request\.)`), "HTTP client call uses request-controlled URL data"},
 				{language.LanguagePython, regexp.MustCompile(`\b(?:requests\.(?:get|post|put|delete|request)|urllib\.request\.urlopen|httpx\.)\s*\([^)]{0,160}?(?:request\.(?:args|form|values|data)|flask\.request)`), "HTTP client call uses request-controlled URL data"},
@@ -136,8 +137,9 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "tls-verification", severity: "high",
 			remediation: "Keep TLS certificate verification enabled; pin certificates explicitly when needed.",
+			// Go InsecureSkipVerify is handled by TLSRule, which has file-level
+			// context (certificate pinning, app-layer auth) the regex cannot see.
 			patterns: []langPattern{
-				{language.LanguageGo, regexp.MustCompile(`InsecureSkipVerify\s*:\s*true|InsecureIgnoreHostKey`), "TLS certificate verification disabled"},
 				{language.LanguagePython, regexp.MustCompile(`verify\s*=\s*False|CERT_NONE|_create_unverified_context`), "TLS certificate verification disabled"},
 				{language.LanguageJavaScript, regexp.MustCompile(`rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED`), "TLS certificate verification disabled"},
 				{language.LanguagePython, regexp.MustCompile(`check_hostname\s*=\s*False|PROTOCOL_SSLv|PROTOCOL_TLSv1\b|ssl\.wrap_socket`), "Deprecated TLS protocol or hostname check disabled"},
@@ -262,10 +264,15 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageUnknown, regexp.MustCompile(`pull_request_target`), "pull_request_target trigger grants secrets to PR-controlled code paths"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
-			name: "actions-script-injection", severity: "high",
+			name: "actions-script-injection", severity: "medium",
 			raw:         true,
 			remediation: "Pass event data through environment variables instead of interpolating ${{ }} into run scripts.",
 			filePattern: regexp.MustCompile(`(?:^|/)\.github/workflows/.*\.ya?ml$`),
+			// Attacker-authored contexts (issue/PR/comment/review bodies, head
+			// refs, commit messages) stay high; dispatch inputs, event names and
+			// SHAs require workflow-dispatch/write access, so they are medium.
+			lineSeverityPattern: regexp.MustCompile(`github\.event\.(?:issue|comment|review|discussion|pull_request|head_commit|commits|pages)|github\.head_ref`),
+			lineSeverity:        "high",
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`\$\{\{\s*github\.event\.[^}]+\}\}`), "Event data interpolated into workflow; risk of script injection"},
 			}},
@@ -441,14 +448,23 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "unbounded-read", severity: "low",
 			remediation: "Bound reads from untrusted sources with io.LimitReader or size checks.",
+			// LimitReader/CopyN/MaxBytesReader bound the read even though the
+			// outer call is still ReadAll-family. Test files are excluded:
+			// fixtures legitimately read whole buffers.
+			excludePattern: regexp.MustCompile(`(?:_test\.[a-z]+|(?:^|/)testdata/)`),
+			skipLine:       regexp.MustCompile(`LimitReader|CopyN|MaxBytesReader|ReadAtLeast|WithMaxBytes`),
 			patterns: []langPattern{
 				{language.LanguageGo, regexp.MustCompile(`\b(?:io|ioutil)\.ReadAll\s*\(`), "Unbounded read; consider io.LimitReader for untrusted input"},
 			}},
+		// client-timeouts is implemented by ClientTimeoutRule (balanced-brace
+		// literal extraction); a regex cannot span nested composite literals.
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
-			name: "client-timeouts", severity: "low",
-			remediation: "Set Timeout on http.Client to avoid hanging on unresponsive servers.",
+			name: "rpc-stdin-scanner", severity: "low",
+			remediation: "Bound the stdin scanner buffer (scanner.Buffer) so oversized RPC frames cannot kill the plugin mid-request.",
+			// Plugins that size their scanner buffer are already protected.
+			suppress: regexp.MustCompile(`\.Buffer\s*\(\s*make\s*\(\s*\[\]byte`),
 			patterns: []langPattern{
-				{language.LanguageGo, regexp.MustCompile(`&?http\.Client\s*\{`), "HTTP client literal; verify Timeout is configured"},
+				{language.LanguageGo, regexp.MustCompile(`\bbufio\.NewScanner\s*\(\s*os\.Stdin`), "stdin scanner uses the default 64KB buffer; oversized frames terminate the process"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "rust-unsafe", severity: "medium",

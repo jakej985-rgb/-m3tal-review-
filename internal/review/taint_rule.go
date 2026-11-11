@@ -2,6 +2,7 @@ package review
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -22,7 +23,7 @@ func (TaintRule) Name() string { return "request-taint" }
 var (
 	goTaintSourceAssignRe = regexp.MustCompile(`(?m)([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*[:+]?=\s*[^\n=]{0,160}?(?:chi\.URLParam|\.URL\.Query\(\)\.Get|\.FormValue|\.PostFormValue|\.PathValue|\.MultipartForm)`)
 	goTaintBodyDecodeRe   = regexp.MustCompile(`json\.NewDecoder\([^)]*\.Body[^)]*\)\.Decode\s*\(\s*&?([A-Za-z_]\w*)`)
-	goTaintSinkRe         = regexp.MustCompile(`\b(?:os\.(?:RemoveAll|Remove|Rename|MkdirAll|WriteFile|Create|OpenFile|ReadFile|ReadDir|Stat|Lstat)|ioutil\.(?:ReadFile|WriteFile|ReadDir|TempFile)|http\.(?:ServeFile|ServeContent)|exec\.Command(?:Context)?|plugin\.Open)\s*\(`)
+	goTaintSinkRe         = regexp.MustCompile(`\b(?:os\.(?:RemoveAll|Remove|Rename|MkdirAll|WriteFile|Create|OpenFile|ReadFile|ReadDir|Stat|Lstat)|ioutil\.(?:ReadFile|WriteFile|ReadDir|TempFile)|http\.(?:ServeFile|ServeContent)|exec\.Command(?:Context)?|plugin\.Open|http\.NewRequest(?:WithContext)?|\.Do)\s*\(`)
 	goTaintDirectSourceRe = regexp.MustCompile(`chi\.URLParam|\.URL\.Query\(\)\.Get|\.FormValue|\.PostFormValue|\.PathValue`)
 	// Manifest-declared names (plugin.yaml spec/plugin fields) are attacker-
 	// controlled when a repo ships manifests; seed them as taint sources in
@@ -33,7 +34,21 @@ var (
 	goManifestFileGateRe = regexp.MustCompile(`yaml\.Unmarshal|plugin\.yaml|\.Manifest\b|Manifest\s+\*?\w+|type\s+Manifest\b`)
 	goTaintAssignRe      = regexp.MustCompile(`(?m)^([^\n=;]{1,120}?)\s*(:=|=)\s*([^\n]{0,240})$`)
 	goTaintIdentRe       = regexp.MustCompile(`[A-Za-z_]\w*`)
-	goKeywords           = map[string]bool{
+	// RPC plugin sources: JSON-RPC over stdin decodes request frames
+	// (`json.Unmarshal(line, &req)`) and action params
+	// (`json.Unmarshal(req.Params, &params)`). Only applied to packages that
+	// actually scan os.Stdin, so ordinary config/HTTP unmarshals of file or
+	// response bodies are not treated as request input.
+	goRPCUnmarshalRe = regexp.MustCompile(`json\.Unmarshal\s*\(\s*(?:line\b|req\.Params\b|input\b|msg\b|message\b)[^,\n]{0,160}?,\s*&([A-Za-z_]\w*)`)
+	// Struct fields whose names end in Path/File/Dir/Root carry filesystem
+	// locations (config paths, share/export paths, stack roots). When such a
+	// field flows into a call, the callee parameter is treated as risky.
+	goSelectorPathRe = regexp.MustCompile(`\.[A-Za-z_]\w*(?:Path|File|Dir|Filename|Root)\b`)
+	// Outbound-request sinks: user-influenced URLs reaching HTTP clients.
+	goHTTPRequestSinkRe = regexp.MustCompile(`http\.NewRequest(?:WithContext)?\s*\(|\.Do\s*\(`)
+	goFuncHeaderRe      = regexp.MustCompile(`^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(([^)]*)\)`)
+	goCallSiteRe        = regexp.MustCompile(`[A-Za-z_]\w*\s*\(`)
+	goKeywords          = map[string]bool{
 		"if": true, "for": true, "while": true, "return": true, "var": true,
 		"const": true, "func": true, "else": true, "switch": true, "case": true,
 		"go": true, "defer": true, "range": true, "type": true, "struct": true,
@@ -80,11 +95,22 @@ func validAssignLHS(lhs string) bool {
 
 func (r TaintRule) Check(diff string) []Finding {
 	var findings []Finding
+	// Group Go files by package directory so taint can propagate through
+	// intra-package helper calls (handler -> SaveStack -> atomicWriteFile).
+	blocksByDir := make(map[string][]diffSourceBlock)
+	var dirs []string
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
 		if !strings.HasSuffix(block.file, ".go") || strings.HasSuffix(block.file, "_test.go") {
 			continue
 		}
-		findings = append(findings, r.checkGoBlock(block)...)
+		dir := path.Dir(block.file)
+		if _, ok := blocksByDir[dir]; !ok {
+			dirs = append(dirs, dir)
+		}
+		blocksByDir[dir] = append(blocksByDir[dir], block)
+	}
+	for _, dir := range dirs {
+		findings = append(findings, r.checkPackage(blocksByDir[dir])...)
 	}
 	return findings
 }
@@ -228,23 +254,61 @@ func guardedIdentsFor(re *regexp.Regexp, segment string) map[string]bool {
 	return out
 }
 
-func (r TaintRule) checkGoBlock(block diffSourceBlock) []Finding {
-	code := string(maskNonCode(block.file, block.text))
-	var findings []Finding
-	for _, seg := range goFuncSegments(code) {
-		findings = append(findings, r.checkFuncSegment(block, code, seg)...)
-	}
-	return findings
+// taintFunc is a top-level Go function participating in package taint
+// analysis, with its ordered parameter names for call-edge propagation.
+type taintFunc struct {
+	name     string
+	params   []string
+	variadic bool
+	blockIdx int
+	seg      goFuncSegment
 }
 
-func (r TaintRule) checkFuncSegment(block diffSourceBlock, code string, seg goFuncSegment) []Finding {
-	segText := code[seg.start:seg.end]
-	// Statements (split on newlines and ';') are the unit of flow ordering so
-	// `x := f(t); sink(x)` and `if err := validate(v); err == nil { sink(v) }`
-	// resolve each sink against the state immediately preceding it.
-	lines, stmtStarts := splitGoStatements(segText)
+// goTypeNames are identifiers that appear as parameter types, not names.
+var goTypeNames = map[string]bool{
+	"string": true, "int": true, "int8": true, "int16": true, "int32": true,
+	"int64": true, "uint": true, "uint8": true, "uint16": true, "uint32": true,
+	"uint64": true, "uintptr": true, "byte": true, "rune": true, "bool": true,
+	"float32": true, "float64": true, "complex64": true, "complex128": true,
+	"error": true, "any": true, "comparable": true,
+}
 
-	// Seed tainted identifiers from request sources.
+// parseFuncHeader extracts the function name and ordered parameter names
+// from the start of a masked function declaration. Only the first identifier
+// of each parameter declaration is kept (later idents are types, including
+// selector types like context.Context whose parts would confuse naive parses).
+func parseFuncHeader(segStart string) (name string, params []string, variadic bool) {
+	m := goFuncHeaderRe.FindStringSubmatch(segStart)
+	if m == nil {
+		return "", nil, false
+	}
+	name = m[1]
+	for _, part := range splitTopLevelArgs(m[2]) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "...") {
+			variadic = true
+		}
+		ids := goTaintIdentRe.FindAllString(part, -1)
+		if len(ids) == 0 {
+			continue
+		}
+		// Single-identifier declarations that are types (func F(string)) are
+		// unnamed parameters; multi-ident declarations start with the name.
+		if len(ids) == 1 && (goKeywords[ids[0]] || goTypeNames[ids[0]]) {
+			continue
+		}
+		params = append(params, ids[0])
+	}
+	return name, params, variadic
+}
+
+// collectTaintSeeds returns the identifiers tainted by request input,
+// manifest-declared fields, or (in JSON-RPC plugin packages) decoded RPC
+// frames and params.
+func collectTaintSeeds(segText string, rpcPkg bool) map[string]bool {
 	tainted := make(map[string]bool)
 	for _, m := range goTaintSourceAssignRe.FindAllStringSubmatch(segText, -1) {
 		for _, id := range goTaintIdentRe.FindAllString(m[1], -1) {
@@ -278,24 +342,22 @@ func (r TaintRule) checkFuncSegment(block diffSourceBlock, code string, seg goFu
 			}
 		}
 	}
-	if len(tainted) == 0 {
-		return nil
+	if rpcPkg {
+		for _, m := range goRPCUnmarshalRe.FindAllStringSubmatch(segText, -1) {
+			tainted[m[1]] = true
+		}
 	}
+	return tainted
+}
 
-	// Sequential flow pass over the segment's lines. Taint evolves in source
-	// order so a validator cleans an identifier from its position onward
-	// instead of being undone by later re-propagation:
-	//  1. identifiers passed whole to a sanitizer/validator call are
-	//     untainted (validation gates like `if _, err := sanitizeX(v)`).
-	//  2. assignments whose RHS is entirely guard call(s) yield sanitized,
-	//     clean values (`p, err := validateX(raw)`), so the LHS is untainted.
-	//  3. assignments whose guard-stripped RHS references tainted identifiers
-	//     taint the LHS (`dir := filepath.Join(base, tainted)`).
-	//
-	// Taint is snapshotted at the start of every line so sinks are checked
-	// against the state at their own position: a validator placed after a
-	// sink must not clean the earlier, unvalidated use.
-	snapshots := make([]map[string]bool, len(lines))
+// propagateTaint runs the sequential flow pass over a function segment,
+// evolving the tainted set in source order (see checkPackage for the rules).
+// It returns per-statement taint snapshots so sinks can be checked against
+// the state at their own position: a validator placed after a sink must not
+// clean the earlier, unvalidated use.
+func propagateTaint(segText string, tainted map[string]bool) (snapshots []map[string]bool, stmtStarts []int) {
+	lines, stmtStarts := splitGoStatements(segText)
+	snapshots = make([]map[string]bool, len(lines))
 	for i, line := range lines {
 		snap := make(map[string]bool, len(tainted))
 		for id := range tainted {
@@ -338,67 +400,255 @@ func (r TaintRule) checkFuncSegment(block diffSourceBlock, code string, seg goFu
 			}
 		}
 	}
+	return snapshots, stmtStarts
+}
 
-	// Report sinks whose path/exec arguments reference tainted data or request
-	// sources. For write-style sinks only the path argument is checked:
-	// request-controlled *content* written to a fixed path is normal API
-	// behavior, not a vulnerability.
-	var findings []Finding
-	funcHasGuards := goGuardCallRe.MatchString(segText)
-	for _, m := range goTaintSinkRe.FindAllStringIndex(segText, -1) {
-		callName := sinkCallName(segText, m[0])
-		args := sinkArgSpan(segText, m[1]-1)
+// riskyArg reports whether a call argument carries untrusted or
+// filesystem-location data: tainted identifiers, direct request sources,
+// manifest fields, or struct fields named like paths.
+func riskyArg(text string, tainted map[string]bool, manifestGate bool) bool {
+	if containsTaintedIdent(text, tainted) {
+		return true
+	}
+	if goTaintDirectSourceRe.MatchString(text) {
+		return true
+	}
+	if manifestGate && goManifestSourceRe.MatchString(text) {
+		return true
+	}
+	return goSelectorPathRe.MatchString(text)
+}
+
+// callParamEdge records that a call passed risky data into callee parameters.
+type callParamEdge struct {
+	callee string
+	params map[string]bool
+}
+
+// callParamEdges finds calls to functions in the same package whose arguments
+// are risky, and returns the callee parameter names that should be tainted.
+// Uses the post-propagation tainted set (a bounded over-approximation: taint
+// is not tracked per program point for call edges).
+func callParamEdges(segText string, sigs map[string]taintFunc, tainted map[string]bool, manifestGate bool) []callParamEdge {
+	var edges []callParamEdge
+	for _, m := range goCallSiteRe.FindAllStringIndex(segText, -1) {
+		name := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(segText[m[0]:m[1]]), "("))
+		fn, ok := sigs[name]
+		if !ok || len(fn.params) == 0 {
+			continue
+		}
+		args := callArgsAt(segText, m[0])
 		if args == "" {
 			continue
 		}
-		scope := stripGuardCalls(taintRelevantArgs(callName, args))
-		if scope == "" {
-			continue
+		taintedParams := make(map[string]bool)
+		for i, arg := range splitTopLevelArgs(args) {
+			idx := i
+			if fn.variadic && i >= len(fn.params)-1 {
+				idx = len(fn.params) - 1
+			}
+			if idx >= len(fn.params) {
+				break
+			}
+			arg = strings.TrimSuffix(strings.TrimSpace(arg), "...")
+			// Apply the same sanitizer treatment as propagateTaint: values
+			// wrapped in guard calls (filepath.Base, validators) are clean.
+			arg = strings.TrimSpace(stripGuardCalls(arg))
+			if arg != "" && riskyArg(arg, tainted, manifestGate) {
+				taintedParams[fn.params[idx]] = true
+			}
 		}
-		direct := goTaintDirectSourceRe.MatchString(scope) ||
-			(manifestGate && goManifestSourceRe.MatchString(scope))
-		stmtIdx := stmtIndexAt(stmtStarts, m[0])
-		stateAtSink := tainted
-		if stmtIdx >= 0 && stmtIdx < len(snapshots) {
-			stateAtSink = snapshots[stmtIdx]
+		if len(taintedParams) > 0 {
+			edges = append(edges, callParamEdge{callee: name, params: taintedParams})
 		}
-		indirect := containsTaintedIdent(scope, stateAtSink)
-		if !direct && !indirect {
-			continue
+	}
+	return edges
+}
+
+// initialTaint combines a function's local seeds with taint arriving through
+// its parameters from intra-package callers.
+func initialTaint(seeds map[string]bool, fn taintFunc, paramTaint map[string]map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(seeds)+4)
+	for k := range seeds {
+		out[k] = true
+	}
+	if pt := paramTaint[fn.name]; pt != nil {
+		for _, p := range fn.params {
+			if pt[p] {
+				out[p] = true
+			}
 		}
-		line := lineAtOffset(block.firstLine, code, seg.start+m[0])
-		if !block.addedLines[line] {
-			continue
+	}
+	return out
+}
+
+// checkPackage runs flow-sensitive taint analysis across all Go files in one
+// package directory: request/RPC inputs are seeded per function, propagated
+// through assignments, and carried across intra-package call edges until a
+// bounded fixpoint is reached.
+func (r TaintRule) checkPackage(blocks []diffSourceBlock) []Finding {
+	codes := make([]string, len(blocks))
+	funcs := make([]taintFunc, 0)
+	sigs := make(map[string]taintFunc)
+	rpcPkg := false
+	// Names declared more than once (methods on different receivers) cannot
+	// be resolved to a single declaration; skip call-edge propagation for them.
+	ambiguous := make(map[string]bool)
+	for i, block := range blocks {
+		codes[i] = string(maskNonCode(block.file, block.text))
+		if strings.Contains(block.text, "bufio.NewScanner(os.Stdin)") {
+			rpcPkg = true
 		}
-		kind := "filesystem/serving"
-		if strings.Contains(callName, "exec.Command") {
-			kind = "command execution"
+		for _, seg := range goFuncSegments(codes[i]) {
+			name, params, variadic := parseFuncHeader(codes[i][seg.start:])
+			if name == "" {
+				continue
+			}
+			fn := taintFunc{name: name, params: params, variadic: variadic, blockIdx: i, seg: seg}
+			funcs = append(funcs, fn)
+			if _, dup := sigs[name]; dup {
+				ambiguous[name] = true
+			}
+			sigs[name] = fn
 		}
-		via := "request-derived value"
-		if indirect && !direct {
-			via = "variable assigned from request input"
+	}
+	for name := range ambiguous {
+		delete(sigs, name)
+	}
+	if len(funcs) == 0 {
+		return nil
+	}
+
+	seeds := make([]map[string]bool, len(funcs))
+	for i, fn := range funcs {
+		seeds[i] = collectTaintSeeds(codes[fn.blockIdx][fn.seg.start:fn.seg.end], rpcPkg)
+	}
+
+	// Fixpoint over call edges: tainted arguments taint callee parameters.
+	paramTaint := make(map[string]map[string]bool)
+	for pass := 0; pass < taintPropagationPasses+1; pass++ {
+		changed := false
+		for i, fn := range funcs {
+			segText := codes[fn.blockIdx][fn.seg.start:fn.seg.end]
+			tainted := initialTaint(seeds[i], fn, paramTaint)
+			propagateTaint(segText, tainted)
+			for _, e := range callParamEdges(segText, sigs, tainted, goManifestFileGateRe.MatchString(segText)) {
+				set := paramTaint[e.callee]
+				if set == nil {
+					set = make(map[string]bool)
+					paramTaint[e.callee] = set
+				}
+				for p := range e.params {
+					if !set[p] {
+						set[p] = true
+						changed = true
+					}
+				}
+			}
 		}
-		severity := "high"
-		confidence := "high"
-		suffix := ""
-		if funcHasGuards {
-			// The function applies validation somewhere; the sink may still
-			// be reachable through an unguarded path, so keep the signal but
-			// mark it for manual verification.
-			severity = "medium"
-			confidence = "medium"
-			suffix = " (guarded function — verify coverage)"
+		if !changed {
+			break
 		}
-		findings = append(findings, Finding{
-			Category:    "security",
-			Rule:        "request-taint",
-			Severity:    severity,
-			Confidence:  confidence,
-			File:        block.file,
-			Line:        line,
-			Message:     fmt.Sprintf("%s sink reached by %s (%s)%s", kind, via, sinkCallName(segText, m[0]), suffix),
-			Remediation: "Validate and constrain request-derived values before filesystem, serving, or exec sinks; prefer filepath.Base/allowlists and reject path separators.",
-		})
+	}
+
+	// Report sinks with converged taint.
+	var findings []Finding
+	seen := make(map[string]bool)
+	for i, fn := range funcs {
+		block := blocks[fn.blockIdx]
+		code := codes[fn.blockIdx]
+		segText := code[fn.seg.start:fn.seg.end]
+		tainted := initialTaint(seeds[i], fn, paramTaint)
+		snapshots, stmtStarts := propagateTaint(segText, tainted)
+		manifestGate := goManifestFileGateRe.MatchString(segText)
+		funcHasGuards := goGuardCallRe.MatchString(segText)
+		paramSet := paramTaint[fn.name]
+		for _, m := range goTaintSinkRe.FindAllStringIndex(segText, -1) {
+			callName := sinkCallName(segText, m[0])
+			args := sinkArgSpan(segText, m[1]-1)
+			if args == "" {
+				continue
+			}
+			scope := stripGuardCalls(taintRelevantArgs(callName, args))
+			if scope == "" {
+				continue
+			}
+			direct := goTaintDirectSourceRe.MatchString(scope) ||
+				(manifestGate && goManifestSourceRe.MatchString(scope))
+			// Sinks are checked against the taint state at their own
+			// statement: a validator placed after the sink must not clean
+			// the earlier, unvalidated use.
+			stateAtSink := tainted
+			if stmtIdx := stmtIndexAt(stmtStarts, m[0]); stmtIdx >= 0 && stmtIdx < len(snapshots) {
+				stateAtSink = snapshots[stmtIdx]
+			}
+			scopeTainted := false
+			inferredOnly := false
+			for _, id := range goTaintIdentRe.FindAllString(scope, -1) {
+				if !stateAtSink[id] {
+					continue
+				}
+				scopeTainted = true
+				if paramSet == nil || !paramSet[id] {
+					inferredOnly = false
+					break
+				}
+				inferredOnly = true
+			}
+			fieldPath := !direct && !scopeTainted && goSelectorPathRe.MatchString(scope)
+			if !direct && !scopeTainted && !fieldPath {
+				continue
+			}
+			line := lineAtOffset(block.firstLine, code, fn.seg.start+m[0])
+			key := block.file + ":" + fmt.Sprint(line)
+			if !block.addedLines[line] || seen[key] {
+				continue
+			}
+			seen[key] = true
+			kind := "filesystem/serving"
+			if strings.Contains(callName, "exec.Command") {
+				kind = "command execution"
+			} else if goHTTPRequestSinkRe.MatchString(callName + "(") {
+				kind = "outbound request"
+			}
+			via := "request-derived value"
+			if rpcPkg && !direct {
+				via = "plugin RPC input"
+			} else if scopeTainted && !direct {
+				via = "variable assigned from request input"
+			} else if fieldPath {
+				via = "struct field path"
+			}
+			severity := "high"
+			confidence := "high"
+			suffix := ""
+			switch {
+			case funcHasGuards:
+				// The function applies validation somewhere; the sink may still
+				// be reachable through an unguarded path, so keep the signal but
+				// mark it for manual verification.
+				severity = "medium"
+				confidence = "medium"
+				suffix = " (guarded function — verify coverage)"
+			case fieldPath:
+				severity = "medium"
+				confidence = "medium"
+				suffix = " (config/struct path — verify validation)"
+			case inferredOnly:
+				confidence = "medium"
+				suffix = " (inferred cross-function reachability — verify call chain)"
+			}
+			findings = append(findings, Finding{
+				Category:    "security",
+				Rule:        "request-taint",
+				Severity:    severity,
+				Confidence:  confidence,
+				File:        block.file,
+				Line:        line,
+				Message:     fmt.Sprintf("%s sink reached by %s (%s)%s", kind, via, sinkCallName(segText, m[0]), suffix),
+				Remediation: "Validate and constrain request-derived values before filesystem, serving, or exec sinks; prefer filepath.Base/allowlists and reject path separators.",
+			})
+		}
 	}
 	return findings
 }
@@ -448,8 +698,14 @@ func taintRelevantArgs(callName, args string) string {
 			return strings.Join(parts[:2], ",")
 		}
 		return strings.Join(parts, ",")
-	case strings.HasPrefix(callName, "exec.") || strings.Contains(callName, "plugin.Open"):
+	case strings.HasPrefix(callName, "exec.") || strings.Contains(callName, "plugin.Open") || strings.HasSuffix(callName, ".Do"):
 		return args
+	case strings.Contains(callName, "NewRequest"):
+		// http.NewRequest(method, url, body): the URL is the risky argument.
+		if len(parts) > 1 {
+			return strings.Join(parts[1:], ",")
+		}
+		return ""
 	default:
 		// Single-path sinks: RemoveAll, Remove, MkdirAll, WriteFile, Create,
 		// OpenFile, ReadFile, ReadDir, Stat, Lstat, TempFile.
@@ -802,6 +1058,51 @@ func (r CredentialQueryRule) Check(diff string) []Finding {
 				Remediation: "Accept credentials via Authorization headers or request bodies instead of query parameters.",
 			})
 		}
+	}
+	return findings
+}
+
+// ResolvedPathRule flags files that resolve symlinks (filepath.EvalSymlinks,
+// os.Readlink) and also write files. Resolution changes the effective target:
+// a containment check applied to the lexical path does not protect the
+// resolved destination, so writes through resolved paths need re-validation.
+type ResolvedPathRule struct {
+	RepositoryRoot string
+	WorkingTree    bool
+}
+
+func (ResolvedPathRule) Name() string { return "resolved-path-write" }
+
+var (
+	resolvedPathRe = regexp.MustCompile(`filepath\.EvalSymlinks|os\.Readlink`)
+	pathWriteRe    = regexp.MustCompile(`os\.(?:Rename|WriteFile|Create|OpenFile|MkdirAll)\s*\(|ioutil\.WriteFile\s*\(`)
+)
+
+func (r ResolvedPathRule) Check(diff string) []Finding {
+	var findings []Finding
+	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if !strings.HasSuffix(block.file, ".go") || strings.HasSuffix(block.file, "_test.go") {
+			continue
+		}
+		code := string(maskNonCode(block.file, block.text))
+		resolve := resolvedPathRe.FindStringIndex(code)
+		if resolve == nil || !pathWriteRe.MatchString(code) {
+			continue
+		}
+		line := lineAtOffset(block.firstLine, code, resolve[0])
+		if !block.addedLines[line] {
+			continue
+		}
+		findings = append(findings, Finding{
+			Category:    "security",
+			Rule:        "resolved-path-write",
+			Severity:    "medium",
+			Confidence:  "medium",
+			File:        block.file,
+			Line:        line,
+			Message:     "File resolves symlinks and performs file writes; containment checked before resolution may not cover the resolved target",
+			Remediation: "Re-validate containment (e.g. filepath.Rel against the allowed root) on the resolved path before writing, or refuse to follow symlinks for managed files.",
+		})
 	}
 	return findings
 }

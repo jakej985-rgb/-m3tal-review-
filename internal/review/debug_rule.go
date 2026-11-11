@@ -63,6 +63,12 @@ func debugFindingsForBlock(block diffSourceBlock) []Finding {
 		if debugPattern.message == "Debug print statement detected" && isCLIOutputFile(block.file) {
 			continue
 		}
+		// Processes that speak a line-delimited protocol over stdin/stdout
+		// (JSON-RPC plugins, agents) use fmt.Print* as the protocol channel,
+		// not as debug output; real logging goes to stderr.
+		if debugPattern.message == "Debug print statement detected" && isStdioProtocolFile(block.file, block.text) {
+			continue
+		}
 		// Dev tooling (CI helper scripts, build/test tooling) legitimately logs
 		// to stdout/stderr; debug leftovers there are not shipped-code defects.
 		if debugPattern.message != "Debugger statement detected" && isToolingFile(block.file) {
@@ -89,6 +95,18 @@ func debugFindingsForBlock(block diffSourceBlock) []Finding {
 func isCLIOutputFile(file string) bool {
 	clean := "/" + strings.TrimPrefix(path.Clean(file), "/") + "/"
 	return strings.Contains(clean, "/internal/cli/") || strings.Contains(clean, "/cmd/")
+}
+
+// isStdioProtocolFile reports whether the file implements a request/response
+// protocol on stdin/stdout: it scans os.Stdin for framed input and serializes
+// responses (json.Marshal/Encoder) to stdout. fmt.Print* there is the wire
+// protocol, not leftover debugging.
+func isStdioProtocolFile(file string, text string) bool {
+	if !strings.HasSuffix(file, ".go") {
+		return false
+	}
+	return strings.Contains(text, "bufio.NewScanner(os.Stdin)") &&
+		(strings.Contains(text, "json.Marshal") || strings.Contains(text, "json.NewEncoder(os.Stdout)"))
 }
 
 // isToolingFile reports whether the path is development/CI tooling rather

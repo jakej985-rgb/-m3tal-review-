@@ -96,11 +96,31 @@ func isGeneratedDependencyFile(file string) bool {
 	return strings.HasSuffix(base, ".sum")
 }
 
+// isTestSourceFile reports whether the path is a test file or fixture. Test
+// files legitimately contain credential-shaped literals (tokens, passwords,
+// keys) used to exercise auth and parsing code.
+func isTestSourceFile(file string) bool {
+	base := strings.ToLower(path.Base(file))
+	if strings.Contains(strings.ToLower(file), "/testdata/") {
+		return true
+	}
+	for _, suffix := range []string{
+		"_test.go", "_test.py", "_test.rb", "_test.java", "_test.kt",
+		".test.js", ".test.ts", ".test.jsx", ".test.tsx",
+		".spec.js", ".spec.ts", ".spec.jsx", ".spec.tsx",
+	} {
+		if strings.HasSuffix(base, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (r SecurityRule) Check(diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 	for _, fileDiff := range ParseDiff(diff) {
-		if len(fileDiff.AddedLines) == 0 || isGeneratedDependencyFile(fileDiff.Path) {
+		if len(fileDiff.AddedLines) == 0 || isGeneratedDependencyFile(fileDiff.Path) || isTestSourceFile(fileDiff.Path) {
 			continue
 		}
 		// Performance optimization: Generate diff source blocks directly from fileDiff
@@ -143,7 +163,7 @@ func (r SecurityRule) Check(diff string) []Finding {
 		}
 	}
 	for _, added := range AddedDiffLines(diff) {
-		if !isConfigStyleFile(added.File) || isGeneratedDependencyFile(added.File) || isCommentOnlyLine(added.File, added.Text) {
+		if !isConfigStyleFile(added.File) || isGeneratedDependencyFile(added.File) || isTestSourceFile(added.File) || isCommentOnlyLine(added.File, added.Text) {
 			continue
 		}
 		name, value := findConfigCredential(added.Text)

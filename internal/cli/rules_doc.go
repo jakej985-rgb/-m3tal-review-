@@ -24,7 +24,8 @@ var ruleCatalog = []ruleDoc{
 	{"exposed-secret", "High-confidence secret formats: PEM private keys and provider tokens (AWS, GitHub, GitLab, Slack, OpenAI, Stripe, Google, npm).", "AKIA..."},
 	{"high-entropy-secret", "Entropy-based secret detection: high-entropy strings guarded by character sets (Hex, Base64, Base58), length gates, and secret contexts.", "apiKey = \"4f7a9c8b2e1d0f5a3b6c8e9d1a2f4b7c89abcdef\""},
 	{"path-traversal", "File APIs fed by request input or os.Args without sanitization.", "os.Open(r.URL.Path)"},
-	{"request-taint", "Intra-file taint: request-derived values (URL params, query, form, decoded bodies) reaching filesystem, serving, or exec sinks.", "name := chi.URLParam(r, \"name\"); os.RemoveAll(dir)"},
+	{"request-taint", "Package-scoped taint: request/RPC-derived values (URL params, query, form, decoded bodies, JSON-RPC stdin frames and params) propagated through assignments and intra-package calls to filesystem, serving, exec, and outbound-request sinks.", "name := chi.URLParam(r, \"name\"); os.RemoveAll(dir)"},
+	{"resolved-path-write", "File resolves symlinks (EvalSymlinks/Readlink) and also writes files; pre-resolution containment may not cover the resolved target.", "filepath.EvalSymlinks(p); os.Rename(tmp, p)"},
 	{"wildcard-default-scope", "Permission/scope normalization that falls back to wildcard or full access on empty/invalid input.", "if len(out) == 0 { return []string{\"*\"} }"},
 	{"plugin-trust", "Auto-execution of discovered plugins, CWD-relative plugin paths, and credential env vars passed to plugin subprocesses.", "exec.Command(spec.Command)"},
 	{"privileged-pkg-exec", "Package managers or privilege wrappers (sudo, dpkg, apt, systemctl) executed from HTTP handler code.", "exec.Command(\"sudo\", \"dpkg\", \"-i\", debPath)"},
@@ -130,6 +131,7 @@ var ruleCatalog = []ruleDoc{
 	{"http-wildcard-cors", "Wildcard Access-Control-Allow-Origin combined with credentials.", "Access-Control-Allow-Origin: *"},
 	{"http-missing-timeouts", "HTTP server started without ReadTimeout/WriteTimeout.", "http.ListenAndServe(\":8080\", nil)"},
 	{"http-unsafe-param-reflection", "HTTP request parameter reflected directly in response writer.", "w.Write([]byte(r.PathValue(\"id\")))"},
+	{"rpc-stdin-scanner", "stdin scanner uses the default 64KB buffer; oversized RPC frames can kill the process.", "bufio.NewScanner(os.Stdin)"},
 }
 
 func listRules() error {

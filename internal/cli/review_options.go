@@ -432,6 +432,12 @@ func workingTreeRules(rules []review.Rule) []review.Rule {
 		case review.UnauthenticatedRouteRule:
 			typed.WorkingTree = true
 			rules[i] = typed
+		case review.ResolvedPathRule:
+			typed.WorkingTree = true
+			rules[i] = typed
+		case review.ClientTimeoutRule:
+			typed.WorkingTree = true
+			rules[i] = typed
 		}
 	}
 	return rules
