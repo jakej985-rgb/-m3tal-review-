@@ -102,7 +102,7 @@ func TestExtraRulesDetections(t *testing.T) {
 		{"xxe", "Parser.java", "class P {\n  void f() throws Exception {\n    javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder();\n  }\n}\n"},
 		{"jwt-misuse", "auth.py", "import jwt\ndef f(t):\n    return jwt.decode(t, key, algorithms=['none'])\n"},
 		{"hardcoded-session-secret", "config.go", "package main\nconst JWT_SECRET = \"supersecretvalue123\"\n"},
-		{"tls-verification", "main.go", "package main\nimport \"crypto/tls\"\nvar c = &tls.Config{InsecureSkipVerify: true}\n"},
+		{"tls-verification", "main.js", "const https = require('https');\nconst opts = { rejectUnauthorized: false };\n"},
 		{"timing-unsafe-compare", "auth.py", "def f(password, expected_password):\n    return password == expected_password\n"},
 		{"insecure-randomness", "main.js", "function t() {\n  return Math.random()\n}\n"},
 		{"web-storage-secrets", "app.js", "function f(t) {\n  localStorage.setItem('auth_token', t)\n}\n"},
@@ -126,7 +126,7 @@ func TestExtraRulesDetections(t *testing.T) {
 		{"graphql-injection", "q.js", "const q = gql`query { user(id: ${uid}) { name } }`\n"},
 		{"email-header-injection", "mail.py", "def f(to):\n    msg['Subject'] = 'Hi ' + request.args.get('n')\n"},
 		{"unbounded-read", "main.go", "package main\nimport \"io\"\nfunc f(r io.Reader) []byte {\n\tb, _ := io.ReadAll(r)\n\treturn b\n}\n"},
-		{"client-timeouts", "main.go", "package main\nimport \"net/http\"\nvar c = &http.Client{}\n"},
+		// client-timeouts moved to ClientTimeoutRule (see plugin_rpc_taint_test.go).
 		{"rust-unsafe", "lib.rs", "fn f(p: *const u8) -> u8 {\n    unsafe { *p }\n}\n"},
 	}
 	for _, tc := range cases {

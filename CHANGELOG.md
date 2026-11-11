@@ -2,7 +2,33 @@
 
 ## Unreleased
 
+### Changed
+- `request-taint` is now package-scoped: JSON-RPC plugin packages (stdin
+  scanner + `json.Unmarshal(line/req.Params, ...)`) seed taint, and taint
+  propagates through intra-package call edges to a bounded fixpoint. Sinks
+  now include outbound HTTP requests; struct fields named `*Path`/`*File`/
+  `*Dir`/`*Root` passed to calls taint the callee parameter. Audit mode groups
+  Go files by directory so cross-file flows (main.go -> helpers) are seen.
+- `insecure-tls-verification` downgrades to medium when the file implements
+  compensating application-layer auth (HMAC proofs, constant-time compares,
+  VerifyPeerCertificate) and stays high when credential headers are sent over
+  the unverified channel; the duplicate `tls-verification` Go pattern was
+  removed in favor of this context-aware rule
+- `actions-script-injection` is medium for trusted contexts (dispatch inputs,
+  event names, SHAs) and stays high for attacker-authored contexts (issue/PR/
+  comment/review bodies, head refs)
+- `hardcoded-credential`, `ssrf`, and `unbounded-read` skip test files and
+  fixtures; `unbounded-read` also recognizes LimitReader/CopyN/MaxBytesReader
+- `debug-leftover` no longer flags fmt.Print* in files that implement a
+  stdin/stdout JSON-RPC protocol (stdout is the wire channel)
+- `client-timeouts` rewritten as ClientTimeoutRule: extracts the balanced
+  http.Client literal and checks for a Timeout field (handles nested
+  Transport/TLS/func-literal configs and skips test files)
+
 ### Added
+- `resolved-path-write` rule: files combining symlink resolution with file
+  writes (containment may not cover resolved targets)
+- `rpc-stdin-scanner` rule: unbounded bufio.Scanner on os.Stdin
 - `cleartext-transport` and `unauthenticated-route` rules: plain-HTTP servers
   handling credentials, and parameterized routes mounted outside the
   authenticated `/api` namespace

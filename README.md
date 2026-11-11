@@ -91,7 +91,7 @@ All findings come from deterministic heuristics; see `m3tal-review list-rules` f
 | Rule | Detects |
 | --- | --- |
 | `path-traversal` | File APIs fed by request input or os.Args without sanitization. |
-| `request-taint` | Request-derived values (URL params, query, form, decoded bodies) tracked through assignments to filesystem, serving, or exec sinks (Go). |
+| `request-taint` | Request/RPC-derived values (URL params, query, form, decoded bodies, JSON-RPC stdin frames and params) tracked through assignments and intra-package calls to filesystem, serving, exec, and outbound-request sinks (Go). |
 | `wildcard-default-scope` | Permission/scope normalization that silently falls back to `"*"`/full access on empty or invalid input. |
 | `plugin-trust` | Auto-execution of discovered plugins, CWD-relative plugin search paths, and credential env vars passed to plugin subprocesses. |
 | `privileged-pkg-exec` | Package managers or privilege wrappers (sudo, dpkg, apt, systemctl) executed from HTTP handler code. |
@@ -99,6 +99,8 @@ All findings come from deterministic heuristics; see `m3tal-review list-rules` f
 | `credential-in-query` | Credentials read from URL query parameters (leak via logs, history, referrers). |
 | `cleartext-transport` | Plain-HTTP server serving credential-bearing endpoints with no TLS configuration. |
 | `unauthenticated-route` | Parameterized route registered outside the authenticated API namespace in a file that uses auth middleware. |
+| `resolved-path-write` | Files that resolve symlinks (EvalSymlinks/Readlink) and also write files; pre-resolution containment may not cover the resolved target. |
+| `rpc-stdin-scanner` | stdin scanner using the default 64KB buffer; oversized RPC frames can kill the process. |
 | `sql-injection` | String-built SQL queries via fmt.Sprintf/concat/f-strings/template literals. |
 | `ssrf` | Server-side request forgery: HTTP clients fetching request-controlled URLs. |
 | `command-injection` | Shell/process execution built from request or interpolated data. |
@@ -143,7 +145,7 @@ All findings come from deterministic heuristics; see `m3tal-review list-rules` f
 | `server-timeouts` | HTTP servers/clients without timeout configuration. |
 | `client-timeouts` | HTTP clients without Timeout configured. |
 | `missing-timeout` | Outbound calls without explicit timeout (requests, TLS server). |
-| `unbounded-read` | Unbounded io.ReadAll on potentially large input. |
+| `unbounded-read` | Unbounded io.ReadAll on potentially large input (LimitReader/CopyN-bounded reads excluded). |
 | `bind-all-interfaces` | Servers bound to all interfaces. |
 | `env-passthrough` | Full environment passed to subprocesses. |
 | `log-injection` | User-controlled data written to logs (log forging). |
