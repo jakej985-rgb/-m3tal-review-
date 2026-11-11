@@ -491,6 +491,42 @@ func TestCheckDependenciesNestedGoFilesNotDoubleCounted(t *testing.T) {
 	}
 }
 
+// Modules under testdata are fixtures (often intentionally broken): they are
+// neither analyzed nor counted, matching collectImportPaths.
+func TestCheckDependenciesNestedTestdataModuleIgnored(t *testing.T) {
+	tmpDir := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(tmpDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("plugins/a/go.mod", "module example.com/a\n\ngo 1.21\n")
+	write("plugins/a/main.go", "package main\n\nfunc main() {}\n")
+	// Deliberately malformed fixture: must not produce findings.
+	write("plugins/a/testdata/fixture/go.mod", "module example.com/fixture\n\nrequire (\n\tgithub.com/x/y v1.0.0\n")
+	write("plugins/a/testdata/fixture/main.go", "package main\n\nfunc main() {}\n")
+
+	report, findings, err := CheckDependencies(tmpDir, CheckOptions{})
+	if err != nil {
+		t.Fatalf("CheckDependencies failed: %v", err)
+	}
+	if report.NestedModules != 1 {
+		t.Fatalf("expected only plugins/a as nested module, got %d", report.NestedModules)
+	}
+	if report.TotalGoFiles != 1 {
+		t.Fatalf("expected 1 Go file (fixture excluded), got %d", report.TotalGoFiles)
+	}
+	for _, f := range findings {
+		if strings.Contains(f.File, "testdata") {
+			t.Fatalf("testdata fixture produced finding: %+v", f)
+		}
+	}
+}
+
 // Nested modules get the same go.sum / duplicate-require checks as root.
 func TestCheckDependenciesNestedHygiene(t *testing.T) {
 	tmpDir := t.TempDir()

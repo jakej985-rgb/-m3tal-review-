@@ -89,6 +89,8 @@ type nestedRequire struct {
 
 // underCountedModule reports whether dir lies inside any of the given module
 // directories (whose source scans therefore already include dir's files).
+// analyzeNestedGoMods and collectImportPaths skip the same directories via
+// skipSourceDir, so any nested module found is covered by its ancestor.
 func underCountedModule(dir string, counted []string) bool {
 	for _, c := range counted {
 		if strings.HasPrefix(dir, c+string(filepath.Separator)) {
@@ -125,8 +127,13 @@ func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []ne
 			return nil
 		}
 		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "vendor", "node_modules", ".venv", "venv", "__pycache__":
+			if p == root {
+				return nil
+			}
+			// Same exclusions as collectImportPaths (dot-dirs, vendor,
+			// testdata fixtures) plus non-Go dependency directories.
+			switch name := d.Name(); {
+			case skipSourceDir(name), name == "node_modules", name == "venv", name == "__pycache__":
 				return filepath.SkipDir
 			}
 			return nil
