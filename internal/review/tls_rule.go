@@ -47,7 +47,7 @@ func (r TLSRule) Check(diff string) []Finding {
 // compensate for disabled transport verification: HMAC proofs, constant-time
 // comparisons, explicit peer-certificate verification callbacks, and
 // challenge/nonce machinery.
-var tlsAppLayerAuthRe = regexp.MustCompile(`hmac\.|subtle\.ConstantTime|VerifyPeerCertificate|VerifyConnection|X-[A-Za-z0-9-]*(?:Proof|Signature|Nonce|Challenge)|proof|nonce`)
+var tlsAppLayerAuthRe = regexp.MustCompile(`hmac\.|subtle\.ConstantTime|VerifyPeerCertificate|VerifyConnection|X-[A-Za-z0-9-]*(?:Proof|Signature|Nonce|Challenge)`)
 
 // tlsCredentialHeaderRe matches code that places credentials into HTTP
 // headers (matched against raw source: header names are string literals).
@@ -63,7 +63,11 @@ func tlsSeverityForBlock(block diffSourceBlock) (severity, message string) {
 	if tlsCredentialHeaderRe.MatchString(block.text) {
 		return "high", "TLS certificate verification is disabled while credential headers are transmitted"
 	}
-	if tlsAppLayerAuthRe.MatchString(block.text) {
+	// Match against masked code so comments cannot supply downgrade evidence.
+	// X-*-Proof header names live in string literals, so check those against
+	// raw text only via the explicit header pattern.
+	if tlsAppLayerAuthRe.MatchString(string(maskNonCode(block.file, block.text))) ||
+		regexp.MustCompile(`Header\.(?:Set|Get|Add)\s*\(\s*"X-[A-Za-z0-9-]*(?:Proof|Signature|Nonce|Challenge)"`).MatchString(block.text) {
 		return "medium", "TLS certificate verification is disabled; relies on application-layer authentication — verify all peers authenticate before trusting the channel"
 	}
 	return "high", "TLS certificate verification is disabled"

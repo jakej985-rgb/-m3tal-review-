@@ -451,7 +451,10 @@ func callParamEdges(segText string, sigs map[string]taintFunc, tainted map[strin
 				break
 			}
 			arg = strings.TrimSuffix(strings.TrimSpace(arg), "...")
-			if riskyArg(arg, tainted, manifestGate) {
+			// Apply the same sanitizer treatment as propagateTaint: values
+			// wrapped in guard calls (filepath.Base, validators) are clean.
+			arg = strings.TrimSpace(stripGuardCalls(arg))
+			if arg != "" && riskyArg(arg, tainted, manifestGate) {
 				taintedParams[fn.params[idx]] = true
 			}
 		}
@@ -488,6 +491,9 @@ func (r TaintRule) checkPackage(blocks []diffSourceBlock) []Finding {
 	funcs := make([]taintFunc, 0)
 	sigs := make(map[string]taintFunc)
 	rpcPkg := false
+	// Names declared more than once (methods on different receivers) cannot
+	// be resolved to a single declaration; skip call-edge propagation for them.
+	ambiguous := make(map[string]bool)
 	for i, block := range blocks {
 		codes[i] = string(maskNonCode(block.file, block.text))
 		if strings.Contains(block.text, "bufio.NewScanner(os.Stdin)") {
@@ -500,8 +506,14 @@ func (r TaintRule) checkPackage(blocks []diffSourceBlock) []Finding {
 			}
 			fn := taintFunc{name: name, params: params, variadic: variadic, blockIdx: i, seg: seg}
 			funcs = append(funcs, fn)
+			if _, dup := sigs[name]; dup {
+				ambiguous[name] = true
+			}
 			sigs[name] = fn
 		}
+	}
+	for name := range ambiguous {
+		delete(sigs, name)
 	}
 	if len(funcs) == 0 {
 		return nil

@@ -35,7 +35,7 @@ func (r ClientTimeoutRule) Check(diff string) []Finding {
 				continue
 			}
 			body := braceBody(code, m[0]+open)
-			if body == "" || timeoutFieldRe.MatchString(body) {
+			if body == "" || timeoutFieldRe.MatchString(topLevelText(body)) {
 				continue
 			}
 			line := lineAtOffset(block.firstLine, code, m[0])
@@ -53,6 +53,28 @@ func (r ClientTimeoutRule) Check(diff string) []Finding {
 		}
 	}
 	return findings
+}
+
+// topLevelText returns only the depth-zero text of a literal body, so fields
+// of nested literals (e.g. net.Dialer{Timeout: ...}) are not mistaken for the
+// client's own Timeout field.
+func topLevelText(body string) string {
+	var b strings.Builder
+	depth := 0
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '{', '(', '[':
+			depth++
+			continue
+		case '}', ')', ']':
+			depth--
+			continue
+		}
+		if depth == 0 {
+			b.WriteByte(body[i])
+		}
+	}
+	return b.String()
 }
 
 // braceBody returns the text inside the balanced braces starting at the '{'
