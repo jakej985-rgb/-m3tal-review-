@@ -143,7 +143,7 @@ func collectDependencies(root string) []depRef {
 	for _, d := range deps {
 		k := [3]string{d.Name, d.Ecosystem, d.Version}
 		if idx, ok := seen[k]; ok {
-			if uniq[idx].File != d.File {
+			if uniq[idx].File != d.File && !containsString(uniq[idx].AlsoFiles, d.File) {
 				uniq[idx].AlsoFiles = append(uniq[idx].AlsoFiles, d.File)
 			}
 			continue
@@ -165,6 +165,15 @@ func collectDependencies(root string) []depRef {
 		deps = deps[:maxVulnDeps]
 	}
 	return deps
+}
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func parseGoMod(content, file string) []depRef {

@@ -18,37 +18,46 @@ func CheckDependencies(repoRoot string, opts CheckOptions) (*DepReport, []review
 
 	// Multi-module repositories (a go.mod per plugin/package, possibly with
 	// no root module) get structural checks on every nested manifest.
-	nestedFindings, nestedRequires, nestedCount := analyzeNestedGoMods(repoRoot)
+	nestedFindings, nestedRequires := analyzeNestedGoMods(repoRoot, report)
 	findings = append(findings, nestedFindings...)
-	report.NestedModules = nestedCount
 
-	var requires []RequireEntry
-	// modFiles maps each required module path to every manifest requiring
-	// it, so license findings land on the right go.mod(s).
-	modFiles := make(map[string][]string)
+	// Licenses are inspected per module path+version: different manifests
+	// may require different versions with different licenses, so each
+	// result is attributed only to manifests requiring that exact version.
+	type modVer struct{ path, version string }
+	var order []modVer
+	modFiles := make(map[modVer][]string)
+	addReq := func(r RequireEntry, file string) {
+		k := modVer{path: r.Path, version: r.Version}
+		if _, ok := modFiles[k]; !ok {
+			order = append(order, k)
+		}
+		modFiles[k] = appendUnique(modFiles[k], file)
+	}
 	if report.IsGoModule {
 		// Read go.mod to extract required dependencies for license inspection
 		modPath := filepath.Join(repoRoot, "go.mod")
 		modData, _ := os.ReadFile(modPath)
 		parsedMod, _ := ParseGoMod(string(modData))
 		for _, r := range parsedMod.Requires {
-			requires = append(requires, r)
-			modFiles[r.Path] = appendUnique(modFiles[r.Path], "go.mod")
+			addReq(r, "go.mod")
 		}
 	}
-	// Merge nested module requirements (deduplicated by module path for
-	// inspection, but every requiring manifest is remembered).
 	for _, nr := range nestedRequires {
-		if _, ok := modFiles[nr.req.Path]; !ok {
-			requires = append(requires, nr.req)
-		}
-		modFiles[nr.req.Path] = appendUnique(modFiles[nr.req.Path], nr.file)
+		addReq(nr.req, nr.file)
 	}
 
-	if len(requires) > 0 {
-		licenses := InspectDependencyLicenses(repoRoot, requires)
-		report.Licenses = licenses
-		findings = append(findings, EvaluateLicensePolicyWithFiles(licenses, opts.LicensePolicy, modFiles)...)
+	if len(order) > 0 {
+		report.Licenses = make(map[string]LicenseInfo, len(order))
+		for _, k := range order {
+			lic := InspectDependencyLicenses(repoRoot, []RequireEntry{{Path: k.path, Version: k.version}})
+			// The report map is keyed by module path; keep the first
+			// version seen (root go.mod first) for display.
+			if _, ok := report.Licenses[k.path]; !ok {
+				report.Licenses[k.path] = lic[k.path]
+			}
+			findings = append(findings, EvaluateLicensePolicyWithFiles(lic, opts.LicensePolicy, map[string][]string{k.path: modFiles[k]})...)
+		}
 	}
 
 	// Deterministic ordering of findings
@@ -90,12 +99,13 @@ func appendUnique(list []string, s string) []string {
 // go.sum conflicts, duplicate and unused requirements) on every go.mod below
 // root, excluding the root module itself and dependency directories.
 // Finding paths are rewritten relative to root; unused-dependency checks are
-// scoped to each module's own directory.
-func analyzeNestedGoMods(root string) ([]review.Finding, []nestedRequire, int) {
+// scoped to each module's own directory. Per-module totals (dependency
+// counts, and source files when there is no root module) are aggregated
+// into report so nested-only repositories don't print a zero summary.
+func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []nestedRequire) {
 	rootMod := filepath.Join(root, "go.mod")
 	var findings []review.Finding
 	var requires []nestedRequire
-	nestedCount := 0
 
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -118,16 +128,23 @@ func analyzeNestedGoMods(root string) ([]review.Finding, []nestedRequire, int) {
 		if err != nil || info.Size() > 4<<20 {
 			return nil
 		}
-		nestedCount++
 		modDir := filepath.Dir(p)
 		relDir, err := filepath.Rel(root, modDir)
 		if err != nil {
 			return nil
 		}
 		relDir = filepath.ToSlash(relDir)
-		_, modFindings, err := AnalyzeGoModules(modDir)
+		modReport, modFindings, err := AnalyzeGoModules(modDir)
 		if err != nil {
 			return nil
+		}
+		report.NestedModules++
+		report.DirectDeps += modReport.DirectDeps
+		report.IndirectDeps += modReport.IndirectDeps
+		// A root module's source scan already walks nested directories;
+		// only count nested files when there is no root module.
+		if !report.IsGoModule {
+			report.TotalGoFiles += modReport.TotalGoFiles
 		}
 		for i := range modFindings {
 			file := modFindings[i].File
@@ -145,8 +162,6 @@ func analyzeNestedGoMods(root string) ([]review.Finding, []nestedRequire, int) {
 		}
 		return nil
 	})
-	if err != nil {
-		return findings, requires, nestedCount
-	}
-	return findings, requires, nestedCount
+	_ = err // walk errors are non-fatal; partial results are returned
+	return findings, requires
 }
