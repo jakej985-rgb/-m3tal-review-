@@ -75,6 +75,13 @@ func (r SecretRule) Check(diff string) []Finding {
 				Remediation: "Remove the key material and rotate the key. Store secrets outside the repository.",
 			})
 		}
+		// Token-format matches are skipped in test/fixture paths: fixtures
+		// legitimately embed token-shaped values (API response captures,
+		// mock credentials). PEM private-key blocks above still flag
+		// everywhere — key material is unambiguous in any file.
+		if isTestSourceFile(block.file) {
+			continue
+		}
 		for _, match := range secretTokenPattern.FindAllStringSubmatchIndex(block.text, -1) {
 			// Tokens inside comments are usually documentation examples; tokens
 			// inside strings are exactly where real secrets live.
@@ -94,17 +101,41 @@ func (r SecretRule) Check(diff string) []Finding {
 				continue
 			}
 			seen[key] = true
+			// Google API keys (AIza...) are ambiguous: they are embedded
+			// public-by-design in many first-party clients (e.g. InnerTube)
+			// and in server code alike. A bare source match cannot prove the
+			// key is private, so report at medium with a verify-first message
+			// instead of the high severity reserved for unambiguous secrets.
+			severity, message := "high", "Possible exposed credential: "
+			if secretTokenGroup(secretTokenPattern, match) == "google" {
+				severity = "medium"
+				message = "Possible exposed Google API key (may be a public client key — verify key restrictions): "
+			}
 			findings = append(findings, Finding{
 				Rule:        "exposed-secret",
-				Severity:    "high",
+				Severity:    severity,
 				File:        block.file,
 				Line:        line,
-				Message:     "Possible exposed credential: " + secretTokenLabel(secretTokenPattern, match),
+				Message:     message + secretTokenLabel(secretTokenPattern, match),
 				Remediation: "Remove the credential and rotate it. Store secrets outside the repository.",
 			})
 		}
 	}
 	return findings
+}
+
+// secretTokenGroup returns the name of the named capture group that matched.
+func secretTokenGroup(re *regexp.Regexp, match []int) string {
+	for i, name := range re.SubexpNames() {
+		if i == 0 || name == "" {
+			continue
+		}
+		start, end := match[i*2], match[i*2+1]
+		if start >= 0 && end > start {
+			return name
+		}
+	}
+	return ""
 }
 
 // secretTokenLabel names the matched credential type. Findings deliberately

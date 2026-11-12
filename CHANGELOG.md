@@ -37,6 +37,29 @@
 - `client-timeouts` rewritten as ClientTimeoutRule: extracts the balanced
   http.Client literal and checks for a Timeout field (handles nested
   Transport/TLS/func-literal configs and skips test files)
+- `actions-script-injection` now only fires inside executable workflow
+  contexts (`run:`/`script:` keys and their block-scalar bodies); event
+  interpolations in structural YAML keys (`ref:`, `with:` inputs, `if:`,
+  `env:`) are data, not shell, and are no longer flagged
+- Test/fixture awareness extended: `isTestSourceFile` recognizes `/tests/`,
+  `/test/`, `/fixtures/` path segments (Python-style `tests/data/` included)
+  and is applied consistently to `SecurityRule`, `EntropyRule`, and
+  `SecretRule` — API-response fixtures no longer produce credential or
+  entropy findings. PEM private-key blocks still flag in test paths.
+- Public Google API keys (`AIza...`) are downgraded: `secret-material` no
+  longer treats them as critical and `exposed-secret` reports them at medium
+  with a verify-restrictions message, since client API keys are
+  public-by-design in many first-party apps
+- `hardcoded-credential` no longer flags URL constants (values starting with
+  `https?://`) whose names merely contain token/secret/key
+- `credential-file-permissions` (new): credential-named Go file writes
+  (`os.WriteFile`/`os.Create`/`os.OpenFile`) with permissive explicit modes
+  or implicit umask defaults, and Python `open()`/`Path.write_*` in
+  credential-named functions without an explicit `0o600`/`chmod` — test
+  files excluded
+- `default-http-client` (new): Go calls through `http.DefaultClient` or the
+  package-level `http.Get/Post/...` helpers, which carry no timeout — test
+  files excluded
 
 ### Added
 - `resolved-path-write` rule: files combining symlink resolution with file
@@ -51,7 +74,7 @@
   findings
 - `audit --with-slop`: `code-slop` is now skipped by default in audit so
   security findings are not buried under style noise
-- ~70 deterministic detector rules across injection, secrets/crypto,
+- ~95 deterministic detector rules across injection, secrets/crypto,
   transport, supply-chain/CI, IaC, and language-specific checks
 - Go AST correctness suite (unclosed resources, ignored errors, unchecked
   assertions, defer-in-loop, cyclomatic proxy, and more)

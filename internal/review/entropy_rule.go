@@ -232,7 +232,7 @@ func (r EntropyRule) Check(diff string) []Finding {
 	seen := make(map[string]bool)
 
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
-		if isGeneratedDataFile(block.file) {
+		if isGeneratedDataFile(block.file) || isTestSourceFile(block.file) {
 			continue
 		}
 		// Limit block scanning if excessively large to protect against untrusted hostile diffs

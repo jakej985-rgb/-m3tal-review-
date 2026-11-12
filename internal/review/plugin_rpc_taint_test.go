@@ -673,3 +673,172 @@ func (b *B) Save() {
 		t.Fatalf("expected 2 distinct signatures for (*A).Save and (*B).Save, got %v", sigs)
 	}
 }
+
+// Script injection must only fire inside run:/script: executable contexts;
+// structural keys like ref:/with: inputs are data, not shell.
+func TestActionsScriptInjectionExecutableContexts(t *testing.T) {
+	wf := `.github/workflows/ci.yml
+name: ci
+on:
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: safe env
+        run: echo "hello"
+      - name: injected
+        run: |
+          echo "title: ${{ github.event.pull_request.title }}"
+          echo "done"
+      - name: script injection
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log("${{ github.event.issue.title }}")
+`
+	diff := extraDiff(".github/workflows/ci.yml", wf)
+	findings := (ActionsScriptInjectionRule{}).Check(diff)
+	if len(findings) != 2 {
+		t.Fatalf("expected 2 findings (run block + script block), got %d: %+v", len(findings), findings)
+	}
+	for _, f := range findings {
+		if f.Severity != "high" {
+			t.Fatalf("expected high for attacker context, got %s at line %d", f.Severity, f.Line)
+		}
+	}
+	// The ref: interpolation must NOT be flagged.
+	for _, f := range findings {
+		if f.Line == 14 {
+			t.Fatalf("ref: input was flagged as script injection: %+v", f)
+		}
+	}
+}
+
+func TestActionsScriptInjectionDispatchInputMedium(t *testing.T) {
+	wf := `.github/workflows/release.yml
+on:
+  workflow_dispatch:
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ github.event.inputs.bump_type }}"
+`
+	diff := extraDiff(".github/workflows/release.yml", wf)
+	findings := (ActionsScriptInjectionRule{}).Check(diff)
+	if len(findings) != 1 || findings[0].Severity != "medium" {
+		t.Fatalf("expected 1 medium finding, got %+v", findings)
+	}
+}
+
+// Python tests/data fixtures must not produce credential/entropy findings.
+func TestSecretRulesSkipPythonTestData(t *testing.T) {
+	fixture := `{"feedbackToken": "AOpD3f9xK2mQ8vLpR7tYwEzBcD4sFgHjKlMnBvCxZaSdFgHiJkLmNoPqRsTuVwXyZ0123456789abcdefghij",
+ "signatureCipher": "GKl3mQ8vLpR7tYwEzBcD4sFgHjKlMnBvCxZaSdFgHiJkLmNoPqRsTuVwXyZab12",
+ "trackingParams": "CAkQ8vLpR7tYwEzBcD4sFgHjKlMnBvCxZaSdFgHiJkLmNoPqRsTuVwXyZabc"}`
+	diff := extraDiff("tests/data/2024_03_get_album.json", fixture)
+	for _, r := range []Rule{EntropyRule{}, SecretRule{}} {
+		for _, f := range r.Check(diff) {
+			t.Fatalf("rule %s flagged test fixture: %+v", r.Name(), f)
+		}
+	}
+	// And hardcoded-credential on the same fixture.
+	sr := SecurityRule{}
+	for _, f := range sr.Check(diff) {
+		if f.Rule == "hardcoded-credential" {
+			t.Fatalf("hardcoded-credential flagged test fixture: %+v", f)
+		}
+	}
+}
+
+// URL constants named *TOKEN*/*SECRET* are endpoints, not credentials.
+func TestHardcodedCredentialSkipsURLValues(t *testing.T) {
+	src := `package main
+
+const OAuthTokenURL = "https://oauth2.googleapis.com/token"
+`
+	diff := extraDiff("auth/oauth.go", src)
+	for _, f := range (SecurityRule{}).Check(diff) {
+		if f.Rule == "hardcoded-credential" {
+			t.Fatalf("URL constant flagged as credential: %+v", f)
+		}
+	}
+}
+
+// Credential files written with permissive/default permissions must flag.
+func TestCredentialFilePermGo(t *testing.T) {
+	src := `package auth
+
+func (m *OAuthToken) SaveToken() error {
+	data, _ := json.Marshal(m)
+	return os.WriteFile(m.FilePath, data, 0644)
+}
+
+func WriteConfig(path string, data []byte) error {
+	return os.WriteFile(path, data, 0600)
+}
+`
+	diff := extraDiff("auth/oauth.go", src)
+	findings := (CredentialFilePermRule{}).Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %+v", findings)
+	}
+	if findings[0].Severity != "medium" {
+		t.Fatalf("expected medium for explicit 0644, got %s", findings[0].Severity)
+	}
+}
+
+func TestCredentialFilePermPython(t *testing.T) {
+	src := `import os
+
+def store_token(file_path, token):
+    with open(file_path, encoding="utf8", mode="w") as f:
+        json.dump(token, f)
+
+def save_report(path, data):
+    with open(path, "w") as f:
+        f.write(data)
+`
+	diff := extraDiff("auth/token.py", src)
+	findings := (CredentialFilePermRule{}).Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding (store_token only), got %+v", findings)
+	}
+}
+
+func TestDefaultHTTPClient(t *testing.T) {
+	src := `package auth
+
+func RequestDeviceCode() {
+	resp, err := http.DefaultClient.Do(req)
+	_ = resp
+	_ = err
+}
+
+func Other() {
+	resp, err := client.Do(req)
+	_ = resp
+	_ = err
+}
+`
+	diff := extraDiff("auth/oauth.go", src)
+	found := false
+	for _, r := range ExtraRules("") {
+		if r.Name() != "default-http-client" {
+			continue
+		}
+		for _, f := range r.Check(diff) {
+			found = true
+			if f.Severity != "low" {
+				t.Fatalf("expected low, got %s", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("default-http-client did not fire on http.DefaultClient.Do")
+	}
+}
