@@ -1,0 +1,11 @@
+findings:
+    - rule: exposed-secret
+      file: app/config.go
+      line: 3
+      severity: high
+      message_contains: aws token
+    - rule: exposed-secret
+      file: app/config.go
+      line: 4
+      severity: high
+      message_contains: github token

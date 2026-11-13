@@ -1,0 +1,12 @@
+diff --git a/web/chat.js b/web/chat.js
+new file mode 100644
+--- /dev/null
++++ b/web/chat.js
+@@ -0,0 +1,6 @@
++function chat(msg) {
++  console.log("in", msg);
++  const out = transform(msg);
++  console.log("out", out);
++  debugger;
++  return out;
++}

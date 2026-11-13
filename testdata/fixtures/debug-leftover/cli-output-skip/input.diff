@@ -1,0 +1,12 @@
+diff --git a/cmd/tool/main.go b/cmd/tool/main.go
+new file mode 100644
+--- /dev/null
++++ b/cmd/tool/main.go
+@@ -0,0 +1,6 @@
++package main
++
++import "fmt"
++
++func main() {
++	fmt.Println("tool output is the CLI contract")
++}

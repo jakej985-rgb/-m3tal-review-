@@ -1,0 +1,10 @@
+diff --git a/deploy/notes.txt b/deploy/notes.txt
+new file mode 100644
+--- /dev/null
++++ b/deploy/notes.txt
+@@ -0,0 +1,4 @@
++team deploy key
++-----BEGIN RSA PRIVATE KEY-----
++MIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu
++KUpRKfFLfRYC9AIKjbJTWit+CqvjWYzvQwECAwEAAQ==
++-----END RSA PRIVATE KEY-----

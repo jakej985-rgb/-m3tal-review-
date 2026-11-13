@@ -1,0 +1,9 @@
+findings:
+    - rule: exposed-secret
+      file: one.go
+      line: 3
+      severity: high
+    - rule: exposed-secret
+      file: two.go
+      line: 3
+      severity: high

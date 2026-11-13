@@ -1,0 +1,9 @@
+diff --git a/web/app.js b/web/app.js
+new file mode 100644
+--- /dev/null
++++ b/web/app.js
+@@ -0,0 +1,3 @@
++const apiKey = "AIzaABCDEFGHIJKLMNOPQRSTUVWXY1234567890";
++export function init() {
++  return apiKey;
++}

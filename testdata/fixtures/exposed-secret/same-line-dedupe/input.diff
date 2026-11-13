@@ -1,0 +1,8 @@
+diff --git a/app/pair.go b/app/pair.go
+new file mode 100644
+--- /dev/null
++++ b/app/pair.go
+@@ -0,0 +1,3 @@
++package main
++
++var a, b = "AKIA1234567890ABCDEF", "ghp_abcdefghijklmnopqrstuvwxyz1234"
