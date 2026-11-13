@@ -20,8 +20,8 @@ type Program struct {
 	// RootDir is the absolute directory the program was loaded from.
 	RootDir string
 
-	// Packages contains every modeled package, sorted by Key() (the
-	// import path, or the variant ID for test variants). This
+	// Packages contains every modeled package, sorted by Path, with
+	// test variants sharing a Path ordered by Key(). This
 	// includes analyzed (root) packages and stub packages materialized
 	// for external callees referenced by call sites.
 	Packages []*Package
@@ -70,7 +70,13 @@ func (p *Program) CallAt(site *Instruction) *Call { return p.callBySite[site] }
 
 // Sort orders every collection in the program deterministically.
 func (p *Program) Sort() {
-	sort.Slice(p.Packages, func(i, j int) bool { return p.Packages[i].Key() < p.Packages[j].Key() })
+	sort.Slice(p.Packages, func(i, j int) bool {
+		a, b := p.Packages[i], p.Packages[j]
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		return a.Key() < b.Key()
+	})
 	for _, pkg := range p.Packages {
 		pkg.Sort()
 	}
