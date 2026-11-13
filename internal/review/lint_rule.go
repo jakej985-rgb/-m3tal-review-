@@ -86,7 +86,7 @@ type LintRule struct {
 }
 
 var (
-	vetDiagnosticPattern         = regexp.MustCompile(`^(?:vet: )?(.+?):(\d+):(\d+): (.+)$`)
+	vetDiagnosticPattern         = regexp.MustCompile(`^(?:\S*vet(?:\.exe)?: )?(.+?):(\d+):(\d+): (.+)$`)
 	staticcheckDiagnosticPattern = regexp.MustCompile(`^(.+?):(\d+):(\d+): (.+)$`)
 	golangciDiagnosticPattern    = regexp.MustCompile(`^(.+?):(\d+)(?::(\d+))?: (.+)$`)
 )
