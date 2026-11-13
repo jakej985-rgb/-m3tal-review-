@@ -43,9 +43,11 @@ func loadPackages(ctx context.Context, dir, pattern string, opts Options) ([]*pa
 	}
 
 	var diags []semantic.Diagnostic
-	for _, p := range pkgs {
+	// Visit roots and all transitive dependencies once each so errors
+	// held by dependency packages keep their original positions.
+	packages.Visit(pkgs, nil, func(p *packages.Package) {
 		diags = append(diags, packageDiagnostics(p)...)
-	}
+	})
 	if len(pkgs) == 0 {
 		diags = append(diags, semantic.Diagnostic{
 			Severity: semantic.SeverityWarning,

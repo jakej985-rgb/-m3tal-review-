@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"go/token"
+	"path/filepath"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/semantic"
 	"golang.org/x/tools/go/packages"
@@ -77,6 +78,9 @@ func Load(ctx context.Context, opts Options) (*semantic.Program, error) {
 	dir := opts.Dir
 	if dir == "" {
 		dir = "."
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
 	}
 	pattern := opts.Pattern
 	if pattern == "" {

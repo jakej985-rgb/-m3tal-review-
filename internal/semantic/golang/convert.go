@@ -56,8 +56,14 @@ func newConverter(prog *semantic.Program, ssaProg *ssa.Program, ssaIndex map[*pa
 // resolve to the modeled package rather than an external stub.
 // Ill-typed packages get a metadata-only entry and no SSA mapping.
 func (c *converter) registerPackage(p *packages.Package) *semantic.Package {
+	// Test variants share PkgPath with the ordinary package; use the
+	// driver's unique ID (e.g. "x [x.test]") so lookups stay distinct.
+	path := p.PkgPath
+	if p.ID != "" && p.ID != p.PkgPath {
+		path = p.ID
+	}
 	mp := &semantic.Package{
-		Path:      p.PkgPath,
+		Path:      path,
 		Name:      p.Name,
 		IsCommand: p.Name == "main",
 		IllTyped:  p.IllTyped || p.Types == nil,
@@ -66,6 +72,16 @@ func (c *converter) registerPackage(p *packages.Package) *semantic.Package {
 	}
 	c.prog.Packages = append(c.prog.Packages, mp)
 	c.rootPkgs[p] = mp
+
+	// File metadata does not depend on SSA; record it for every package.
+	for _, f := range p.Syntax {
+		mp.Files = append(mp.Files, &semantic.File{
+			Path:    c.filePath(f),
+			Package: mp,
+			AST:     f,
+		})
+	}
+	mp.IgnoredFiles = append(mp.IgnoredFiles, p.IgnoredFiles...)
 
 	if p.IllTyped || p.Types == nil {
 		return mp
@@ -81,15 +97,6 @@ func (c *converter) registerPackage(p *packages.Package) *semantic.Package {
 		return mp
 	}
 	c.modeled[sp] = mp
-
-	for _, f := range p.Syntax {
-		mp.Files = append(mp.Files, &semantic.File{
-			Path:    c.filePath(f),
-			Package: mp,
-			AST:     f,
-		})
-	}
-	mp.IgnoredFiles = append(mp.IgnoredFiles, p.IgnoredFiles...)
 	return mp
 }
 
@@ -176,8 +183,13 @@ func (c *converter) function(fn *ssa.Function) *semantic.Function {
 	}
 
 	pkg := c.packageFor(fn)
+	id := functionID(fn)
+	// Qualify functions of test-variant packages so IDs stay unique.
+	if fn.Pkg != nil && !pkg.External && pkg.Path != fn.Pkg.Pkg.Path() {
+		id += " [" + pkg.Path + "]"
+	}
 	mf := &semantic.Function{
-		ID:        functionID(fn),
+		ID:        id,
 		Name:      fn.Name(),
 		Package:   pkg,
 		Signature: c.signatureModel(fn.Signature),
@@ -206,6 +218,14 @@ func (c *converter) function(fn *ssa.Function) *semantic.Function {
 	if len(fn.Blocks) > 0 {
 		c.functionBody(mf, fn)
 	}
+	// Materialize nested function literals of analyzed packages even
+	// when no call edge reaches them (e.g. callbacks passed to external
+	// functions such as sort.Slice).
+	if !pkg.External {
+		for _, anon := range fn.AnonFuncs {
+			c.function(anon)
+		}
+	}
 	return mf
 }
 
@@ -220,12 +240,13 @@ func (c *converter) functionBody(mf *semantic.Function, fn *ssa.Function) {
 	}
 
 	var operands [10]*ssa.Value
+	nextID := 0
 	for _, sb := range fn.Blocks {
 		mb := blockMap[sb]
 		for _, si := range sb.Instrs {
 			op, detail := mapOp(si)
 			mi := &semantic.Instruction{
-				ID:       len(mb.Instructions),
+				ID:       nextID,
 				Op:       op,
 				Detail:   detail,
 				Position: fsetPos(c.fset, si.Pos(), token.NoPos),
@@ -236,6 +257,7 @@ func (c *converter) functionBody(mf *semantic.Function, fn *ssa.Function) {
 				}
 				mi.Operands = append(mi.Operands, c.valueModel(*v))
 			}
+			nextID++
 			mb.Instructions = append(mb.Instructions, mi)
 
 			if ci, ok := si.(ssa.CallInstruction); ok {
