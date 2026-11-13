@@ -17,12 +17,24 @@ internal/review/              # review engine, rules, storage, history
 internal/review/language/     # extension → language routing for analyzers
 internal/review/slop/         # per-language code-quality analyzers
 internal/review/model/        # shared finding model
+internal/semantic/            # engine-neutral program model (packages,
+                              # functions, CFG blocks, instructions, calls,
+                              # types, positions, diagnostics)
+internal/semantic/golang/     # Go frontend: go/packages + SSA + CHA
 ```
 
 `internal/cli` never contains detection logic; it gathers input (a diff, a
 working-tree snapshot, or piped text), invokes `internal/review`, and renders
 or persists the result. `internal/git` shells out to `git` with
 `core.fsmonitor=false` and never stages or mutates the index.
+
+`internal/semantic` is the foundation for semantic (non-regex) analysis:
+`golang.Load` turns a Go working directory into a deterministic
+`semantic.Program` — packages, functions, SSA-derived basic blocks and
+instructions, call sites resolved by class-hierarchy analysis, types, and
+source positions. Load failures, type errors, ignored files, and analysis
+limits surface as `Program.Diagnostics` rather than being silently
+skipped.
 
 ## Command flow
 
