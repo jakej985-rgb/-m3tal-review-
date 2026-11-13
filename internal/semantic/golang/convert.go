@@ -490,10 +490,16 @@ func (c *converter) filePath(f *ast.File) string {
 
 // typeModel converts a go/types type into the neutral model. Results
 // are memoized; named types are leaves (their underlying structure is
-// available via Text), so recursion cannot cycle.
+// available via Text), so recursion cannot cycle. Declared aliases are
+// modeled as TypeAlias nodes keyed by the alias itself — never
+// collapsed via types.Unalias — so alias and target remain distinct
+// cache entries.
 func (c *converter) typeModel(t types.Type) *semantic.Type {
 	if t == nil {
 		return nil
+	}
+	if aliasObject(t) != nil {
+		return c.aliasModel(t)
 	}
 	key := types.Unalias(t)
 	if mt, ok := c.typeMemo[key]; ok {
@@ -550,6 +556,66 @@ func (c *converter) typeModel(t types.Type) *semantic.Type {
 		mt.Kind = semantic.TypeInvalid
 	}
 	return mt
+}
+
+// aliasModel converts a declared type alias into a TypeAlias model
+// type. The alias is cached under its own types.Type identity so it
+// never collides with the type it denotes; its immediate right-hand
+// side is reachable via Aliasee (which may itself be a TypeAlias for
+// alias chains).
+func (c *converter) aliasModel(t types.Type) *semantic.Type {
+	if mt, ok := c.typeMemo[t]; ok {
+		return mt
+	}
+	mt := &semantic.Type{
+		Kind:    semantic.TypeAlias,
+		Text:    t.String(),
+		IsAlias: true,
+	}
+	c.typeMemo[t] = mt
+	if obj := aliasObject(t); obj != nil {
+		mt.Name = obj.Name()
+		if obj.Pkg() != nil {
+			mt.Package = obj.Pkg().Path()
+		}
+	}
+	if targs := aliasTypeArgs(t); targs != nil && targs.Len() > 0 {
+		for i := 0; i < targs.Len(); i++ {
+			mt.TypeArgs = append(mt.TypeArgs, c.typeModel(targs.At(i)))
+		}
+	}
+	mt.Aliasee = c.typeModel(aliasTarget(t))
+	return mt
+}
+
+// aliasObject returns the TypeName that declares t as a type alias, or
+// nil when t is not an alias. Alias identity requires the *types.Alias
+// representation (gotypesalias=1, the default since Go 1.23); under the
+// legacy gotypesalias=0 mode go/types replaces alias uses with their
+// targets, so alias identity is not recoverable and is not modeled.
+func aliasObject(t types.Type) *types.TypeName {
+	if a, ok := t.(*types.Alias); ok {
+		return a.Obj()
+	}
+	return nil
+}
+
+// aliasTarget returns the immediate right-hand side of alias t
+// (Alias.Rhs), which preserves every link of an alias chain.
+func aliasTarget(t types.Type) types.Type {
+	if a, ok := t.(*types.Alias); ok {
+		return a.Rhs()
+	}
+	return nil
+}
+
+// aliasTypeArgs returns the type arguments of an instantiated generic
+// alias, or nil.
+func aliasTypeArgs(t types.Type) *types.TypeList {
+	if a, ok := t.(*types.Alias); ok {
+		return a.TypeArgs()
+	}
+	return nil
 }
 
 // signatureModel converts a go/types signature.

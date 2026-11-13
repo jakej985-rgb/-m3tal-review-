@@ -493,6 +493,10 @@ const (
 	TypeTuple
 	// TypeTypeParam is a type parameter.
 	TypeTypeParam
+	// TypeAlias is a declared type alias (e.g. "type A = B"). The
+	// alias keeps its own name and package identity; the type it
+	// denotes is reachable via Aliasee.
+	TypeAlias
 )
 
 // Type is a semantic type description. Text always carries the
@@ -503,10 +507,10 @@ type Type struct {
 	Kind TypeKind
 	// Text is the canonical string rendering of the type.
 	Text string
-	// Name is the short name for TypeBasic, TypeNamed, and
+	// Name is the short name for TypeBasic, TypeNamed, TypeAlias, and
 	// TypeTypeParam.
 	Name string
-	// Package is the import path that defines a TypeNamed.
+	// Package is the import path that defines a TypeNamed or TypeAlias.
 	Package string
 	// Elem is the element type for pointer, slice, array, and channel
 	// types.
@@ -517,10 +521,28 @@ type Type struct {
 	ArrayLen int64
 	// Signature is populated for TypeFunc.
 	Signature *Signature
-	// TypeArgs are the type arguments for an instantiated generic type.
+	// TypeArgs are the type arguments for an instantiated generic type
+	// or generic alias.
 	TypeArgs []*Type
-	// IsAlias reports whether a TypeNamed denotes a type alias.
+	// Aliasee is the immediate right-hand side of a declared alias;
+	// it is populated only when Kind == TypeAlias. For alias chains
+	// ("type A = B; type B = string") Aliasee is itself a TypeAlias,
+	// so every link of the chain keeps its own identity. Text renders
+	// the alias name, not its expansion; consumers that need the
+	// fully-expanded type should use Unaliased.
+	Aliasee *Type
+	// IsAlias reports whether the type denotes a declared type alias.
+	// It is true exactly when Kind == TypeAlias.
 	IsAlias bool
+}
+
+// Unaliased follows Aliasee links and returns the first non-alias type.
+// It returns t unchanged when t is not an alias.
+func (t *Type) Unaliased() *Type {
+	for t != nil && t.Kind == TypeAlias && t.Aliasee != nil {
+		t = t.Aliasee
+	}
+	return t
 }
 
 // Position identifies a source range. Line and Column are 1-based;
