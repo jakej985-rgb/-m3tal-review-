@@ -1,0 +1,6 @@
+findings:
+    - rule: exposed-secret
+      file: web/app.js
+      line: 1
+      severity: medium
+      message_contains: Google API key

@@ -1,0 +1,6 @@
+findings:
+    - rule: debug-leftover
+      file: internal/server/server.go
+      line: 5
+      severity: medium
+      message_contains: Debug print

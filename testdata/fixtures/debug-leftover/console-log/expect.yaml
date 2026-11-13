@@ -1,0 +1,6 @@
+findings:
+    - rule: debug-leftover
+      file: web/app.js
+      line: 2
+      severity: medium
+      message_contains: Console log

@@ -1,0 +1,10 @@
+[
+  {
+    "rule": "exposed-secret",
+    "severity": "high",
+    "file": "config.go",
+    "line": 3,
+    "message": "Possible exposed credential: aws token",
+    "remediation": "Remove the credential and rotate it. Store secrets outside the repository."
+  }
+]

@@ -1,0 +1,6 @@
+findings:
+    - rule: debug-leftover
+      file: scripts/debug.js
+      line: 2
+      severity: medium
+      message_contains: Debugger

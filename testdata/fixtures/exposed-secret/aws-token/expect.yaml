@@ -1,0 +1,6 @@
+findings:
+    - rule: exposed-secret
+      file: config.go
+      line: 3
+      severity: high
+      message_contains: aws token

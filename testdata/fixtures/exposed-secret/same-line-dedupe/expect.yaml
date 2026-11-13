@@ -1,0 +1,5 @@
+findings:
+    - rule: exposed-secret
+      file: app/pair.go
+      line: 3
+      severity: high

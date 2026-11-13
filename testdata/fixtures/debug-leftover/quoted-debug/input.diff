@@ -1,0 +1,8 @@
+diff --git a/web/docs.js b/web/docs.js
+new file mode 100644
+--- /dev/null
++++ b/web/docs.js
+@@ -0,0 +1,3 @@
++const example = "console.log('this is inside a string literal')";
++const other = 'debugger;';
++export { example, other };

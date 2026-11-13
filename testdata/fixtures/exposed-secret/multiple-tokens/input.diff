@@ -1,0 +1,9 @@
+diff --git a/app/config.go b/app/config.go
+new file mode 100644
+--- /dev/null
++++ b/app/config.go
+@@ -0,0 +1,4 @@
++package config
++
++const awsKey = "AKIA1234567890ABCDEF"
++const githubToken = "ghp_abcdefghijklmnopqrstuvwxyz1234"

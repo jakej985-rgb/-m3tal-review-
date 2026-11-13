@@ -1,0 +1,11 @@
+findings:
+    - rule: debug-leftover
+      file: web/chat.js
+      line: 2
+      severity: medium
+      message_contains: Console log
+    - rule: debug-leftover
+      file: web/chat.js
+      line: 5
+      severity: medium
+      message_contains: Debugger

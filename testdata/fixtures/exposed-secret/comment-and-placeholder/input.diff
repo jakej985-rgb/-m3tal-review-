@@ -1,0 +1,9 @@
+diff --git a/docs.go b/docs.go
+new file mode 100644
+--- /dev/null
++++ b/docs.go
+@@ -0,0 +1,4 @@
++package main
++
++// AKIA1234567890ABCDEF is only mentioned in this comment
++const exampleToken = "github_pat_example_notarealtoken1234567890"

@@ -1,0 +1,10 @@
+diff --git a/internal/server/server.go b/internal/server/server.go
+new file mode 100644
+--- /dev/null
++++ b/internal/server/server.go
+@@ -0,0 +1,5 @@
++package server
++
++import "fmt"
++
++func Serve() { fmt.Println("serving") }

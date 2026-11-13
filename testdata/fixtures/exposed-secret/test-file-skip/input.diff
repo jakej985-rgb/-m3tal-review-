@@ -1,0 +1,9 @@
+diff --git a/internal/auth/secret_test.go b/internal/auth/secret_test.go
+new file mode 100644
+--- /dev/null
++++ b/internal/auth/secret_test.go
+@@ -0,0 +1,4 @@
++package auth
++
++const testAWSKey = "AKIA1234567890ABCDEF"
++const testGitHub = "ghp_abcdefghijklmnopqrstuvwxyz1234"

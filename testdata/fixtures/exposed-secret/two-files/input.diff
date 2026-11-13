@@ -1,0 +1,16 @@
+diff --git a/one.go b/one.go
+new file mode 100644
+--- /dev/null
++++ b/one.go
+@@ -0,0 +1,3 @@
++package main
++
++const keyA = "AKIA1234567890ABCDEF"
+diff --git a/two.go b/two.go
+new file mode 100644
+--- /dev/null
++++ b/two.go
+@@ -0,0 +1,3 @@
++package main
++
++const keyB = "ghp_abcdefghijklmnopqrstuvwxyz1234"
