@@ -21,7 +21,7 @@ import (
 // version. Bump auditCacheSchema whenever rule patterns change semantics;
 // stale entries are simply ignored (they never produce wrong output, only
 // missed cache hits) because the key includes the schema.
-const auditCacheSchema = "13"
+const auditCacheSchema = "14"
 
 const auditCacheMaxBytes = 8 << 20 // skip caching very large file diffs
 const auditCacheMaxEntries = 20000 // bound memory/disk use

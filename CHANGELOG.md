@@ -60,6 +60,12 @@
 - `default-http-client` (new): Go calls through `http.DefaultClient` or the
   package-level `http.Get/Post/...` helpers, which carry no timeout — test
   files excluded
+- Kotlin/Android coverage: `android-manifest` rule flags risky manifest
+  attributes (`allowBackup`, `usesCleartextTraffic`, `debuggable`);
+  `xxe` and `unbounded-read` gained Kotlin patterns (javax.xml parser
+  factories, OkHttp `body.string()`/`bytes()`, HttpURLConnection
+  inputStream reads); `debug-leftover` covers `printStackTrace`,
+  `System.out/err.print`, and `Log.d`/`Log.v`
 
 ### Added
 - `resolved-path-write` rule: files combining symlink resolution with file

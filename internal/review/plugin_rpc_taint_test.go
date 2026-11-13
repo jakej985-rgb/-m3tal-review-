@@ -842,3 +842,64 @@ func Other() {
 		t.Fatal("default-http-client did not fire on http.DefaultClient.Do")
 	}
 }
+
+// AndroidManifest risky attributes must flag; structural/benign attrs must not.
+func TestAndroidManifestRule(t *testing.T) {
+	manifest := `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="true"
+        android:usesCleartextTraffic="true"
+        android:debuggable="false"
+        android:label="GPS">
+    </application>
+</manifest>
+`
+	diff := extraDiff("app/src/main/AndroidManifest.xml", manifest)
+	var found []Finding
+	for _, r := range ExtraRules("") {
+		if r.Name() == "android-manifest" {
+			found = append(found, r.Check(diff)...)
+		}
+	}
+	if len(found) != 2 {
+		t.Fatalf("expected 2 findings (allowBackup + cleartext), got %+v", found)
+	}
+	for _, f := range found {
+		if f.Severity != "medium" {
+			t.Fatalf("expected medium, got %s", f.Severity)
+		}
+	}
+}
+
+// Kotlin XXE-prone parser factories and unbounded OkHttp reads must flag.
+func TestKotlinCoveragePatterns(t *testing.T) {
+	kt := `package com.example
+
+fun parseXml(data: String) {
+    val factory = DocumentBuilderFactory.newInstance()
+    val builder = factory.newDocumentBuilder()
+}
+
+fun fetch(url: String): String {
+    val response = client.newCall(request).execute()
+    return response.body?.string() ?: ""
+}
+`
+	diff := extraDiff("app/src/main/java/com/example/Net.kt", kt)
+	rules := map[string]bool{}
+	for _, r := range ExtraRules("") {
+		switch r.Name() {
+		case "xxe", "unbounded-read":
+			if len(r.Check(diff)) > 0 {
+				rules[r.Name()] = true
+			}
+		}
+	}
+	if !rules["xxe"] {
+		t.Fatal("xxe did not fire on Kotlin DocumentBuilderFactory")
+	}
+	if !rules["unbounded-read"] {
+		t.Fatal("unbounded-read did not fire on OkHttp body.string()")
+	}
+}

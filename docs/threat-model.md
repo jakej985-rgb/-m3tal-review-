@@ -27,10 +27,11 @@ calls except when explicitly asked (`--with-tools` scanners, `--check-run`).
   several detectors therefore only fire on code-shaped signals. Obfuscated,
   dynamically constructed, or semantically disguised issues will be missed.
 - **Language coverage is uneven.** The rule set is deepest for Go, JS/TS,
-  Python, and CI workflows; other languages get generic pattern coverage
-  only (e.g. no Kotlin/Android manifest or taint pack). On repos dominated by
-  uncovered languages the tool behaves primarily as a CI/supply-chain
-  checker.
+  Python, and CI workflows; Kotlin/Android has manifest-attribute, XXE,
+  unbounded-read, and debug-log coverage but no taint engine or
+  component-export analysis. Other languages get generic pattern coverage
+  only. On repos dominated by uncovered languages the tool behaves
+  primarily as a CI/supply-chain checker.
 - **Fixture awareness is path-based.** Files under `tests/`, `test/`,
   `testdata/`, or `fixtures/` segments (and `*_test.*` names) are excluded
   from credential, entropy, secret-token, and file-permission rules because

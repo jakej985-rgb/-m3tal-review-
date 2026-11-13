@@ -75,9 +75,21 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Disable DTDs and external entities when parsing untrusted XML (disallow-doctype-decl, resolve_entities=False).",
 			patterns: []langPattern{
 				{language.LanguageJava, regexp.MustCompile(`(?:DocumentBuilderFactory|SAXParserFactory|XMLInputFactory|TransformerFactory|XMLDecoder|Unmarshaller)\b`), "XML parser without visible secure-processing flags"},
+				{language.LanguageKotlin, regexp.MustCompile(`(?:DocumentBuilderFactory|SAXParserFactory|XMLInputFactory|TransformerFactory|XMLDecoder|Unmarshaller)\b`), "XML parser without visible secure-processing flags"},
 				{language.LanguagePython, regexp.MustCompile(`simplexml_load_string|xml\.etree\.iterparse|XMLStreamReader`), "XML parsing API; verify entity expansion is disabled"},
 				{language.LanguagePython, regexp.MustCompile(`\b(?:xml\.etree\.ElementTree|xml\.dom|minidom|lxml)\b[^)]{0,160}?(?:parse|fromstring|XML)`), "XML parsing without defusedxml; verify entity expansion is disabled"},
 				{language.LanguageGo, regexp.MustCompile(`\bencoding/xml\b`), "encoding/xml detected; it does not process external entities by default but review usage"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "android-manifest", severity: "medium",
+			filePattern: regexp.MustCompile(`(?:^|/)AndroidManifest\.xml$`),
+			raw:         true,
+			skipLine:    regexp.MustCompile(`^\s*<!--`),
+			remediation: "Review the manifest attribute: disable the risky feature or add compensating controls (backup rules, network security config, build-type gating).",
+			patterns: []langPattern{
+				{language.LanguageUnknown, regexp.MustCompile(`android:allowBackup\s*=\s*"true"`), "android:allowBackup=true permits adb backup and device-to-device transfer of app data; verify backup rules exclude credentials and sensitive stores"},
+				{language.LanguageUnknown, regexp.MustCompile(`android:usesCleartextTraffic\s*=\s*"true"`), "android:usesCleartextTraffic=true permits plain-HTTP traffic app-wide"},
+				{language.LanguageUnknown, regexp.MustCompile(`android:debuggable\s*=\s*"true"`), "android:debuggable=true must never ship in release builds"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "injection-other", severity: "medium",
@@ -455,6 +467,9 @@ func ExtraRules(repositoryRoot string) []Rule {
 			skipLine:       regexp.MustCompile(`LimitReader|CopyN|MaxBytesReader|ReadAtLeast|WithMaxBytes`),
 			patterns: []langPattern{
 				{language.LanguageGo, regexp.MustCompile(`\b(?:io|ioutil)\.ReadAll\s*\(`), "Unbounded read; consider io.LimitReader for untrusted input"},
+				// OkHttp ResponseBody.string()/bytes() and
+				// HttpURLConnection inputStream reads carry no size bound.
+				{language.LanguageKotlin, regexp.MustCompile(`\.body\??\.(?:string|bytes)\s*\(|(?:inputStream|byteStream|getInputStream)\b[^\n]{0,140}?(?:readBytes|readText|bufferedReader|readLines)`), "Unbounded response/body read; consider bounding with a size limit"},
 			}},
 		// client-timeouts is implemented by ClientTimeoutRule (balanced-brace
 		// literal extraction); a regex cannot span nested composite literals.

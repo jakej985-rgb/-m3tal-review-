@@ -33,6 +33,17 @@ var debugPatterns = []struct {
 		pattern: regexp.MustCompile(`\bdebugger\s*;?`),
 		message: "Debugger statement detected",
 	},
+	{
+		// Kotlin/Java stack-trace dumps and stdout prints are debug leftovers.
+		pattern: regexp.MustCompile(`\.printStackTrace\s*\(|\bSystem\.(?:out|err)\.print`),
+		message: "Debug print statement detected",
+	},
+	{
+		// android.util.Log at debug/verbose level; info/warn/error may be
+		// legitimate operational logging and are not flagged.
+		pattern: regexp.MustCompile(`\b(?:android\.util\.)?Log\.[dDvV]\s*\(`),
+		message: "Debug logging statement detected",
+	},
 }
 
 func (r DebugRule) Check(diff string) []Finding {
