@@ -101,6 +101,10 @@ func (r TaintRule) Check(diff string) []Finding {
 	blocksByDir := make(map[string][]diffSourceBlock)
 	var dirs []string
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if jsTaintFile(block.file) {
+			findings = append(findings, checkJSFile(block)...)
+			continue
+		}
 		if !strings.HasSuffix(block.file, ".go") || strings.HasSuffix(block.file, "_test.go") {
 			continue
 		}

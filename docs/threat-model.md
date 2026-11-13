@@ -27,8 +27,10 @@ calls except when explicitly asked (`--with-tools` scanners, `--check-run`).
   several detectors therefore only fire on code-shaped signals. Obfuscated,
   dynamically constructed, or semantically disguised issues will be missed.
 - **Language coverage is uneven.** The rule set is deepest for Go, JS/TS,
-  Python, and CI workflows; Kotlin/Android has manifest-attribute, XXE,
-  unbounded-read, and debug-log coverage but no taint engine or
+  Python, and CI workflows. Go has the full package-scoped taint engine;
+  JS/TS has an intra-file approximation (request-context identifiers →
+  exec/fs/serving sinks, medium confidence, no call edges); Python and
+  Kotlin/Android have pattern coverage only — no taint engine or
   component-export analysis. Other languages get generic pattern coverage
   only. On repos dominated by uncovered languages the tool behaves
   primarily as a CI/supply-chain checker.

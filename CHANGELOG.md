@@ -66,6 +66,14 @@
   factories, OkHttp `body.string()`/`bytes()`, HttpURLConnection
   inputStream reads); `debug-leftover` covers `printStackTrace`,
   `System.out/err.print`, and `Log.d`/`Log.v`
+- `request-taint` now covers JS/TS (`.js/.jsx/.ts/.tsx/.mjs/.cjs`):
+  intra-file taint from request-context identifiers (`req`/`request`/`ctx`)
+  and `process.argv` through assignments/destructuring to exec
+  (`exec`/`spawn`/`eval`/`new Function`), `fs.*`/bare-fs, and
+  `res.sendFile`/`download` sinks. Taint resets at function/handler
+  boundaries; sanitizer calls (`encodeURIComponent`, `path.basename`,
+  etc.) strip taint at assignment. Confidence is medium — no cross-file
+  or call-edge propagation for JS yet.
 
 ### Added
 - `resolved-path-write` rule: files combining symlink resolution with file

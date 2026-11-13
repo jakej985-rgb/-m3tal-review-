@@ -903,3 +903,101 @@ fun fetch(url: String): String {
 		t.Fatal("unbounded-read did not fire on OkHttp body.string()")
 	}
 }
+
+// JS/TS request-taint: Express handler input reaching exec/fs sinks.
+func TestJSTaintExpressExec(t *testing.T) {
+	src := `const express = require('express');
+const { exec } = require('child_process');
+const app = express();
+
+app.get('/run', (req, res) => {
+    const cmd = req.query.cmd;
+    exec(cmd, (err, stdout) => {
+        res.send(stdout);
+    });
+});
+
+app.get('/safe', (req, res) => {
+    res.send('ok');
+});
+`
+	diff := extraDiff("src/routes.js", src)
+	var findings []Finding
+	for _, f := range (TaintRule{}).Check(diff) {
+		if f.Rule == "request-taint" {
+			findings = append(findings, f)
+		}
+	}
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 request-taint finding, got %+v", findings)
+	}
+	if findings[0].Severity != "high" {
+		t.Fatalf("expected high for exec sink, got %s", findings[0].Severity)
+	}
+	if findings[0].Confidence != "medium" {
+		t.Fatalf("expected medium confidence for JS intra-file analysis, got %s", findings[0].Confidence)
+	}
+}
+
+// Taint must not cross function boundaries: a tainted var in handler A
+// must not flag sinks in unrelated handler B.
+func TestJSTaintBoundaryIsolation(t *testing.T) {
+	src := `function handlerA(req, res) {
+    const path = req.query.path;
+    return path;
+}
+
+function helper() {
+    const path = '/tmp/static.txt';
+    fs.readFileSync(path);
+}
+`
+	diff := extraDiff("src/handlers.js", "const fs = require('fs');\n"+src)
+	for _, f := range (TaintRule{}).Check(diff) {
+		if f.Rule == "request-taint" {
+			t.Fatalf("unexpected request-taint finding across function boundary: %+v", f)
+		}
+	}
+}
+
+// fs sinks and serving APIs flag at medium; sanitized args downgrade.
+func TestJSTaintFsAndServe(t *testing.T) {
+	src := `const fs = require('fs');
+const express = require('express');
+const app = express();
+
+app.get('/file', (req, res) => {
+    const name = req.params.name;
+    fs.readFileSync('/data/' + name);
+    res.sendFile('/data/' + name);
+});
+
+app.get('/clean', (req, res) => {
+    const name = encodeURIComponent(req.query.name);
+    eval(name);
+});
+`
+	diff := extraDiff("src/app.js", src)
+	var findings []Finding
+	for _, f := range (TaintRule{}).Check(diff) {
+		if f.Rule == "request-taint" {
+			findings = append(findings, f)
+		}
+	}
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 rolled-up finding, got %+v", findings)
+	}
+	if findings[0].Severity != "medium" {
+		t.Fatalf("expected medium (fs/serve sinks; guarded eval suppressed), got %s", findings[0].Severity)
+	}
+	// eval(name) must NOT appear: name was assigned through
+	// encodeURIComponent, so the guard stripped the taint at assignment.
+	if len(findings[0].Evidence) != 2 {
+		t.Fatalf("expected 2 sink evidence entries (fs + sendFile), got %+v", findings[0].Evidence)
+	}
+	for _, e := range findings[0].Evidence {
+		if strings.Contains(e.Message, "eval") {
+			t.Fatalf("guarded eval should not be flagged: %+v", e)
+		}
+	}
+}
