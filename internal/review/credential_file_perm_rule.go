@@ -28,7 +28,9 @@ var (
 	goWriteRe = regexp.MustCompile(`(?:os|ioutil)\.(?:WriteFile|Create|OpenFile|MkdirAll)\s*\(`)
 	// Permissive explicit permission literals (before umask).
 	goBadPermRe  = regexp.MustCompile(`\b(?:0o|0)?(?:644|664|646|640|666|660|755|775|777|766)\b|os\.ModePerm`)
-	goSafePermRe = regexp.MustCompile(`\b(?:0o|0)?600\b`)
+	// Owner-only modes (0600 files, 0700 dirs) and group/other masks such as
+	// os.ModePerm &^ 0077 are private.
+	goSafePermRe = regexp.MustCompile(`\b(?:0o|0)?[467]00\b|&\^\s*(?:0o|0)?0?77\b`)
 	// os.Create takes no permission argument and applies the process umask
 	// to a permissive default. (MkdirAll/OpenFile/WriteFile take explicit
 	// perms handled by goBadPermRe/goSafePermRe.)
@@ -144,6 +146,38 @@ func (r CredentialFilePermRule) checkGo(block diffSourceBlock) []Finding {
 	return findings
 }
 
+// pyWriteIsRestricted reports whether a specific write is tied to a
+// restrictive mode: the call's own args carry 0o600/0o400 (e.g. an opener),
+// or the function chmods the same path expression to 0o600/0o400. Unrelated
+// chmod/umask calls elsewhere in the function do not suppress the write.
+func pyWriteIsRestricted(text, body string, absStart, matchLen, callEnd int) bool {
+	if callEnd < 0 {
+		return false
+	}
+	args := text[absStart+matchLen : callEnd-1]
+	if pySafePermRe.MatchString(args) && !strings.Contains(args, "umask") {
+		return true
+	}
+	// Path expression: first positional arg of open(), or the receiver of
+	// .write_text/.write_bytes.
+	var target string
+	if strings.HasPrefix(text[absStart:], ".") {
+		lineStart := strings.LastIndex(text[:absStart], "\n") + 1
+		recv := strings.Fields(text[lineStart:absStart])
+		if len(recv) == 0 {
+			return false
+		}
+		target = recv[len(recv)-1]
+	} else {
+		target = strings.TrimSpace(strings.SplitN(args, ",", 2)[0])
+	}
+	if target == "" {
+		return false
+	}
+	chmodRe := regexp.MustCompile(`chmod\s*\(\s*` + regexp.QuoteMeta(target) + `\s*,\s*(?:0o?|stat\.S_I)[46R]`)
+	return chmodRe.MatchString(body)
+}
+
 func (r CredentialFilePermRule) checkPython(block diffSourceBlock) []Finding {
 	var findings []Finding
 	for _, fn := range namedFuncRanges(block.text, pyFuncRe) {
@@ -151,13 +185,13 @@ func (r CredentialFilePermRule) checkPython(block diffSourceBlock) []Finding {
 		if !credContextRe.MatchString(fn.name) {
 			continue
 		}
-		if pySafePermRe.MatchString(body) {
-			continue
-		}
 		for _, m := range pyOpenWriteRe.FindAllStringIndex(body, -1) {
 			absStart := fn.start + m[0]
 			callEnd := balancedCallEnd(block.text, absStart+m[1]-m[0]-1)
 			span := body[m[0]:m[1]]
+			if pyWriteIsRestricted(block.text, body, absStart, m[1]-m[0], callEnd) {
+				continue
+			}
 			if strings.HasPrefix(strings.TrimSpace(span), ".") {
 				// Path.write_text/write_bytes — no mode arg; flag directly.
 				if !matchTouchesAdded(block, block.text, absStart, absStart+m[1]-m[0]) {

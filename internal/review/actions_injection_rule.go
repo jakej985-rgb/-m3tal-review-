@@ -55,9 +55,11 @@ func (r ActionsScriptInjectionRule) Check(diff string) []Finding {
 				// A run:/script: key opens an executable context: the rest of
 				// this line (inline value) plus any block-scalar body.
 				keyIndent := indent
-				if m := execKeyRe.FindStringSubmatch(line); m != nil {
-					// Indent of the key itself (spaces before '-' or key).
-					keyIndent = len(m[1])
+				if m := execKeyRe.FindStringSubmatchIndex(line); m != nil {
+					// Column of the run/script key itself, after any `- `
+					// list marker: sibling step keys (env:, with:) sit at
+					// this column and must close the block.
+					keyIndent = m[4]
 				}
 				afterColon := line[strings.Index(line, ":")+1:]
 				isBlock := blockScalarRe.MatchString(strings.TrimSpace(afterColon)) ||

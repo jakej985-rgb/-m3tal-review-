@@ -143,8 +143,13 @@ func stripJSGuardCalls(text string) string {
 // checkJSFile runs intra-file taint over one JS/TS block. Sink hits roll up
 // into a single finding with per-line evidence.
 func checkJSFile(block diffSourceBlock) []Finding {
-	code := string(maskNonCode(block.file, block.text))
+	code := restoreJSTemplateInterpolations(block.text, string(maskNonCode(block.file, block.text)))
 	lines := strings.Split(code, "\n")
+	lineStarts := make([]int, len(lines))
+	for i, off := 0, 0; i < len(lines); i++ {
+		lineStarts[i] = off
+		off += len(lines[i]) + 1
+	}
 	hasFSImport := jsFsImportRe.MatchString(block.text)
 
 	tainted := make(map[string]bool)
@@ -197,43 +202,49 @@ func checkJSFile(block diffSourceBlock) []Finding {
 			}
 		}
 
-		// Sinks: the line must reference request-derived data — either a
-		// request ident directly or a tainted variable.
-		if !reqIdentUsed(line) && !jsArgvRe.MatchString(line) && !containsJSTainted(line, tainted) {
-			continue
-		}
-		// Guarded lines (sanitizer present) downgrade severity.
-		sev := func(base string) string {
-			if jsGuardCallRe.MatchString(line) {
-				return "medium"
-			}
-			return base
-		}
-		add := func(kind, callName, s string, start, end int) {
-			name := strings.Trim(strings.TrimSpace(line[start:end]), " \t(,;.!?:")
+		// Sinks: the call's own (balanced, possibly multiline) argument span
+		// must reference request-derived data. Unrelated request use
+		// elsewhere on the line does not count.
+		add := func(kind, base string, start, end int) {
 			key := block.file + ":" + fmt.Sprint(lineNum)
 			if seen[key] || !block.addedLines[lineNum] {
 				return
 			}
+			// The sink regexes end at '('; locate it in the full code.
+			paren := lineStarts[i] + strings.LastIndex(line[:end], "(")
+			callEnd := balancedCallEnd(code, paren)
+			if callEnd < 0 {
+				return
+			}
+			args := code[paren+1 : callEnd-1]
+			live := stripJSGuardCalls(args)
+			if !reqIdentUsed(live) && !jsArgvRe.MatchString(live) && !containsJSTainted(live, tainted) {
+				return
+			}
+			s := base
+			if jsGuardCallRe.MatchString(args) {
+				s = "medium"
+			}
+			name := strings.Trim(strings.TrimSpace(line[start:end]), " \t(,;.!?:")
 			seen[key] = true
 			hits = append(hits, hit{line: lineNum, kind: kind, callName: name, sev: s})
 		}
 		for _, m := range jsExecSinkRe.FindAllStringIndex(line, -1) {
-			add("command execution", "", sev("high"), m[0], m[1])
+			add("command execution", "high", m[0], m[1])
 		}
 		for _, m := range jsEvalSinkRe.FindAllStringIndex(line, -1) {
-			add("code evaluation", "", sev("high"), m[0], m[1])
+			add("code evaluation", "high", m[0], m[1])
 		}
 		for _, m := range jsFsSinkRe.FindAllStringIndex(line, -1) {
-			add("filesystem", "", sev("medium"), m[0], m[1])
+			add("filesystem", "medium", m[0], m[1])
 		}
 		if hasFSImport {
 			for _, m := range jsBareFsRe.FindAllStringIndex(line, -1) {
-				add("filesystem", "", sev("medium"), m[0], m[1])
+				add("filesystem", "medium", m[0], m[1])
 			}
 		}
 		for _, m := range jsServeSinkRe.FindAllStringIndex(line, -1) {
-			add("file serving", "", sev("medium"), m[0], m[1])
+			add("file serving", "medium", m[0], m[1])
 		}
 	}
 
@@ -274,6 +285,64 @@ func checkJSFile(block diffSourceBlock) []Finding {
 		Remediation: "Validate and constrain request-derived values before exec/filesystem/serving sinks; prefer allowlists and path containment checks.",
 		Evidence:    ev,
 	}}
+}
+
+// restoreJSTemplateInterpolations re-exposes live `${...}` expressions inside
+// template literals that maskNonCode blanked. Offsets are preserved, and
+// static template text stays masked.
+func restoreJSTemplateInterpolations(src, masked string) string {
+	if len(src) != len(masked) || !strings.Contains(src, "${") {
+		return masked
+	}
+	out := []byte(masked)
+	inTemplate, inComment := false, false
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if inComment {
+			if c == '\n' {
+				inComment = false
+			}
+			continue
+		}
+		if !inTemplate {
+			// Only enter templates from live code (not other strings/comments).
+			if masked[i] == ' ' && c != ' ' {
+				if c == '`' && (i == 0 || masked[i-1] != ' ' || src[i-1] == ' ' || src[i-1] == '(' || src[i-1] == '=') {
+					inTemplate = true
+				}
+				continue
+			}
+			if c == '/' && i+1 < len(src) && src[i+1] == '/' {
+				inComment = true
+			}
+			continue
+		}
+		switch {
+		case c == '\\':
+			i++
+		case c == '`':
+			inTemplate = false
+		case c == '$' && i+1 < len(src) && src[i+1] == '{':
+			depth := 0
+			j := i + 1
+			for ; j < len(src); j++ {
+				if src[j] == '{' {
+					depth++
+				} else if src[j] == '}' {
+					depth--
+					if depth == 0 {
+						break
+					}
+				}
+			}
+			if j >= len(src) {
+				return string(out)
+			}
+			copy(out[i+2:j], src[i+2:j])
+			i = j
+		}
+	}
+	return string(out)
 }
 
 func containsJSTainted(text string, tainted map[string]bool) bool {
