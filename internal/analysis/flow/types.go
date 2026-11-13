@@ -123,6 +123,9 @@ type Summary struct {
 	// Returns has one entry per signature result, listing the Origins
 	// that may flow into that result.
 	Returns [][]Origin
+	// ReturnPlaces has one entry per signature result, listing the
+	// places a returned pointer-like value may denote.
+	ReturnPlaces [][]Place
 	// Unknown is true when the function has effects the analysis
 	// could not resolve (see Reasons).
 	Unknown bool
@@ -274,6 +277,14 @@ func summaryEqual(a, b *Summary) bool {
 	}
 	for i := range a.Returns {
 		if !originSliceEqual(a.Returns[i], b.Returns[i]) {
+			return false
+		}
+	}
+	if len(a.ReturnPlaces) != len(b.ReturnPlaces) {
+		return false
+	}
+	for i := range a.ReturnPlaces {
+		if !placeSliceEqual(a.ReturnPlaces[i], b.ReturnPlaces[i]) {
 			return false
 		}
 	}

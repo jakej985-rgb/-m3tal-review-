@@ -22,12 +22,17 @@ type fnWork struct {
 	deps        map[*semantic.Value]originSet
 	places      map[*semantic.Value]placeSet
 	placeWrites map[Place]originSet
+	// placeStores records, per memory place, the places denoted by
+	// pointer-like values stored into it, so loads of a stored pointer
+	// recover its aliases.
+	placeStores map[Place]placeSet
 
 	// Per-round accumulators, rebuilt by compute.
-	reads   placeSet
-	writes  map[Place]originSet
-	calls   []*CallFact
-	returns map[int]originSet
+	reads        placeSet
+	writes       map[Place]originSet
+	calls        []*CallFact
+	returns      map[int]originSet
+	returnPlaces map[int]placeSet
 
 	unknownReasons []string
 	truncReasons   []string
@@ -43,6 +48,7 @@ func newFnWork(a *Analyzer, fn *semantic.Function) *fnWork {
 		deps:        make(map[*semantic.Value]originSet),
 		places:      make(map[*semantic.Value]placeSet),
 		placeWrites: make(map[Place]originSet),
+		placeStores: make(map[Place]placeSet),
 	}
 	for _, v := range fn.Values {
 		switch v.Kind {
@@ -64,6 +70,7 @@ func (w *fnWork) compute() *Summary {
 	w.writes = make(map[Place]originSet)
 	w.calls = nil
 	w.returns = make(map[int]originSet)
+	w.returnPlaces = make(map[int]placeSet)
 
 	for _, b := range w.fn.Blocks {
 		for _, ins := range b.Instructions {
@@ -76,8 +83,10 @@ func (w *fnWork) compute() *Summary {
 		resultCount = len(w.fn.Signature.Results)
 	}
 	returns := make([][]Origin, resultCount)
+	returnPlaces := make([][]Place, resultCount)
 	for i := 0; i < resultCount; i++ {
 		returns[i] = w.returns[i].sorted()
+		returnPlaces[i] = w.returnPlaces[i].sorted()
 	}
 
 	writes := make([]Write, 0, len(w.writes))
@@ -91,14 +100,15 @@ func (w *fnWork) compute() *Summary {
 	reasons = dedupStrings(reasons)
 
 	return &Summary{
-		Function:  w.fn,
-		Reads:     w.reads.sorted(),
-		Writes:    writes,
-		Calls:     w.calls,
-		Returns:   returns,
-		Unknown:   len(w.unknownReasons) > 0,
-		Truncated: w.truncated || len(w.truncReasons) > 0,
-		Reasons:   reasons,
+		Function:     w.fn,
+		Reads:        w.reads.sorted(),
+		Writes:       writes,
+		Calls:        w.calls,
+		Returns:      returns,
+		ReturnPlaces: returnPlaces,
+		Unknown:      len(w.unknownReasons) > 0,
+		Truncated:    w.truncated || len(w.truncReasons) > 0,
+		Reasons:      reasons,
 	}
 }
 
@@ -183,6 +193,8 @@ func (w *fnWork) instr(ins *semantic.Instruction) {
 		w.store(ins)
 	case semantic.OpReturn:
 		w.ret(ins)
+	case semantic.OpSend:
+		w.send(ins)
 	case semantic.OpOther:
 		if ins.Detail == "MapUpdate" {
 			w.mapUpdate(ins)
@@ -224,6 +236,14 @@ func (w *fnWork) instr(ins *semantic.Instruction) {
 		for _, op := range ins.Operands {
 			places.union(w.placesOfValue(op))
 		}
+	case ins.Op == semantic.OpLoad && len(ins.Operands) > 0:
+		// Loading a stored pointer recovers the places it denoted.
+		for p := range w.placesOfValue(ins.Operands[0]) {
+			places.union(w.placeStores[p])
+		}
+		if len(places) == 0 && len(ins.Outputs) > 0 && pointerLike(ins.Outputs[0].Type) {
+			places.add(Place{Kind: PlaceUnknown})
+		}
 	}
 
 	for _, out := range ins.Outputs {
@@ -256,6 +276,42 @@ func (w *fnWork) store(ins *semantic.Instruction) {
 	}
 	sources := newOriginSet()
 	sources.union(w.depsOfValue(val))
+	stored := w.placesOfValue(val)
+	for t := range targets {
+		w.addWrite(t, sources)
+		w.addPlaceWrite(t, sources)
+		w.addPlaceStore(t, stored)
+	}
+}
+
+// addPlaceStore records that pointer-like values denoting places were
+// stored into place t.
+func (w *fnWork) addPlaceStore(t Place, places placeSet) {
+	if len(places) == 0 {
+		return
+	}
+	set := w.placeStores[t]
+	if set == nil {
+		set = newPlaceSet()
+		w.placeStores[t] = set
+	}
+	set.union(places)
+}
+
+// send handles OpSend: operands are [channel, value]. A send is a
+// write to the channel's places.
+func (w *fnWork) send(ins *semantic.Instruction) {
+	if len(ins.Operands) < 2 {
+		w.markUnknown("send with fewer than two operands at " + posString(ins.Position))
+		return
+	}
+	targets := w.placesOfValue(ins.Operands[0])
+	if len(targets) == 0 {
+		targets = newPlaceSet()
+		targets.add(Place{Kind: PlaceUnknown})
+	}
+	sources := newOriginSet()
+	sources.union(w.depsOfValue(ins.Operands[1]))
 	for t := range targets {
 		w.addWrite(t, sources)
 		w.addPlaceWrite(t, sources)
@@ -291,6 +347,15 @@ func (w *fnWork) ret(ins *semantic.Instruction) {
 			w.returns[i] = set
 		}
 		set.union(w.depsOfValue(op))
+		ps := w.placesOfValue(op)
+		if len(ps) > 0 {
+			pset := w.returnPlaces[i]
+			if pset == nil {
+				pset = newPlaceSet()
+				w.returnPlaces[i] = pset
+			}
+			pset.union(ps)
+		}
 	}
 }
 
@@ -313,11 +378,19 @@ func (w *fnWork) addPlaces(v *semantic.Value, places placeSet) {
 		set = newPlaceSet()
 		w.places[v] = set
 	}
+	max := w.opts().MaxOrigins
 	for p := range places {
+		if _, ok := set[p]; ok {
+			continue
+		}
+		if max >= 0 && len(set) >= max {
+			// Collapse to PlaceUnknown so growth stays bounded while
+			// remaining conservative.
+			set.add(Place{Kind: PlaceUnknown})
+			w.markTruncated("place set for " + v.ID + " exceeds MaxOrigins")
+			return
+		}
 		set.add(p)
-	}
-	if w.opts().MaxOrigins >= 0 && len(set) > w.opts().MaxOrigins {
-		w.markTruncated("place set for " + v.ID + " exceeds MaxOrigins")
 	}
 }
 
@@ -574,11 +647,18 @@ func (w *fnWork) call(ins *semantic.Instruction, call *semantic.Call) {
 
 	resultCount := 0
 	resultDeps := make(map[int]originSet)
+	resultPlaces := make(map[int]placeSet)
 
 	if call.Dynamic && len(callees) == 0 {
 		fact.Unknown = true
 		fact.Reason = "unresolved dynamic call target"
 		w.markUnknown("unresolved dynamic call at " + posString(ins.Position))
+		resultCount = len(ins.Outputs)
+		for i := 0; i < resultCount; i++ {
+			set := newOriginSet()
+			set.add(Origin{Kind: OriginUnknown})
+			resultDeps[i] = set
+		}
 		w.addUnknownToResults(ins, resultCount)
 	} else if len(callees) == 0 {
 		// Builtin or otherwise unmodeled call.
@@ -592,7 +672,7 @@ func (w *fnWork) call(ins *semantic.Instruction, call *semantic.Call) {
 				continue
 			}
 			resultCount = max(resultCount, resultCountOf(callee))
-			w.propagateCall(ins, call, callee, fact, resultDeps)
+			w.propagateCall(ins, call, callee, fact, resultDeps, resultPlaces)
 		}
 	}
 
@@ -603,7 +683,7 @@ func (w *fnWork) call(ins *semantic.Instruction, call *semantic.Call) {
 	}
 
 	// Assign result facts to the call's output values.
-	w.assignCallOutputs(ins, resultDeps, resultCount)
+	w.assignCallOutputs(ins, resultDeps, resultPlaces, resultCount)
 
 	w.calls = append(w.calls, fact)
 }
@@ -619,7 +699,7 @@ func resultCountOf(fn *semantic.Function) int {
 
 // propagateCall merges one callee's summary facts through the call
 // site.
-func (w *fnWork) propagateCall(ins *semantic.Instruction, call *semantic.Call, callee *semantic.Function, fact *CallFact, resultDeps map[int]originSet) {
+func (w *fnWork) propagateCall(ins *semantic.Instruction, call *semantic.Call, callee *semantic.Function, fact *CallFact, resultDeps map[int]originSet, resultPlaces map[int]placeSet) {
 	// Unanalyzable callees: external stubs and functions outside the
 	// analysis budget.
 	if len(callee.Blocks) == 0 {
@@ -672,8 +752,39 @@ func (w *fnWork) propagateCall(ins *semantic.Instruction, call *semantic.Call, c
 			fact.Reason += "; callee " + callee.ID + " summary truncated"
 		}
 	}
+	if cs.Unknown {
+		// Unknown effects are transitive: a wrapper around an
+		// unanalyzable callee is itself not fully analyzable.
+		fact.Unknown = true
+		if fact.Reason == "" {
+			fact.Reason = "callee " + callee.ID + " has unknown effects"
+		} else {
+			fact.Reason += "; callee " + callee.ID + " has unknown effects"
+		}
+		w.markUnknown("call to function with unknown effects " + callee.ID + " at " + posString(ins.Position))
+		for i := 0; i < resultCountOf(callee); i++ {
+			set := resultDeps[i]
+			if set == nil {
+				set = newOriginSet()
+				resultDeps[i] = set
+			}
+			set.add(Origin{Kind: OriginUnknown})
+		}
+	}
 
 	actuals := w.a.actualsFor(ins, call, callee)
+
+	// Return places: map returned aliases onto caller places.
+	for j, ps := range cs.ReturnPlaces {
+		set := resultPlaces[j]
+		if set == nil {
+			set = newPlaceSet()
+			resultPlaces[j] = set
+		}
+		for _, p := range ps {
+			set.union(w.mapPlace(p, actuals))
+		}
+	}
 
 	// Returns: map callee result origins through actual arguments.
 	for j := 0; j < len(cs.Returns); j++ {
@@ -721,7 +832,11 @@ func (w *fnWork) mapOriginInto(set originSet, o Origin, actuals []*semantic.Valu
 		} else {
 			set.add(Origin{Kind: OriginUnknown})
 		}
-	case OriginGlobal, OriginFreeVar, OriginUnknown:
+	case OriginFreeVar:
+		// Free-variable indices are callee-relative; closure bindings
+		// are not modeled, so the captured value is unknown here.
+		set.add(Origin{Kind: OriginUnknown})
+	case OriginGlobal, OriginUnknown:
 		set.add(o)
 	}
 }
@@ -735,7 +850,9 @@ func (w *fnWork) mapOrigin(dst originSet, o Origin, actuals []*semantic.Value) {
 		} else {
 			dst.add(Origin{Kind: OriginUnknown})
 		}
-	case OriginGlobal, OriginFreeVar, OriginUnknown:
+	case OriginFreeVar:
+		dst.add(Origin{Kind: OriginUnknown})
+	case OriginGlobal, OriginUnknown:
 		dst.add(o)
 	}
 }
@@ -850,25 +967,36 @@ func (w *fnWork) addUnknownToResults(ins *semantic.Instruction, resultCount int)
 
 // assignCallOutputs writes the per-result origin sets onto the call
 // instruction's output values.
-func (w *fnWork) assignCallOutputs(ins *semantic.Instruction, resultDeps map[int]originSet, resultCount int) {
+func (w *fnWork) assignCallOutputs(ins *semantic.Instruction, resultDeps map[int]originSet, resultPlaces map[int]placeSet, resultCount int) {
 	outs := ins.Outputs
 	if len(outs) == 0 {
 		return
 	}
+	// outPlaces returns the mapped return places, or PlaceUnknown when
+	// the returned location is unresolved.
+	outPlaces := func(ps placeSet) placeSet {
+		if len(ps) == 0 {
+			return placeSet{Place{Kind: PlaceUnknown}: {}}
+		}
+		return ps
+	}
 	if len(outs) == 1 {
 		deps := newOriginSet()
+		places := newPlaceSet()
 		if resultCount <= 1 {
 			deps.union(resultDeps[0])
+			places.union(resultPlaces[0])
 		} else {
 			// Single tuple output for a multi-result call: union all
 			// result facts (conservative).
 			for i := 0; i < resultCount; i++ {
 				deps.union(resultDeps[i])
+				places.union(resultPlaces[i])
 			}
 		}
 		w.addDeps(outs[0], deps)
 		if pointerLike(outs[0].Type) {
-			w.addPlaces(outs[0], placeSet{Place{Kind: PlaceUnknown}: {}})
+			w.addPlaces(outs[0], outPlaces(places))
 		}
 		return
 	}
@@ -877,7 +1005,7 @@ func (w *fnWork) assignCallOutputs(ins *semantic.Instruction, resultDeps map[int
 			w.addDeps(out, resultDeps[j])
 		}
 		if pointerLike(out.Type) {
-			w.addPlaces(out, placeSet{Place{Kind: PlaceUnknown}: {}})
+			w.addPlaces(out, outPlaces(resultPlaces[j]))
 		}
 	}
 }

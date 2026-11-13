@@ -147,6 +147,10 @@ func (w *flowWork) emit(to *semantic.Value, instr *semantic.Instruction, via, fr
 	if to == nil || w.visited[to] {
 		return
 	}
+	if max := w.a.opts.MaxFlowEvents; max >= 0 && len(w.res.Events) >= max {
+		w.res.Truncated = true
+		return
+	}
 	w.visited[to] = true
 	op := semantic.OpInvalid
 	detail := ""
@@ -209,15 +213,14 @@ func (w *flowWork) throughReturn(v *semantic.Value, ret *semantic.Instruction) {
 	if owner == nil {
 		return
 	}
-	// Result index = position of v among the return operands.
-	resultIdx := -1
+	// Result indices = every position of v among the return operands.
+	var resultIdxs []int
 	for i, op := range ret.Operands {
 		if op == v {
-			resultIdx = i
-			break
+			resultIdxs = append(resultIdxs, i)
 		}
 	}
-	if resultIdx < 0 {
+	if len(resultIdxs) == 0 {
 		return
 	}
 	for _, ref := range w.a.callersOf(owner) {
@@ -225,13 +228,15 @@ func (w *flowWork) throughReturn(v *semantic.Value, ret *semantic.Instruction) {
 		if len(outs) == 0 {
 			continue
 		}
-		// Single tuple output for multi-result calls maps every result
-		// index onto output 0.
-		out := outs[0]
-		if len(outs) > 1 && resultIdx < len(outs) {
-			out = outs[resultIdx]
+		for _, resultIdx := range resultIdxs {
+			// Single tuple output for multi-result calls maps every
+			// result index onto output 0.
+			out := outs[0]
+			if len(outs) > 1 && resultIdx < len(outs) {
+				out = outs[resultIdx]
+			}
+			w.emit(out, ref.site, "call-result", v.ID)
 		}
-		w.emit(out, ref.site, "call-result", v.ID)
 	}
 }
 
@@ -251,10 +256,21 @@ func (a *Analyzer) ensureIndexes() {
 				}
 			}
 			for _, c := range fn.Calls {
-				for _, callee := range c.Callees {
-					if callee != nil {
-						a.callers[callee.ID] = append(a.callers[callee.ID], &callRef{caller: fn, site: c.Site, call: c})
+				callees := c.Callees
+				// Mirror throughCall: fall back to a directly
+				// referenced function (e.g. CallGraphNone mode).
+				if len(callees) == 0 && c.Site != nil && len(c.Site.Operands) > 0 {
+					if fv := c.Site.Operands[0]; fv != nil && fv.Kind == semantic.ValueFunction && fv.Func != nil {
+						callees = []*semantic.Function{fv.Func}
 					}
+				}
+				seen := make(map[string]bool, len(callees))
+				for _, callee := range callees {
+					if callee == nil || seen[callee.ID] {
+						continue
+					}
+					seen[callee.ID] = true
+					a.callers[callee.ID] = append(a.callers[callee.ID], &callRef{caller: fn, site: c.Site, call: c})
 				}
 			}
 		}
