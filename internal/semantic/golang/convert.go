@@ -56,18 +56,17 @@ func newConverter(prog *semantic.Program, ssaProg *ssa.Program, ssaIndex map[*pa
 // resolve to the modeled package rather than an external stub.
 // Ill-typed packages get a metadata-only entry and no SSA mapping.
 func (c *converter) registerPackage(p *packages.Package) *semantic.Package {
-	// Test variants share PkgPath with the ordinary package; use the
-	// driver's unique ID (e.g. "x [x.test]") so lookups stay distinct.
-	path := p.PkgPath
-	if p.ID != "" && p.ID != p.PkgPath {
-		path = p.ID
-	}
+	// Test variants share PkgPath with the ordinary package; record the
+	// driver's unique ID (e.g. "x [x.test]") so lookups stay distinct
+	// while Path remains the import path.
 	mp := &semantic.Package{
-		Path:      path,
+		Path:      p.PkgPath,
+		ID:        variantID(p),
 		Name:      p.Name,
 		IsCommand: p.Name == "main",
 		IllTyped:  p.IllTyped || p.Types == nil,
 		Imports:   importPaths(p.Imports),
+		ImportIDs: importIDs(p.Imports),
 		TypesInfo: p.TypesInfo,
 	}
 	c.prog.Packages = append(c.prog.Packages, mp)
@@ -185,8 +184,10 @@ func (c *converter) function(fn *ssa.Function) *semantic.Function {
 	pkg := c.packageFor(fn)
 	id := functionID(fn)
 	// Qualify functions of test-variant packages so IDs stay unique.
-	if fn.Pkg != nil && !pkg.External && pkg.Path != fn.Pkg.Pkg.Path() {
-		id += " [" + pkg.Path + "]"
+	// This also covers generic instances (fn.Pkg == nil), which
+	// packageFor attributes to their origin's package variant.
+	if !pkg.External && pkg.ID != "" {
+		id += " [" + pkg.ID + "]"
 	}
 	mf := &semantic.Function{
 		ID:        id,
@@ -334,7 +335,7 @@ func receiverPackage(sig *types.Signature) *types.Package {
 // first use.
 func (c *converter) externalPackage(path, name string) *semantic.Package {
 	for _, p := range c.prog.Packages {
-		if p.Path == path {
+		if p.Key() == path {
 			return p
 		}
 	}
@@ -476,6 +477,31 @@ func isExported(fn *ssa.Function) bool {
 
 func isInitName(name string) bool {
 	return name == "init" || strings.HasPrefix(name, "init#")
+}
+
+// variantID returns the driver ID for test-variant packages, or "" when
+// the ID equals the import path.
+func variantID(p *packages.Package) string {
+	if p.ID != "" && p.ID != p.PkgPath {
+		return p.ID
+	}
+	return ""
+}
+
+// importIDs maps each import path to the package Key it resolves to.
+func importIDs(imports map[string]*packages.Package) map[string]string {
+	if len(imports) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(imports))
+	for path, ip := range imports {
+		if id := variantID(ip); id != "" {
+			out[path] = id
+		} else {
+			out[path] = ip.PkgPath
+		}
+	}
+	return out
 }
 
 func importPaths(imports map[string]*packages.Package) []string {

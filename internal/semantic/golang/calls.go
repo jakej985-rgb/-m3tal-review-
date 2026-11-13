@@ -86,9 +86,11 @@ func (c *converter) callModel(ci ssa.CallInstruction, site *semantic.Instruction
 		call.Kind = semantic.CallDirect
 	}
 	if fn := common.StaticCallee(); fn != nil {
-		// CallGraphNone records sites only; Target still names the callee.
+		// Always materialize the callee so generic instances keep their
+		// bodies; CallGraphNone just leaves the edge off the site.
+		callee := c.function(fn)
 		if c.callMode != CallGraphNone {
-			call.Callees = []*semantic.Function{c.function(fn)}
+			call.Callees = []*semantic.Function{callee}
 		}
 	} else if _, builtin := common.Value.(*ssa.Builtin); builtin {
 		// Builtins (panic, append, ...) are not modeled as functions.

@@ -35,7 +35,8 @@ type Program struct {
 	callBySite map[*Instruction]*Call
 }
 
-// Package returns the package with the given import path, or nil.
+// Package returns the package with the given ID (the import path for
+// ordinary packages, or e.g. "x [x.test]" for test variants), or nil.
 func (p *Program) Package(path string) *Package { return p.byPath[path] }
 
 // Function returns the function with the given stable ID, or nil.
@@ -49,7 +50,7 @@ func (p *Program) Index() {
 	p.byFuncID = make(map[string]*Function)
 	p.callBySite = make(map[*Instruction]*Call)
 	for _, pkg := range p.Packages {
-		p.byPath[pkg.Path] = pkg
+		p.byPath[pkg.Key()] = pkg
 		for _, fn := range pkg.Functions {
 			if _, dup := p.byFuncID[fn.ID]; !dup {
 				p.byFuncID[fn.ID] = fn
@@ -68,7 +69,7 @@ func (p *Program) CallAt(site *Instruction) *Call { return p.callBySite[site] }
 
 // Sort orders every collection in the program deterministically.
 func (p *Program) Sort() {
-	sort.Slice(p.Packages, func(i, j int) bool { return p.Packages[i].Path < p.Packages[j].Path })
+	sort.Slice(p.Packages, func(i, j int) bool { return p.Packages[i].Key() < p.Packages[j].Key() })
 	for _, pkg := range p.Packages {
 		pkg.Sort()
 	}
@@ -87,10 +88,22 @@ func (p *Program) Sort() {
 	})
 }
 
+// Key returns the package's unique identity: ID when set, else Path.
+func (p *Package) Key() string {
+	if p.ID != "" {
+		return p.ID
+	}
+	return p.Path
+}
+
 // Package is a single importable package.
 type Package struct {
 	// Path is the package's import path (e.g. "github.com/x/y/sub").
+	// Test variants share Path with the ordinary package.
 	Path string
+	// ID uniquely identifies the package variant within the program
+	// (e.g. "x [x.test]" for a test variant). Empty means Path.
+	ID string
 	// Name is the package clause name (e.g. "sub").
 	Name string
 
@@ -103,6 +116,10 @@ type Package struct {
 	// Imports lists the import paths this package depends on,
 	// sorted and deduplicated.
 	Imports []string
+	// ImportIDs maps each import path to the package ID it resolves to
+	// in this build (differs from the path for test variants). Use
+	// Program.Package(ImportIDs[path]) to find the imported variant.
+	ImportIDs map[string]string
 
 	// IsCommand is true for package main.
 	IsCommand bool
