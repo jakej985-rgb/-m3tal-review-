@@ -1,0 +1,3 @@
+package q
+
+func Foo() {}

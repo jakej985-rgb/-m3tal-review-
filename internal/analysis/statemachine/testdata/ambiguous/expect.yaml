@@ -1,0 +1,3 @@
+findings: []
+diagnostics:
+  - message_contains: "ambiguous"

@@ -1,0 +1,20 @@
+schema_version: statemachine/1
+id: token-consume
+name: Single-use token
+resource:
+  type: "example.com/smfx/consume-twice.Token"
+states:
+  - name: fresh
+    initial: true
+  - name: consumed
+events:
+  - name: consume
+    function:
+      name: Consume
+      receiver: "example.com/smfx/consume-twice.Token"
+transitions:
+  - event: consume
+    from: fresh
+    to: consumed
+entry:
+  - id: "example.com/smfx/consume-twice.main"

@@ -86,6 +86,7 @@ type Analyzer struct {
 
 	summaries  map[string]*Summary // by function ID
 	analyzed   map[string]bool     // function IDs with a work item
+	works      map[string]*fnWork  // per-function work items (post-Analyze)
 	callers    map[string][]*callRef
 	paramCache map[*semantic.Function][]*semantic.Value
 	instrOwner map[*semantic.Instruction]*semantic.Function
@@ -156,10 +157,12 @@ func (a *Analyzer) Analyze(ctx context.Context) *Result {
 	}
 
 	works := make([]*fnWork, 0, len(fns))
+	a.works = make(map[string]*fnWork, len(fns))
 	for _, fn := range fns {
 		w := newFnWork(a, fn)
 		works = append(works, w)
 		a.analyzed[fn.ID] = true
+		a.works[fn.ID] = w
 	}
 
 	changed := make(map[string]bool, len(works))
