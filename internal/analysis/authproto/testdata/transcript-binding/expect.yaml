@@ -1,0 +1,3 @@
+findings:
+  - rule: authproto.transcript-binding
+    message_contains: "does not commit to session-binding field"

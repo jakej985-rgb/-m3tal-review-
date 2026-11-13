@@ -1,0 +1,3 @@
+findings:
+  - rule: authproto.replay
+    message_contains: "no covered value is declared single_use"

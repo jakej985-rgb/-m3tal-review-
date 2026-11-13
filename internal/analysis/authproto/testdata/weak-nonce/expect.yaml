@@ -1,0 +1,3 @@
+findings:
+  - rule: authproto.weak-randomness
+    message_contains: "reaches math/rand"

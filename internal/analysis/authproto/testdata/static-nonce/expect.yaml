@@ -1,0 +1,3 @@
+findings:
+  - rule: authproto.nonce-uniqueness
+    message_contains: "repeats across sessions"

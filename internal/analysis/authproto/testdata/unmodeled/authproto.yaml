@@ -1,0 +1,25 @@
+schema_version: authproto/1
+id: exotic-auth
+name: Authentication with an unrecognized verifier
+parties: [client, server]
+transcript:
+  - name: challenge
+    from: server
+    to: client
+    fields:
+      - name: server_nonce
+        kind: challenge
+        fresh: true
+        single_use: true
+  - name: response
+    from: client
+    to: server
+    fields:
+      - name: client_nonce
+        kind: nonce
+        fresh: true
+      - name: proof
+        kind: proof
+        verifier:
+          type: vendor-proprietary-mac-v2
+        covers: [server_nonce, client_nonce]

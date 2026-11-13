@@ -1,0 +1,3 @@
+findings:
+  - rule: authproto.offline-guessing
+    message_contains: "test password candidates offline"

@@ -1,0 +1,31 @@
+schema_version: authproto/1
+id: partial-binding
+name: Proof covering only the server nonce
+parties: [client, server]
+transcript:
+  - name: challenge
+    from: server
+    to: client
+    fields:
+      - name: server_nonce
+        kind: challenge
+        fresh: true
+        single_use: true
+  - name: client-hello
+    from: client
+    to: server
+    fields:
+      - name: client_nonce
+        kind: nonce
+        fresh: true
+  - name: response
+    from: client
+    to: server
+    fields:
+      - name: proof
+        kind: proof
+        verifier:
+          type: server-secret
+        # client_nonce is deliberately not covered: the proof does not
+        # bind the client's session identifier.
+        covers: [server_nonce]
