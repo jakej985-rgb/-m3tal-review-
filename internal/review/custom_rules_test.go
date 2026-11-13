@@ -316,12 +316,14 @@ func TestCustomRuleTimeout(t *testing.T) {
 	// Override timeout to effectively 1 nanosecond to ensure timeout triggers reliably
 	cr.timeout = 1 * time.Nanosecond
 
+	// Use a large diff so checkSync cannot finish before the timer fires,
+	// keeping the timeout deterministic across platforms and schedulers.
 	diff := `diff --git a/main.go b/main.go
 --- a/main.go
 +++ b/main.go
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,100000 @@
 +package main
-+` + strings.Repeat("+func test() {}\n", 100)
++` + strings.Repeat("+func test() {}\n", 100000)
 
 	findings := cr.Check(diff)
 	if len(findings) == 0 {

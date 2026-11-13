@@ -71,25 +71,27 @@ func appendHistoryWithFS(path string, entry HistoryEntry, ops fsOps) (retErr err
 
 		var rollbackErrs []error
 		if fileExisted {
-			targetFile := file
-			if fileClosed {
-				reopened, err := ops.openFile(path, os.O_WRONLY, 0644)
-				if err != nil {
-					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback open: %w", err))
-					targetFile = nil
-				} else {
-					targetFile = reopened
+			// Truncate requires write access that the O_APPEND handle lacks on
+			// Windows (FILE_APPEND_DATA only), so rollback always uses a fresh
+			// O_WRONLY handle.
+			if !fileClosed {
+				if err := ops.closeFile(file); err != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback close: %w", err))
 				}
+				fileClosed = true
 			}
 
-			if targetFile != nil {
-				if err := ops.truncateFile(targetFile, initialSize); err != nil {
+			reopened, err := ops.openFile(path, os.O_WRONLY, 0644)
+			if err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback open: %w", err))
+			} else {
+				if err := ops.truncateFile(reopened, initialSize); err != nil {
 					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback truncate: %w", err))
 				}
-				if err := ops.syncFile(targetFile); err != nil {
+				if err := ops.syncFile(reopened); err != nil {
 					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback sync: %w", err))
 				}
-				if err := ops.closeFile(targetFile); err != nil {
+				if err := ops.closeFile(reopened); err != nil {
 					rollbackErrs = append(rollbackErrs, fmt.Errorf("rollback close: %w", err))
 				}
 			}

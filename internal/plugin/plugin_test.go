@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -143,11 +144,12 @@ func TestExecutePluginTimeoutBounded(t *testing.T) {
 }
 
 func TestNormalizePluginFindings(t *testing.T) {
-	repoRoot := "/home/user/project"
+	repoRoot := t.TempDir()
+	filePath := filepath.Join(repoRoot, "src", "app.go")
 	findings := []review.Finding{
 		{
 			Rule:     "",
-			File:     "/home/user/project/src/app.go",
+			File:     filePath,
 			Line:     -5,
 			Severity: "WARN",
 			Category: "UNKNOWN",
@@ -221,6 +223,9 @@ func TestRegistryManagementAndFilter(t *testing.T) {
 }
 
 func TestExecPluginWithManifest(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test plugin is a POSIX shell script that cannot execute on Windows")
+	}
 	tempDir := t.TempDir()
 
 	// Create a dummy mock executable script

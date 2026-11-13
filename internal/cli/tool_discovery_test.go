@@ -1,11 +1,25 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// TestMain lets the test binary double as a mock scanner executable on
+// platforms (Windows) where POSIX shell scripts cannot be executed directly.
+func TestMain(m *testing.M) {
+	if os.Getenv("M3TAL_CLI_MOCK_TOOL") == "1" {
+		if len(os.Args) > 1 && os.Args[1] == "version" {
+			fmt.Println(os.Getenv("M3TAL_CLI_MOCK_TOOL_VERSION"))
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 func TestParseSemverAndCompatibility(t *testing.T) {
 	cases := []struct {
@@ -125,25 +139,23 @@ func TestValidateExecutablePathErrors(t *testing.T) {
 		t.Errorf("expected directory error, got: %v", err)
 	}
 
-	// 3. Non-executable regular file
-	noExec := filepath.Join(tempDir, "noexec")
-	if err := os.WriteFile(noExec, []byte("echo hi"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateExecutablePath(noExec); err == nil || !strings.Contains(err.Error(), "not executable") {
-		t.Errorf("expected not executable error, got: %v", err)
+	// 3. Non-executable regular file (Windows has no executable permission bit)
+	if runtime.GOOS != "windows" {
+		noExec := filepath.Join(tempDir, "noexec")
+		if err := os.WriteFile(noExec, []byte("echo hi"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateExecutablePath(noExec); err == nil || !strings.Contains(err.Error(), "not executable") {
+			t.Errorf("expected not executable error, got: %v", err)
+		}
 	}
 }
 
 func TestToolVersionCompatibilityEnforcement(t *testing.T) {
 	tempDir := t.TempDir()
 
-	// 1. Incompatible version script: outputs gitleaks 7.1.0
-	incompatScript := filepath.Join(tempDir, "mock-gitleaks-incompat")
-	scriptContent := "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then echo \"7.1.0\"; exit 0; fi\nexit 0\n"
-	if err := os.WriteFile(incompatScript, []byte(scriptContent), 0755); err != nil {
-		t.Fatal(err)
-	}
+	// 1. Incompatible version executable: outputs gitleaks 7.1.0
+	incompatScript := mockGitleaks(t, tempDir, "7.1.0")
 
 	overrides := map[string]string{
 		"gitleaks": incompatScript,
@@ -185,12 +197,8 @@ func TestToolVersionCompatibilityEnforcement(t *testing.T) {
 		t.Errorf("expected high-severity tool-gitleaks finding for incompatible version")
 	}
 
-	// 2. Compatible version script: outputs gitleaks 8.18.2
-	compatScript := filepath.Join(tempDir, "mock-gitleaks-compat")
-	compatContent := "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then echo \"8.18.2\"; exit 0; fi\nexit 0\n"
-	if err := os.WriteFile(compatScript, []byte(compatContent), 0755); err != nil {
-		t.Fatal(err)
-	}
+	// 2. Compatible version executable: outputs gitleaks 8.18.2
+	compatScript := mockGitleaks(t, tempDir, "8.18.2")
 
 	overridesCompat := map[string]string{
 		"gitleaks": compatScript,
@@ -214,4 +222,27 @@ func TestToolVersionCompatibilityEnforcement(t *testing.T) {
 			t.Errorf("unexpected tool-gitleaks failure finding for compatible tool: %+v", f)
 		}
 	}
+}
+
+// mockGitleaks returns a path to an executable that reports the given version
+// for `gitleaks version` and exits successfully for any other invocation.
+func mockGitleaks(t *testing.T, dir, version string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		// Windows cannot execute POSIX shell scripts; re-exec the test
+		// binary, which TestMain turns into a mock scanner.
+		t.Setenv("M3TAL_CLI_MOCK_TOOL", "1")
+		t.Setenv("M3TAL_CLI_MOCK_TOOL_VERSION", version)
+		path, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	path := filepath.Join(dir, "mock-gitleaks-"+version)
+	scriptContent := "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then echo \"" + version + "\"; exit 0; fi\nexit 0\n"
+	if err := os.WriteFile(path, []byte(scriptContent), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
