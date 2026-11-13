@@ -312,23 +312,33 @@ func (c *converter) value(v ssa.Value, owner *semantic.Function) *semantic.Value
 	switch v := v.(type) {
 	case *ssa.Global:
 		return c.sharedValue(v, func() *semantic.Value {
+			pkg := c.packageForSSAPkg(v.Pkg)
+			id := "global:" + v.RelString(nil)
+			// Qualify globals of test-variant packages, matching the
+			// qualification used for semantic.Function IDs.
+			if !pkg.External && pkg.ID != "" {
+				id += " [" + pkg.ID + "]"
+			}
 			return &semantic.Value{
-				ID:       "global:" + v.RelString(nil),
+				ID:       id,
 				Name:     v.Name(),
 				Type:     c.typeModel(v.Type()),
 				Kind:     semantic.ValueGlobal,
-				Package:  c.packageForSSAPkg(v.Pkg),
+				Package:  pkg,
 				Position: fsetPos(c.fset, v.Pos(), token.NoPos),
 			}
 		})
 	case *ssa.Function:
 		return c.sharedValue(v, func() *semantic.Value {
+			fn := c.function(v)
 			return &semantic.Value{
-				ID:   functionID(v),
+				// Use the modeled function's ID, which is already
+				// qualified for test-variant packages.
+				ID:   fn.ID,
 				Name: v.Name(),
 				Type: c.typeModel(v.Type()),
 				Kind: semantic.ValueFunction,
-				Func: c.function(v),
+				Func: fn,
 			}
 		})
 	case *ssa.Builtin:
