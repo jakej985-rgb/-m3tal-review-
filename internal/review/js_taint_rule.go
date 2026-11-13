@@ -38,7 +38,7 @@ var (
 	jsAssignRe      = regexp.MustCompile(`(?:\b(?:const|let|var)\s+|^|[;{}]\s*)([$\w]+)\s*=\s*([^\n;]{0,300})`)
 	jsDestructureRe = regexp.MustCompile(`\b(?:const|let|var)\s*[\[{]([^\]}\n]{1,200})[\]}]\s*=\s*([^\n;]{0,300})`)
 	jsIdentRe       = regexp.MustCompile(`[$\w]+`)
-	jsGuardCallRe   = regexp.MustCompile(`\b(?:encodeURIComponent|path\.basename|path\.resolve|parseInt|parseFloat|Number|String|sanitize\w*|validate\w*|verify\w*|DOMPurify\.sanitize)\s*\(`)
+	jsGuardCallRe   = regexp.MustCompile(`\b(?:encodeURIComponent|path\.basename|parseInt|parseFloat|Number|sanitize\w*|validate\w*|verify\w*|DOMPurify\.sanitize)\s*\(`)
 	// jsExecSinkRe matches command-execution calls. The [^\w$.] prefix
 	// excludes member calls like regex.exec(...).
 	jsExecSinkRe = regexp.MustCompile(`(?:^|[^\w$.])(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(`)
@@ -123,6 +123,10 @@ func stripJSGuardCalls(text string) string {
 	b.Grow(len(text))
 	pos := 0
 	for _, m := range jsGuardCallRe.FindAllStringIndex(text, -1) {
+		if m[0] < pos {
+			// Nested guard already blanked by the enclosing call.
+			continue
+		}
 		b.WriteString(text[pos:m[0]])
 		// m[1]-1 is the '('; blank through its matching ')'.
 		end := balancedCallEnd(text, m[1]-1)

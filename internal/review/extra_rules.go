@@ -82,14 +82,15 @@ func ExtraRules(repositoryRoot string) []Rule {
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "android-manifest", severity: "medium",
-			filePattern: regexp.MustCompile(`(?:^|/)AndroidManifest\.xml$`),
-			raw:         true,
-			skipLine:    regexp.MustCompile(`^\s*<!--`),
-			remediation: "Review the manifest attribute: disable the risky feature or add compensating controls (backup rules, network security config, build-type gating).",
+			filePattern:    regexp.MustCompile(`(?:^|/)AndroidManifest\.xml$`),
+			excludePattern: regexp.MustCompile(`(?:^|/)src/debug\w*/`),
+			raw:            true,
+			skipLine:       regexp.MustCompile(`^\s*<!--`),
+			remediation:    "Review the manifest attribute: disable the risky feature or add compensating controls (backup rules, network security config, build-type gating).",
 			patterns: []langPattern{
-				{language.LanguageUnknown, regexp.MustCompile(`android:allowBackup\s*=\s*"true"`), "android:allowBackup=true permits adb backup and device-to-device transfer of app data; verify backup rules exclude credentials and sensitive stores"},
-				{language.LanguageUnknown, regexp.MustCompile(`android:usesCleartextTraffic\s*=\s*"true"`), "android:usesCleartextTraffic=true permits plain-HTTP traffic app-wide"},
-				{language.LanguageUnknown, regexp.MustCompile(`android:debuggable\s*=\s*"true"`), "android:debuggable=true must never ship in release builds"},
+				{language.LanguageUnknown, regexp.MustCompile(`android:allowBackup\s*=\s*["']true["']`), "android:allowBackup=true permits adb backup and device-to-device transfer of app data; verify backup rules exclude credentials and sensitive stores"},
+				{language.LanguageUnknown, regexp.MustCompile(`android:usesCleartextTraffic\s*=\s*["']true["']`), "android:usesCleartextTraffic=true permits plain-HTTP traffic app-wide"},
+				{language.LanguageUnknown, regexp.MustCompile(`android:debuggable\s*=\s*["']true["']`), "android:debuggable=true must never ship in release builds"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "injection-other", severity: "medium",
@@ -469,7 +470,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageGo, regexp.MustCompile(`\b(?:io|ioutil)\.ReadAll\s*\(`), "Unbounded read; consider io.LimitReader for untrusted input"},
 				// OkHttp ResponseBody.string()/bytes() and
 				// HttpURLConnection inputStream reads carry no size bound.
-				{language.LanguageKotlin, regexp.MustCompile(`\.body\??\.(?:string|bytes)\s*\(|(?:inputStream|byteStream|getInputStream)\b[^\n]{0,140}?(?:readBytes|readText|bufferedReader|readLines)`), "Unbounded response/body read; consider bounding with a size limit"},
+				{language.LanguageKotlin, regexp.MustCompile(`\.body(?:\?|!!)?\.(?:string|bytes)\s*\(|(?:inputStream|byteStream|getInputStream)\b[^\n]{0,140}?(?:readBytes|readText|bufferedReader|readLines)`), "Unbounded response/body read; consider bounding with a size limit"},
 			}},
 		// client-timeouts is implemented by ClientTimeoutRule (balanced-brace
 		// literal extraction); a regex cannot span nested composite literals.

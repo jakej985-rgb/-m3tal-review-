@@ -27,8 +27,8 @@ var (
 	// balanced parens afterwards.
 	goWriteRe = regexp.MustCompile(`(?:os|ioutil)\.(?:WriteFile|Create|OpenFile|MkdirAll)\s*\(`)
 	// Permissive explicit permission literals (before umask).
-	goBadPermRe  = regexp.MustCompile(`\b0?(?:644|664|646|640|666|660|646|755|775|777|766)\b`)
-	goSafePermRe = regexp.MustCompile(`\b0?600\b|os\.ModePerm`)
+	goBadPermRe  = regexp.MustCompile(`\b(?:0o|0)?(?:644|664|646|640|666|660|755|775|777|766)\b|os\.ModePerm`)
+	goSafePermRe = regexp.MustCompile(`\b(?:0o|0)?600\b`)
 	// os.Create takes no permission argument and applies the process umask
 	// to a permissive default. (MkdirAll/OpenFile/WriteFile take explicit
 	// perms handled by goBadPermRe/goSafePermRe.)
