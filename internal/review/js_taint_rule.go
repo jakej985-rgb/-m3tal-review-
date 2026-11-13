@@ -295,34 +295,64 @@ func restoreJSTemplateInterpolations(src, masked string) string {
 		return masked
 	}
 	out := []byte(masked)
-	inTemplate, inComment := false, false
+	// Explicit lexer state over the original source: templates are only
+	// entered from live code, never from comments or quoted strings.
+	const (
+		stCode = iota
+		stLineComment
+		stBlockComment
+		stQuote
+		stTemplate
+	)
+	state := stCode
+	var quote byte
 	for i := 0; i < len(src); i++ {
 		c := src[i]
-		if inComment {
+		next := byte(0)
+		if i+1 < len(src) {
+			next = src[i+1]
+		}
+		switch state {
+		case stCode:
+			switch {
+			case c == '/' && next == '/':
+				state = stLineComment
+				i++
+			case c == '/' && next == '*':
+				state = stBlockComment
+				i++
+			case c == '\'' || c == '"':
+				state, quote = stQuote, c
+			case c == '`':
+				state = stTemplate
+			}
+			continue
+		case stLineComment:
 			if c == '\n' {
-				inComment = false
+				state = stCode
+			}
+			continue
+		case stBlockComment:
+			if c == '*' && next == '/' {
+				state = stCode
+				i++
+			}
+			continue
+		case stQuote:
+			if c == '\\' {
+				i++
+			} else if c == quote || c == '\n' {
+				state = stCode
 			}
 			continue
 		}
-		if !inTemplate {
-			// Only enter templates from live code (not other strings/comments).
-			if masked[i] == ' ' && c != ' ' {
-				if c == '`' && (i == 0 || masked[i-1] != ' ' || src[i-1] == ' ' || src[i-1] == '(' || src[i-1] == '=') {
-					inTemplate = true
-				}
-				continue
-			}
-			if c == '/' && i+1 < len(src) && src[i+1] == '/' {
-				inComment = true
-			}
-			continue
-		}
+		// stTemplate
 		switch {
 		case c == '\\':
 			i++
 		case c == '`':
-			inTemplate = false
-		case c == '$' && i+1 < len(src) && src[i+1] == '{':
+			state = stCode
+		case c == '$' && next == '{':
 			depth := 0
 			j := i + 1
 			for ; j < len(src); j++ {

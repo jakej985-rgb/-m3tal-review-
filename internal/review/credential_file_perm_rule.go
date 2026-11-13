@@ -150,13 +150,20 @@ func (r CredentialFilePermRule) checkGo(block diffSourceBlock) []Finding {
 // restrictive mode: the call's own args carry 0o600/0o400 (e.g. an opener),
 // or the function chmods the same path expression to 0o600/0o400. Unrelated
 // chmod/umask calls elsewhere in the function do not suppress the write.
-func pyWriteIsRestricted(text, body string, absStart, matchLen, callEnd int) bool {
+func pyWriteIsRestricted(text, body string, relStart, absStart, matchLen, callEnd int) bool {
 	if callEnd < 0 {
 		return false
 	}
 	args := text[absStart+matchLen : callEnd-1]
 	if pySafePermRe.MatchString(args) && !strings.Contains(args, "umask") {
 		return true
+	}
+	// A restrictive umask (…077) is active at the write when it is the last
+	// umask call before the write; a later umask(old) restore cancels it.
+	if calls := pyUmaskCallRe.FindAllStringSubmatch(body[:relStart], -1); len(calls) > 0 {
+		if pyRestrictiveMaskRe.MatchString(strings.TrimSpace(calls[len(calls)-1][1])) {
+			return true
+		}
 	}
 	// Path expression: first positional arg of open(), or the receiver of
 	// .write_text/.write_bytes.
@@ -174,9 +181,18 @@ func pyWriteIsRestricted(text, body string, absStart, matchLen, callEnd int) boo
 	if target == "" {
 		return false
 	}
-	chmodRe := regexp.MustCompile(`chmod\s*\(\s*` + regexp.QuoteMeta(target) + `\s*,\s*(?:0o?|stat\.S_I)[46R]`)
+	// Both os.chmod(target, mode) and pathlib target.chmod(mode), with a
+	// complete owner-only mode (0o600/0o400 or S_IRUSR|S_IWUSR).
+	const mode = `(?:0o?[46]00\b|stat\.S_I[RW]USR(?:\s*\|\s*stat\.S_I[RW]USR)?\s*\))`
+	q := regexp.QuoteMeta(target)
+	chmodRe := regexp.MustCompile(`chmod\s*\(\s*` + q + `\s*,\s*` + mode + `|` + q + `\.chmod\s*\(\s*(?:mode\s*=\s*)?` + mode)
 	return chmodRe.MatchString(body)
 }
+
+var (
+	pyUmaskCallRe       = regexp.MustCompile(`\bumask\s*\(([^)]*)\)`)
+	pyRestrictiveMaskRe = regexp.MustCompile(`^0o?0?[0-7]?77$`)
+)
 
 func (r CredentialFilePermRule) checkPython(block diffSourceBlock) []Finding {
 	var findings []Finding
@@ -189,7 +205,7 @@ func (r CredentialFilePermRule) checkPython(block diffSourceBlock) []Finding {
 			absStart := fn.start + m[0]
 			callEnd := balancedCallEnd(block.text, absStart+m[1]-m[0]-1)
 			span := body[m[0]:m[1]]
-			if pyWriteIsRestricted(block.text, body, absStart, m[1]-m[0], callEnd) {
+			if pyWriteIsRestricted(block.text, body, m[0], absStart, m[1]-m[0], callEnd) {
 				continue
 			}
 			if strings.HasPrefix(strings.TrimSpace(span), ".") {
