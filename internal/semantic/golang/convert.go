@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/semantic"
@@ -33,20 +34,31 @@ type converter struct {
 	callMap map[ssa.Instruction]*semantic.Call
 	// typeMemo deduplicates type conversion.
 	typeMemo map[types.Type]*semantic.Type
+	// sharedVals memoizes program-level values (globals, function
+	// references, builtins) keyed by their SSA value.
+	sharedVals map[ssa.Value]*semantic.Value
+	// sharedByID deduplicates shared values that share a natural ID
+	// (e.g. distinct *ssa.Builtin instances for the same builtin).
+	sharedByID map[string]*semantic.Value
+	// fnValMaps memoizes function-scoped values per modeled function.
+	fnValMaps map[*semantic.Function]map[ssa.Value]*semantic.Value
 }
 
 func newConverter(prog *semantic.Program, ssaProg *ssa.Program, ssaIndex map[*packages.Package]*ssa.Package, fset *token.FileSet, mode CallGraphMode) *converter {
 	return &converter{
-		prog:     prog,
-		ssaProg:  ssaProg,
-		ssaIndex: ssaIndex,
-		fset:     fset,
-		callMode: mode,
-		modeled:  make(map[*ssa.Package]*semantic.Package),
-		rootPkgs: make(map[*packages.Package]*semantic.Package),
-		fnMap:    make(map[*ssa.Function]*semantic.Function),
-		callMap:  make(map[ssa.Instruction]*semantic.Call),
-		typeMemo: make(map[types.Type]*semantic.Type),
+		prog:       prog,
+		ssaProg:    ssaProg,
+		ssaIndex:   ssaIndex,
+		fset:       fset,
+		callMode:   mode,
+		modeled:    make(map[*ssa.Package]*semantic.Package),
+		rootPkgs:   make(map[*packages.Package]*semantic.Package),
+		fnMap:      make(map[*ssa.Function]*semantic.Function),
+		callMap:    make(map[ssa.Instruction]*semantic.Call),
+		typeMemo:   make(map[types.Type]*semantic.Type),
+		sharedVals: make(map[ssa.Value]*semantic.Value),
+		sharedByID: make(map[string]*semantic.Value),
+		fnValMaps:  make(map[*semantic.Function]map[ssa.Value]*semantic.Value),
 	}
 }
 
@@ -242,6 +254,15 @@ func (c *converter) functionBody(mf *semantic.Function, fn *ssa.Function) {
 
 	var operands [10]*ssa.Value
 	nextID := 0
+	// Parameters (including the receiver) and free variables are
+	// function-scoped values; create them before instruction results so
+	// IDs are assigned in a stable order.
+	for _, param := range fn.Params {
+		c.value(param, mf)
+	}
+	for _, fv := range fn.FreeVars {
+		c.value(fv, mf)
+	}
 	for _, sb := range fn.Blocks {
 		mb := blockMap[sb]
 		for _, si := range sb.Instrs {
@@ -256,7 +277,13 @@ func (c *converter) functionBody(mf *semantic.Function, fn *ssa.Function) {
 				if v == nil || *v == nil {
 					continue
 				}
-				mi.Operands = append(mi.Operands, c.valueModel(*v))
+				mi.Operands = append(mi.Operands, c.value(*v, mf))
+			}
+			if sv, ok := si.(ssa.Value); ok {
+				val := c.value(sv, mf)
+				val.Def = mi
+				val.Position = mi.Position
+				mi.Outputs = []*semantic.Value{val}
 			}
 			nextID++
 			mb.Instructions = append(mb.Instructions, mi)
@@ -278,12 +305,107 @@ func (c *converter) functionBody(mf *semantic.Function, fn *ssa.Function) {
 	}
 }
 
-// valueModel converts an SSA value operand.
-func (c *converter) valueModel(v ssa.Value) semantic.Value {
-	return semantic.Value{
-		Name: v.Name(),
-		Type: c.typeModel(v.Type()),
+// value converts an SSA value into a stable semantic Value. Program-
+// level values (globals, function references, builtins) are shared;
+// everything else is scoped to owner.
+func (c *converter) value(v ssa.Value, owner *semantic.Function) *semantic.Value {
+	switch v := v.(type) {
+	case *ssa.Global:
+		return c.sharedValue(v, func() *semantic.Value {
+			return &semantic.Value{
+				ID:       "global:" + v.RelString(nil),
+				Name:     v.Name(),
+				Type:     c.typeModel(v.Type()),
+				Kind:     semantic.ValueGlobal,
+				Package:  c.packageForSSAPkg(v.Pkg),
+				Position: fsetPos(c.fset, v.Pos(), token.NoPos),
+			}
+		})
+	case *ssa.Function:
+		return c.sharedValue(v, func() *semantic.Value {
+			return &semantic.Value{
+				ID:   functionID(v),
+				Name: v.Name(),
+				Type: c.typeModel(v.Type()),
+				Kind: semantic.ValueFunction,
+				Func: c.function(v),
+			}
+		})
+	case *ssa.Builtin:
+		return c.sharedValue(v, func() *semantic.Value {
+			return &semantic.Value{
+				ID:   "builtin:" + v.Name(),
+				Name: v.Name(),
+				Type: c.typeModel(v.Type()),
+				Kind: semantic.ValueBuiltin,
+			}
+		})
 	}
+
+	m := c.fnValMaps[owner]
+	if m == nil {
+		m = make(map[ssa.Value]*semantic.Value)
+		c.fnValMaps[owner] = m
+	}
+	if mv, ok := m[v]; ok {
+		return mv
+	}
+	nv := &semantic.Value{
+		// "@" cannot appear in SSA RelString output, so scoped value IDs
+		// can never collide with function IDs (which may contain "$"
+		// and "#" for closures, wrappers, and init functions).
+		ID:       owner.ID + "@" + strconv.Itoa(len(owner.Values)),
+		Name:     v.Name(),
+		Type:     c.typeModel(v.Type()),
+		Kind:     valueKindOf(v),
+		Owner:    owner,
+		Position: fsetPos(c.fset, v.Pos(), token.NoPos),
+	}
+	m[v] = nv
+	owner.Values = append(owner.Values, nv)
+	c.prog.Values = append(c.prog.Values, nv)
+	return nv
+}
+
+// sharedValue memoizes a program-level value.
+func (c *converter) sharedValue(v ssa.Value, make_ func() *semantic.Value) *semantic.Value {
+	if mv, ok := c.sharedVals[v]; ok {
+		return mv
+	}
+	nv := make_()
+	if existing, ok := c.sharedByID[nv.ID]; ok {
+		c.sharedVals[v] = existing
+		return existing
+	}
+	c.sharedByID[nv.ID] = nv
+	c.sharedVals[v] = nv
+	c.prog.Values = append(c.prog.Values, nv)
+	return nv
+}
+
+// valueKindOf classifies a function-scoped SSA value.
+func valueKindOf(v ssa.Value) semantic.ValueKind {
+	switch v.(type) {
+	case *ssa.Parameter:
+		return semantic.ValueParam
+	case *ssa.FreeVar:
+		return semantic.ValueFreeVar
+	case *ssa.Const:
+		return semantic.ValueConst
+	}
+	if _, ok := v.(ssa.Instruction); ok {
+		return semantic.ValueInstr
+	}
+	return semantic.ValueUnresolved
+}
+
+// packageForSSAPkg returns the semantic package for an SSA package,
+// creating an external stub when it is outside the analyzed set.
+func (c *converter) packageForSSAPkg(sp *ssa.Package) *semantic.Package {
+	if mp, ok := c.modeled[sp]; ok {
+		return mp
+	}
+	return c.externalPackage(sp.Pkg.Path(), sp.Pkg.Name())
 }
 
 // packageFor returns the semantic package owning fn, creating an
