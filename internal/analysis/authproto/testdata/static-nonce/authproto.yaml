@@ -1,0 +1,25 @@
+schema_version: authproto/1
+id: static-nonce-cr
+name: Challenge/response reusing a fixed nonce
+parties: [client, server]
+transcript:
+  - name: challenge
+    from: server
+    to: client
+    fields:
+      - name: server_nonce
+        kind: challenge
+        fresh: true
+        single_use: true
+  - name: response
+    from: client
+    to: server
+    fields:
+      - name: client_nonce
+        kind: nonce
+        # fresh omitted: the model declares a repeating value.
+      - name: proof
+        kind: proof
+        verifier:
+          type: server-secret
+        covers: [server_nonce, client_nonce]

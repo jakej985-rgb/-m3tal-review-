@@ -1,0 +1,28 @@
+schema_version: authproto/1
+id: nonce-cr
+name: Nonce-based challenge/response with server secret
+parties: [client, server]
+transcript:
+  - name: challenge
+    from: server
+    to: client
+    fields:
+      - name: server_nonce
+        kind: challenge
+        fresh: true
+        single_use: true
+        source:
+          name: NewNonce
+          package: example.com/apfx/replay-safe
+  - name: response
+    from: client
+    to: server
+    fields:
+      - name: client_nonce
+        kind: nonce
+        fresh: true
+      - name: proof
+        kind: proof
+        verifier:
+          type: server-secret
+        covers: [server_nonce, client_nonce]

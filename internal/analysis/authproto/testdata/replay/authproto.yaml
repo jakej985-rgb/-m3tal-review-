@@ -1,0 +1,26 @@
+schema_version: authproto/1
+id: reusable-challenge
+name: Challenge without single-use enforcement
+parties: [client, server]
+transcript:
+  - name: challenge
+    from: server
+    to: client
+    fields:
+      - name: server_nonce
+        kind: challenge
+        fresh: true
+        # single_use deliberately absent: the model does not claim the
+        # server rejects reused challenges.
+  - name: response
+    from: client
+    to: server
+    fields:
+      - name: client_nonce
+        kind: nonce
+        fresh: true
+      - name: proof
+        kind: proof
+        verifier:
+          type: server-secret
+        covers: [server_nonce, client_nonce]
