@@ -203,21 +203,43 @@ var (
 // statement at the function body's base indent.
 func pyUnconditionalRestrictiveUmask(prefix string) bool {
 	lines := strings.Split(prefix, "\n")
+	// Skip the (possibly multiline) def header: it ends on the first line
+	// where parens are balanced and the line ends with ':'.
+	start, depth := len(lines), 0
+	for i, line := range lines {
+		depth += strings.Count(line, "(") - strings.Count(line, ")")
+		if depth <= 0 && strings.HasSuffix(strings.TrimSpace(line), ":") {
+			start = i + 1
+			break
+		}
+	}
 	baseIndent := -1
 	restrictive := false
-	for i, line := range lines {
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
 		trimmed := strings.TrimSpace(line)
-		if i == 0 || trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue // def line, blanks, comments
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue // blanks, comments
 		}
 		indent := len(line) - len(strings.TrimLeft(line, " \t"))
 		if baseIndent < 0 {
 			baseIndent = indent
 		}
-		if !pyUmaskCallRe.MatchString(trimmed) {
+		if !strings.Contains(trimmed, "umask") {
 			continue
 		}
-		m := pyUmaskStmtRe.FindStringSubmatch(trimmed)
+		// Join continuation lines so multiline umask( ... ) calls parse.
+		stmt := trimmed
+		for d := strings.Count(stmt, "(") - strings.Count(stmt, ")"); d > 0 && i+1 < len(lines); {
+			i++
+			next := strings.TrimSpace(lines[i])
+			stmt += " " + next
+			d += strings.Count(next, "(") - strings.Count(next, ")")
+		}
+		if !pyUmaskCallRe.MatchString(stmt) {
+			continue
+		}
+		m := pyUmaskStmtRe.FindStringSubmatch(stmt)
 		restrictive = m != nil && indent == baseIndent &&
 			pyRestrictiveMaskRe.MatchString(strings.TrimSpace(m[1]))
 	}

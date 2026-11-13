@@ -1040,6 +1040,27 @@ func TestCredentialFilePermPythonUmaskAndChmod(t *testing.T) {
     with open(path, "w") as f:
         f.write(token)
 `, 0},
+		{"multiline signature with umask suppresses", `def save_token(path,
+               token):
+    os.umask(0o077)
+    with open(path, "w") as f:
+        f.write(token)
+`, 0},
+		{"multiline umask call suppresses", `def save_token(path, token):
+    os.umask(
+        0o077
+    )
+    with open(path, "w") as f:
+        f.write(token)
+`, 0},
+		{"multiline conditional umask still flags", `def save_token(path, token, private_mode):
+    if private_mode:
+        os.umask(
+            0o077
+        )
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
 		{"permissive umask flags", `def save_token(path, token):
     os.umask(0o022)
     with open(path, "w") as f:
