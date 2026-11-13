@@ -26,6 +26,11 @@ type Program struct {
 	// for external callees referenced by call sites.
 	Packages []*Package
 
+	// Values contains every modeled value — function-scoped values
+	// (parameters, instruction results, constants) and shared values
+	// (globals, function references, builtins) — sorted by ID.
+	Values []*Value
+
 	// Diagnostics records load failures, type errors, unsupported
 	// constructs, and other analysis limitations. Nothing is silently
 	// skipped: problems surface here.
@@ -33,6 +38,8 @@ type Program struct {
 
 	byKey      map[string]*Package
 	byFuncID   map[string]*Function
+	byValueID  map[string]*Value
+	uses       map[*Value][]*Instruction
 	callBySite map[*Instruction]*Call
 }
 
@@ -43,13 +50,27 @@ func (p *Program) Package(key string) *Package { return p.byKey[key] }
 // Function returns the function with the given stable ID, or nil.
 func (p *Program) Function(id string) *Function { return p.byFuncID[id] }
 
+// Value returns the value with the given stable ID, or nil.
+func (p *Program) Value(id string) *Value { return p.byValueID[id] }
+
+// Uses returns the instructions that consume v as an operand, in
+// deterministic traversal order. The slice is empty for values with no
+// modeled uses (e.g. dead definitions or unresolved operands).
+func (p *Program) Uses(v *Value) []*Instruction { return p.uses[v] }
+
 // Index builds the lookup maps used by Package, Function, and CallAt.
 // Frontends call it once after the package graph is fully
 // materialized.
 func (p *Program) Index() {
 	p.byKey = make(map[string]*Package, len(p.Packages))
 	p.byFuncID = make(map[string]*Function)
+	p.byValueID = make(map[string]*Value, len(p.Values))
+	p.uses = make(map[*Value][]*Instruction)
 	p.callBySite = make(map[*Instruction]*Call)
+	for _, v := range p.Values {
+		p.byValueID[v.ID] = v
+	}
+	seenUse := make(map[*Value]map[*Instruction]bool)
 	for _, pkg := range p.Packages {
 		p.byKey[pkg.Key()] = pkg
 		for _, fn := range pkg.Functions {
@@ -60,6 +81,24 @@ func (p *Program) Index() {
 		for _, fn := range pkg.Functions {
 			for _, c := range fn.Calls {
 				p.callBySite[c.Site] = c
+			}
+			for _, b := range fn.Blocks {
+				for _, instr := range b.Instructions {
+					for _, operand := range instr.Operands {
+						if operand == nil {
+							continue
+						}
+						m := seenUse[operand]
+						if m == nil {
+							m = make(map[*Instruction]bool)
+							seenUse[operand] = m
+						}
+						if !m[instr] {
+							m[instr] = true
+							p.uses[operand] = append(p.uses[operand], instr)
+						}
+					}
+				}
 			}
 		}
 	}
@@ -77,6 +116,7 @@ func (p *Program) Sort() {
 		}
 		return a.Key() < b.Key()
 	})
+	sort.Slice(p.Values, func(i, j int) bool { return p.Values[i].ID < p.Values[j].ID })
 	for _, pkg := range p.Packages {
 		pkg.Sort()
 	}
@@ -192,6 +232,10 @@ type Function struct {
 	// Calls are the call sites within this function, in instruction
 	// order.
 	Calls []*Call
+	// Values are the function-scoped values in deterministic creation
+	// order: parameters and free variables first, then instruction
+	// results and constants in order of first encounter.
+	Values []*Value
 
 	// Exported reports whether the function is exported.
 	Exported bool
@@ -243,8 +287,14 @@ type Instruction struct {
 	ID int
 	// Op is the neutral operation category.
 	Op Op
-	// Operands are the instruction's input values.
-	Operands []Value
+	// Operands are the instruction's input values. Every operand is a
+	// shared *Value whose ID, definition, and uses can be traversed;
+	// operands that cannot be modeled use Kind==ValueUnresolved.
+	Operands []*Value
+	// Outputs are the values this instruction defines. Most
+	// value-producing instructions define exactly one; instructions
+	// with no result (stores, jumps, returns) define none.
+	Outputs []*Value
 	// Detail carries opcode-specific text (e.g. the concrete SSA
 	// instruction name for OpOther, a constant rendering for OpConst).
 	Detail string
@@ -302,12 +352,66 @@ const (
 	OpOther
 )
 
-// Value is a reference to a semantic value used as an operand.
+// ValueKind identifies where a Value comes from.
+type ValueKind int
+
+const (
+	// ValueInstr is defined by an instruction's Outputs.
+	ValueInstr ValueKind = iota
+	// ValueParam is a function parameter (including the receiver).
+	ValueParam
+	// ValueFreeVar is a variable captured from an enclosing function.
+	ValueFreeVar
+	// ValueGlobal is a package-level variable.
+	ValueGlobal
+	// ValueConst is a compile-time constant.
+	ValueConst
+	// ValueFunction is a reference to a function (e.g. a call target
+	// operand); Func links to the modeled function when available.
+	ValueFunction
+	// ValueBuiltin is a reference to a language builtin (panic, append,
+	// len, ...).
+	ValueBuiltin
+	// ValueUnresolved marks an operand the frontend could not model.
+	// Unresolved values still carry a best-effort Name and Type so
+	// consumers can display them, but they have no Def and participate
+	// in no def/use chains.
+	ValueUnresolved
+)
+
+// Value is a stable semantic identity for a program value. IDs are
+// unique across the Program: function-scoped values use the form
+// "<function ID>@<n>" ("@" never appears in frontend function names)
+// while shared values use their natural identity (function ID for
+// ValueFunction, "global:<pkg path>.<name>" for ValueGlobal,
+// "builtin:<name>" for ValueBuiltin).
 type Value struct {
-	// Name is the frontend's name for the value, if any.
+	// ID is the stable, program-unique identifier.
+	ID string
+	// Name is the frontend's display name, if any. Names are NOT
+	// identities: they may be empty, reused across scopes, or shared
+	// by distinct values.
 	Name string
 	// Type is the value's type, if known.
 	Type *Type
+	// Kind identifies the value's origin.
+	Kind ValueKind
+	// Def is the instruction that defines this value, for
+	// Kind==ValueInstr. It is nil for parameters, free variables,
+	// globals, constants, function references, builtins, and
+	// unresolved values.
+	Def *Instruction
+	// Owner is the function that scopes this value, for function-
+	// scoped kinds. It is nil for shared values.
+	Owner *Function
+	// Package is the owning package for ValueGlobal values.
+	Package *Package
+	// Func links to the modeled function for Kind==ValueFunction when
+	// the callee could be materialized; nil otherwise.
+	Func *Function
+	// Position is the value's source position where available (e.g.
+	// parameter declarations, global declarations).
+	Position Position
 }
 
 // CallKind classifies a call site.
