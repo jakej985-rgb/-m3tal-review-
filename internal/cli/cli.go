@@ -1129,6 +1129,13 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, progress Progr
 	fileSet := make(map[string]bool, len(files))
 	unanalyzedSet := make(map[string]bool)
 	var vendorFiles []string
+	// EvalSymlinks resolves the final path of each file; the repository root
+	// must be canonicalized the same way or Rel fails when the root itself
+	// contains a symlink (e.g. /var -> /private/var, 8.3 short names).
+	resolvedRoot, rootErr := filepath.EvalSymlinks(repositoryRoot)
+	if rootErr != nil {
+		resolvedRoot = repositoryRoot
+	}
 	filesRead := 0
 	bytesRead := int64(0)
 	for _, file := range files {
@@ -1164,7 +1171,7 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, progress Progr
 			continue
 		}
 		target, evalErr := filepath.EvalSymlinks(fullPath)
-		rel, relErr := filepath.Rel(repositoryRoot, target)
+		rel, relErr := filepath.Rel(resolvedRoot, target)
 		if evalErr != nil || relErr != nil || !filepath.IsLocal(rel) {
 			unanalyzedSet[file] = true
 			fileSet[file] = true

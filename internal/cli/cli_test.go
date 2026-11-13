@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -1445,6 +1446,12 @@ func TestAuditPreservesUnusualFilenames(t *testing.T) {
 	runGit("add", ".gitignore")
 	runGit("commit", "-m", "initial")
 	oddName := "space\tand\nnewline.go"
+	wantDisplay := `space\x09and\x0anewline.go`
+	if runtime.GOOS == "windows" {
+		// Windows file names cannot contain control characters.
+		oddName = "odd name&file.go"
+		wantDisplay = oddName
+	}
 	if err := os.WriteFile(filepath.Join(repoDir, oddName), []byte("// TODO: keep the filename intact\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1457,7 +1464,7 @@ func TestAuditPreservesUnusualFilenames(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(originalDir) })
 	output, auditErr := captureOutput(func() error { return execute("audit") })
-	if auditErr == nil || !strings.Contains(output, `space\x09and\x0anewline.go`) {
+	if auditErr == nil || !strings.Contains(output, wantDisplay) {
 		t.Fatalf("audit did not safely display unusual filename: err=%v output:\n%s", auditErr, output)
 	}
 	var runID string

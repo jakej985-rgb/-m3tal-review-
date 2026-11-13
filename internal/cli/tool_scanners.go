@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -207,7 +208,9 @@ func validateExecutablePath(path string) error {
 	if fi.IsDir() {
 		return errors.New("path is a directory")
 	}
-	if fi.Mode()&0111 == 0 {
+	// Windows has no executable permission bit; executability there is
+	// determined by file extension (PATHEXT) at process creation time.
+	if runtime.GOOS != "windows" && fi.Mode()&0111 == 0 {
 		return errors.New("file is not executable")
 	}
 	return nil
