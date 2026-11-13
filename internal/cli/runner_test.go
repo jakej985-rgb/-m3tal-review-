@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -258,6 +259,9 @@ func TestRunPipelineDoesNotLoadRepoPluginsByDefault(t *testing.T) {
 }
 
 func TestRunPipelineRepoPluginsRequireOptIn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("plugin executables are POSIX shell scripts and plugin discovery requires an executable permission bit; Windows plugin execution is unsupported")
+	}
 	repoDir := setupTestGitRepo(t)
 
 	marker := filepath.Join(repoDir, "repo-plugin-ran.marker")
