@@ -1,0 +1,18 @@
+schema_version: protocol/1
+id: device-api
+version: "1.0.0"
+requests:
+  - name: CreateSession
+    method: POST
+    path: /v1/sessions
+    fields:
+      - name: device_id
+        type: string
+        required: true
+      - name: ttl
+        type: integer
+        required: false
+        default: 300
+auth:
+  scheme: bearer
+  required: true

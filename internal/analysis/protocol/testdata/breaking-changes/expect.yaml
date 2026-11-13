@@ -1,0 +1,36 @@
+findings:
+  # request field type change
+  - element: request.CreateSession.field.device_id
+    directions: both
+    severity: medium
+  # request field optional->required: old clients don't send it
+  - element: request.CreateSession.field.ttl
+    change_kind: requiredness-changed
+    directions: old-client/new-server
+    severity: medium
+  # semantic default change: low, potential
+  - element: request.CreateSession.field.ttl
+    change_kind: default-changed
+    severity: low
+    status: potential
+  # required request field removed
+  - element: request.CreateSession.field.firmware
+    directions: new-client/old-server
+    severity: medium
+  # required response field removed
+  - element: response.SessionAck.field.server_time
+    directions: old-client/new-server
+    severity: medium
+  # auth scheme change: semantic
+  - element: auth.scheme
+    severity: medium
+    status: potential
+  # pairing gained a required field
+  - element: pairing.field.region
+    directions: both
+    severity: medium
+  # capability type change: low semantic
+  - element: capability.streaming
+    severity: low
+    status: potential
+diagnostics: []

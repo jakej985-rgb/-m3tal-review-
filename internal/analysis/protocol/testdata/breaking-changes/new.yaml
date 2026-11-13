@@ -1,0 +1,39 @@
+schema_version: protocol/1
+id: device-api
+version: "2.0.0"
+requests:
+  - name: CreateSession
+    method: POST
+    path: /v1/sessions
+    fields:
+      - name: device_id
+        type: integer        # type change: breaking both ways
+        required: true
+      - name: ttl
+        type: integer
+        required: true       # optional -> required: breaks old clients
+        default: 60          # default change: semantic
+      # firmware removed: was required -> breaks new-client/old-server
+responses:
+  - name: SessionAck
+    fields:
+      - name: session_id
+        type: string
+        required: true
+      # server_time removed: was required -> breaks old-client/new-server
+auth:
+  scheme: hmac                # auth scheme change: semantic, both ways
+  required: true
+  header: Authorization
+pairing:
+  fields:
+    - name: code
+      type: string
+      required: true
+    - name: region            # new required pairing field: both ways
+      type: string
+      required: true
+capabilities:
+  - name: streaming
+    type: string              # capability type change
+    values: [v1, v2]

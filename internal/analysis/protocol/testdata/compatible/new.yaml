@@ -1,0 +1,52 @@
+schema_version: protocol/1
+id: device-api
+name: Device API
+version: "1.1.0"
+requests:
+  - name: CreateSession
+    method: POST
+    path: /v1/sessions
+    fields:
+      - name: device_id
+        type: string
+        required: true
+      - name: ttl
+        type: integer
+        required: false
+        default: 300
+      - name: locale            # new OPTIONAL request field: benign
+        type: string
+        required: false
+        default: en
+  - name: GetStatus           # new endpoint: informational
+    method: GET
+    path: /v1/status
+    fields: []
+responses:
+  - name: SessionAck
+    fields:
+      - name: session_id
+        type: string
+        required: true
+      - name: region            # new OPTIONAL response field: benign
+        type: string
+        required: false
+headers:
+  - name: X-Request-Id
+    type: string
+    required: false
+  - name: X-Client-Version    # new OPTIONAL header: benign
+    type: string
+    required: false
+auth:
+  scheme: bearer
+  required: true
+capabilities:
+  - name: streaming
+    type: boolean
+    default: false
+  - name: metrics             # new capability: informational
+    type: boolean
+    default: false
+compat:
+  compatible_with: ["1.0.0"]

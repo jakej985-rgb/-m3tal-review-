@@ -1,0 +1,29 @@
+schema_version: protocol/1
+id: device-api
+version: "2.0.0"
+requests:
+  - name: CreateSession
+    method: POST
+    path: /v1/sessions
+    fields:
+      - name: device_id
+        type: integer        # intentional break #1: documented
+        required: true
+      - name: ttl
+        type: integer
+        required: true       # NOT documented: must still be reported
+        default: 60
+auth:
+  scheme: hmac                # intentional break #2: documented
+  required: true
+compat:
+  breaking_changes:
+    - element: request.CreateSession.field.device_id
+      change: type-changed
+      reason: "device ids are now numeric; ADR-14 migration window"
+    - element: auth.scheme
+      reason: "hmac rollout documented in ADR-15"
+  assertions:
+    - element: request.CreateSession.field.ttl
+      change: default-changed
+      reason: "new default matches server-side session policy"

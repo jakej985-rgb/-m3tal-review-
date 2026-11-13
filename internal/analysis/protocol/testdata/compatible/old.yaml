@@ -1,0 +1,33 @@
+schema_version: protocol/1
+id: device-api
+name: Device API
+version: "1.0.0"
+requests:
+  - name: CreateSession
+    method: POST
+    path: /v1/sessions
+    fields:
+      - name: device_id
+        type: string
+        required: true
+      - name: ttl
+        type: integer
+        required: false
+        default: 300
+responses:
+  - name: SessionAck
+    fields:
+      - name: session_id
+        type: string
+        required: true
+headers:
+  - name: X-Request-Id
+    type: string
+    required: false
+auth:
+  scheme: bearer
+  required: true
+capabilities:
+  - name: streaming
+    type: boolean
+    default: false

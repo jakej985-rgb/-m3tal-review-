@@ -1,0 +1,19 @@
+total_findings: 5
+findings:
+  - message_contains: "request.CreateSession.field.locale"
+    element: request.CreateSession.field.locale
+    directions: both
+    severity: low
+  - message_contains: "request.GetStatus"
+    element: request.GetStatus
+    severity: low
+  - message_contains: "response.SessionAck.field.region"
+    element: response.SessionAck.field.region
+    severity: low
+  - message_contains: "capability.metrics"
+    element: capability.metrics
+    severity: info
+  - message_contains: "header.X-Client-Version"
+    element: header.X-Client-Version
+    severity: low
+diagnostics: []
