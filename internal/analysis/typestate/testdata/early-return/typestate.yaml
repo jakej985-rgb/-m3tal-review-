@@ -1,0 +1,11 @@
+schema_version: typestate/1
+id: challenge-single-use
+resource:
+  type: "example.com/tsfx/early-return.Challenge"
+operations:
+  - kind: consume
+    function:
+      name: Consume
+      receiver: "example.com/tsfx/early-return.Challenge"
+entry:
+  - id: "example.com/tsfx/early-return.main"

@@ -1,0 +1,4 @@
+findings:
+  - rule: typestate-invalid-reset
+    message_contains: "not consumed"
+    status: proven

@@ -239,3 +239,10 @@ enumeration, and replay of `Result.Sequences` event names.
   contract semantics.
 - Contracts are evaluated independently; cross-contract state is not
   shared.
+
+## Related
+
+For the common single-use-resource lifecycle (consume/use/reset over a
+two-state `available`/`consumed` machine), see `docs/typestate.md` —
+`internal/analysis/typestate` derives `statemachine/1` contracts from
+a compact spec and reuses this evaluator unchanged.

@@ -1,0 +1,16 @@
+schema_version: typestate/1
+id: challenge-lifecycle
+name: Challenge lifecycle with use and reset
+resource:
+  type: "example.com/tsfx/use-after-consume.Challenge"
+operations:
+  - kind: consume
+    function:
+      name: Consume
+      receiver: "example.com/tsfx/use-after-consume.Challenge"
+  - kind: use
+    function:
+      name: Check
+      receiver: "example.com/tsfx/use-after-consume.Challenge"
+entry:
+  - id: "example.com/tsfx/use-after-consume.main"

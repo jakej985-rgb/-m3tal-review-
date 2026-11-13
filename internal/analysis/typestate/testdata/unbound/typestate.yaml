@@ -1,0 +1,11 @@
+schema_version: typestate/1
+id: unrelated-lifecycle
+resource:
+  type: "example.com/tsfx/unbound.Challenge"
+operations:
+  - kind: consume
+    function:
+      name: Redeem      # no such function: binding is unbound
+      receiver: "example.com/tsfx/unbound.Challenge"
+entry:
+  - id: "example.com/tsfx/unbound.main"

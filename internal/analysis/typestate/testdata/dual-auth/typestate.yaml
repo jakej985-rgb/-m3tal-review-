@@ -1,0 +1,12 @@
+schema_version: typestate/1
+id: challenge-single-use
+name: Single-use auth challenge
+resource:
+  type: "example.com/tsfx/dual-auth.Challenge"
+operations:
+  - kind: consume
+    function:
+      name: Consume
+      receiver: "example.com/tsfx/dual-auth.Challenge"
+entry:
+  - id: "example.com/tsfx/dual-auth.main"

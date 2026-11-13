@@ -1,0 +1,15 @@
+schema_version: typestate/1
+id: challenge-lifecycle
+resource:
+  type: "example.com/tsfx/invalid-reset.Challenge"
+operations:
+  - kind: consume
+    function:
+      name: Consume
+      receiver: "example.com/tsfx/invalid-reset.Challenge"
+  - kind: reset
+    function:
+      name: Reset
+      receiver: "example.com/tsfx/invalid-reset.Challenge"
+entry:
+  - id: "example.com/tsfx/invalid-reset.main"
