@@ -207,6 +207,12 @@ func pyUnconditionalRestrictiveUmask(prefix string) bool {
 	// where parens are balanced and the line ends with ':'.
 	start, depth := len(lines), 0
 	for i, line := range lines {
+		// Drop trailing `# comment` so `def f(x):  # note` ends the header.
+		// (Naive: a '#' inside a default-string arg truncates early, which
+		// only delays header detection and errs toward flagging.)
+		if h := strings.Index(line, "#"); h >= 0 {
+			line = line[:h]
+		}
 		depth += strings.Count(line, "(") - strings.Count(line, ")")
 		if depth <= 0 && strings.HasSuffix(strings.TrimSpace(line), ":") {
 			start = i + 1
