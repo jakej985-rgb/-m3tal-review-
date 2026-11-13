@@ -150,7 +150,7 @@ func TestAliasInSignature(t *testing.T) {
 	}
 }
 
-func TestAliasUsedAsValueAndFieldType(t *testing.T) {
+func TestAliasUsedAsValueType(t *testing.T) {
 	prog := loadAliasFixture(t)
 
 	// A variable declared with the alias type keeps the alias identity.

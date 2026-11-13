@@ -579,31 +579,22 @@ func (c *converter) aliasModel(t types.Type) *semantic.Type {
 }
 
 // aliasObject returns the TypeName that declares t as a type alias, or
-// nil when t is not an alias. It handles both the *types.Alias
-// representation (gotypesalias=1, the default since Go 1.23) and the
-// legacy *types.Named-with-alias-object representation.
+// nil when t is not an alias. Alias identity requires the *types.Alias
+// representation (gotypesalias=1, the default since Go 1.23); under the
+// legacy gotypesalias=0 mode go/types replaces alias uses with their
+// targets, so alias identity is not recoverable and is not modeled.
 func aliasObject(t types.Type) *types.TypeName {
-	switch a := t.(type) {
-	case *types.Alias:
+	if a, ok := t.(*types.Alias); ok {
 		return a.Obj()
-	case *types.Named:
-		if obj := a.Obj(); obj != nil && obj.IsAlias() {
-			return obj
-		}
 	}
 	return nil
 }
 
-// aliasTarget returns the immediate right-hand side of alias t. For
-// *types.Alias this is Alias.Rhs, which preserves every link of an
-// alias chain; in the legacy *types.Named representation only the
-// fully-expanded underlying type is available.
+// aliasTarget returns the immediate right-hand side of alias t
+// (Alias.Rhs), which preserves every link of an alias chain.
 func aliasTarget(t types.Type) types.Type {
-	switch a := t.(type) {
-	case *types.Alias:
+	if a, ok := t.(*types.Alias); ok {
 		return a.Rhs()
-	case *types.Named:
-		return a.Underlying()
 	}
 	return nil
 }
@@ -611,10 +602,7 @@ func aliasTarget(t types.Type) types.Type {
 // aliasTypeArgs returns the type arguments of an instantiated generic
 // alias, or nil.
 func aliasTypeArgs(t types.Type) *types.TypeList {
-	switch a := t.(type) {
-	case *types.Alias:
-		return a.TypeArgs()
-	case *types.Named:
+	if a, ok := t.(*types.Alias); ok {
 		return a.TypeArgs()
 	}
 	return nil

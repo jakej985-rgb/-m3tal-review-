@@ -527,13 +527,22 @@ type Type struct {
 	// Aliasee is the immediate right-hand side of a declared alias;
 	// it is populated only when Kind == TypeAlias. For alias chains
 	// ("type A = B; type B = string") Aliasee is itself a TypeAlias,
-	// so every link of the chain keeps its own identity. Consumers
-	// that need the fully-expanded type can follow Aliasee links or
-	// use Text.
+	// so every link of the chain keeps its own identity. Text renders
+	// the alias name, not its expansion; consumers that need the
+	// fully-expanded type should use Unaliased.
 	Aliasee *Type
 	// IsAlias reports whether the type denotes a declared type alias.
 	// It is true exactly when Kind == TypeAlias.
 	IsAlias bool
+}
+
+// Unaliased follows Aliasee links and returns the first non-alias type.
+// It returns t unchanged when t is not an alias.
+func (t *Type) Unaliased() *Type {
+	for t != nil && t.Kind == TypeAlias && t.Aliasee != nil {
+		t = t.Aliasee
+	}
+	return t
 }
 
 // Position identifies a source range. Line and Column are 1-based;
