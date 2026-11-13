@@ -20,7 +20,8 @@ type Program struct {
 	// RootDir is the absolute directory the program was loaded from.
 	RootDir string
 
-	// Packages contains every modeled package, sorted by Path. This
+	// Packages contains every modeled package, sorted by Key() (the
+	// import path, or the variant ID for test variants). This
 	// includes analyzed (root) packages and stub packages materialized
 	// for external callees referenced by call sites.
 	Packages []*Package
