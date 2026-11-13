@@ -43,13 +43,19 @@ func defaultSyncDir(dir string) error {
 
 func defaultRename(oldpath, newpath string) error {
 	var err error
-	for i := 0; i < 5; i++ {
+	// Windows denies renaming over a destination that is momentarily open
+	// (readers, indexers, AV), so retry transient failures longer there.
+	attempts := 5
+	if runtime.GOOS == "windows" {
+		attempts = 50
+	}
+	for i := 0; i < attempts; i++ {
 		err = os.Rename(oldpath, newpath)
 		if err == nil {
 			return nil
 		}
 		if runtime.GOOS == "windows" {
-			time.Sleep(time.Duration(i+1) * 2 * time.Millisecond)
+			time.Sleep(time.Duration(min(i+1, 20)) * time.Millisecond)
 			continue
 		}
 		break
