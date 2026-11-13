@@ -75,9 +75,22 @@ func ExtraRules(repositoryRoot string) []Rule {
 			remediation: "Disable DTDs and external entities when parsing untrusted XML (disallow-doctype-decl, resolve_entities=False).",
 			patterns: []langPattern{
 				{language.LanguageJava, regexp.MustCompile(`(?:DocumentBuilderFactory|SAXParserFactory|XMLInputFactory|TransformerFactory|XMLDecoder|Unmarshaller)\b`), "XML parser without visible secure-processing flags"},
+				{language.LanguageKotlin, regexp.MustCompile(`(?:DocumentBuilderFactory|SAXParserFactory|XMLInputFactory|TransformerFactory|XMLDecoder|Unmarshaller)\b`), "XML parser without visible secure-processing flags"},
 				{language.LanguagePython, regexp.MustCompile(`simplexml_load_string|xml\.etree\.iterparse|XMLStreamReader`), "XML parsing API; verify entity expansion is disabled"},
 				{language.LanguagePython, regexp.MustCompile(`\b(?:xml\.etree\.ElementTree|xml\.dom|minidom|lxml)\b[^)]{0,160}?(?:parse|fromstring|XML)`), "XML parsing without defusedxml; verify entity expansion is disabled"},
 				{language.LanguageGo, regexp.MustCompile(`\bencoding/xml\b`), "encoding/xml detected; it does not process external entities by default but review usage"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "android-manifest", severity: "medium",
+			filePattern:    regexp.MustCompile(`(?:^|/)AndroidManifest\.xml$`),
+			excludePattern: regexp.MustCompile(`(?:^|/)src/debug\w*/`),
+			raw:            true,
+			skipLine:       regexp.MustCompile(`^\s*<!--`),
+			remediation:    "Review the manifest attribute: disable the risky feature or add compensating controls (backup rules, network security config, build-type gating).",
+			patterns: []langPattern{
+				{language.LanguageUnknown, regexp.MustCompile(`android:allowBackup\s*=\s*["']true["']`), "android:allowBackup=true permits adb backup and device-to-device transfer of app data; verify backup rules exclude credentials and sensitive stores"},
+				{language.LanguageUnknown, regexp.MustCompile(`android:usesCleartextTraffic\s*=\s*["']true["']`), "android:usesCleartextTraffic=true permits plain-HTTP traffic app-wide"},
+				{language.LanguageUnknown, regexp.MustCompile(`android:debuggable\s*=\s*["']true["']`), "android:debuggable=true must never ship in release builds"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "injection-other", severity: "medium",
@@ -264,19 +277,17 @@ func ExtraRules(repositoryRoot string) []Rule {
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`pull_request_target`), "pull_request_target trigger grants secrets to PR-controlled code paths"},
 			}},
+		&ActionsScriptInjectionRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&CredentialFilePermRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
-			name: "actions-script-injection", severity: "medium",
-			raw:         true,
-			remediation: "Pass event data through environment variables instead of interpolating ${{ }} into run scripts.",
-			filePattern: regexp.MustCompile(`(?:^|/)\.github/workflows/.*\.ya?ml$`),
-			// Attacker-authored contexts (issue/PR/comment/review bodies, head
-			// refs, commit messages) stay high; dispatch inputs, event names and
-			// SHAs require workflow-dispatch/write access, so they are medium.
-			lineSeverityPattern: regexp.MustCompile(`github\.event\.(?:issue|comment|review|discussion|pull_request|head_commit|commits|pages)|github\.head_ref`),
-			lineSeverity:        "high",
+			name: "default-http-client", severity: "low",
+			filePattern:    regexp.MustCompile(`\.go$`),
+			excludePattern: regexp.MustCompile(`(?:^|/)(?:tests?|testdata|fixtures?)(?:/|$)|_test\.go$`),
 			patterns: []langPattern{
-				{language.LanguageUnknown, regexp.MustCompile(`\$\{\{\s*github\.event\.[^}]+\}\}`), "Event data interpolated into workflow; risk of script injection"},
-			}},
+				{language.LanguageGo, regexp.MustCompile(`\bhttp\.DefaultClient\.(?:Do|Get|Post|PostForm|Head)\b|\bhttp\.(?:Get|Post|PostForm|Head)\s*\(`), "HTTP call via http.DefaultClient or package-level helper has no timeout"},
+			},
+			remediation: "Use an http.Client with an explicit Timeout for outbound requests.",
+		},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "pipe-to-shell", severity: "high",
 			raw:         true,
@@ -344,7 +355,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 				// that are entirely CI-templated (${{ secrets.X }}, ${VAR}, $VAR)
 				// commit no secret material and are covered by actions-credential-url.
 				{language.LanguageUnknown, regexp.MustCompile(`[a-z][a-z0-9+.-]*://[^/\s:@]+:[^$\s@][^@\s]{5,}@`), "URL with embedded credentials"},
-				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AGE-SECRET-KEY-1|BEGIN PGP PRIVATE KEY|npm_[A-Za-z0-9]{30,}|pypi-AgEI|dckr_pat_|glpat-[A-Za-z0-9_-]{15,}|AIza[0-9A-Za-z_-]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{25,}|shpat_[a-fA-F0-9]{20,}|xapp-[A-Za-z0-9-]{10,}|dop_v1_[a-f0-9]{30,}|lin_api_[A-Za-z0-9]{30,}|sq0csp-[A-Za-z0-9_-]{20,}|DefaultEndpointsProtocol|SharedAccessSignature=|Endpoint=sb://|(?m)^\s*machine\s+\S[^\n]*\b(?:login|password|account)\s+\S`), "Cloud/API credential material in source"},
+				{language.LanguageUnknown, regexp.MustCompile(`AccountKey=|SharedAccessKey=|hooks\.slack\.com/services/|sk_live_|rk_live_|"type"\s*:\s*"service_account"|hvs\.[A-Za-z0-9]|BEGIN OPENSSH PRIVATE KEY|aws_secret_access_key|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AGE-SECRET-KEY-1|BEGIN PGP PRIVATE KEY|npm_[A-Za-z0-9]{30,}|pypi-AgEI|dckr_pat_|glpat-[A-Za-z0-9_-]{15,}|sk-ant-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{25,}|shpat_[a-fA-F0-9]{20,}|xapp-[A-Za-z0-9-]{10,}|dop_v1_[a-f0-9]{30,}|lin_api_[A-Za-z0-9]{30,}|sq0csp-[A-Za-z0-9_-]{20,}|DefaultEndpointsProtocol|SharedAccessSignature=|Endpoint=sb://|(?m)^\s*machine\s+\S[^\n]*\b(?:login|password|account)\s+\S`), "Cloud/API credential material in source"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			raw:         true,
@@ -457,6 +468,9 @@ func ExtraRules(repositoryRoot string) []Rule {
 			skipLine:       regexp.MustCompile(`LimitReader|CopyN|MaxBytesReader|ReadAtLeast|WithMaxBytes`),
 			patterns: []langPattern{
 				{language.LanguageGo, regexp.MustCompile(`\b(?:io|ioutil)\.ReadAll\s*\(`), "Unbounded read; consider io.LimitReader for untrusted input"},
+				// OkHttp ResponseBody.string()/bytes() and
+				// HttpURLConnection inputStream reads carry no size bound.
+				{language.LanguageKotlin, regexp.MustCompile(`\.body(?:\?|!!)?\.(?:string|bytes)\s*\(|(?:inputStream|byteStream|getInputStream)\b[^\n]{0,140}?(?:readBytes|readText|bufferedReader|readLines)`), "Unbounded response/body read; consider bounding with a size limit"},
 			}},
 		// client-timeouts is implemented by ClientTimeoutRule (balanced-brace
 		// literal extraction); a regex cannot span nested composite literals.

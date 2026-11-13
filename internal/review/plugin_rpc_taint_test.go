@@ -673,3 +673,557 @@ func (b *B) Save() {
 		t.Fatalf("expected 2 distinct signatures for (*A).Save and (*B).Save, got %v", sigs)
 	}
 }
+
+// Script injection must only fire inside run:/script: executable contexts;
+// structural keys like ref:/with: inputs are data, not shell.
+func TestActionsScriptInjectionExecutableContexts(t *testing.T) {
+	wf := `.github/workflows/ci.yml
+name: ci
+on:
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: safe env
+        run: echo "hello"
+      - name: injected
+        run: |
+          echo "title: ${{ github.event.pull_request.title }}"
+          echo "done"
+      - name: script injection
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log("${{ github.event.issue.title }}")
+`
+	diff := extraDiff(".github/workflows/ci.yml", wf)
+	findings := (ActionsScriptInjectionRule{}).Check(diff)
+	if len(findings) != 2 {
+		t.Fatalf("expected 2 findings (run block + script block), got %d: %+v", len(findings), findings)
+	}
+	for _, f := range findings {
+		if f.Severity != "high" {
+			t.Fatalf("expected high for attacker context, got %s at line %d", f.Severity, f.Line)
+		}
+	}
+	// The ref: interpolation must NOT be flagged.
+	for _, f := range findings {
+		if f.Line == 14 {
+			t.Fatalf("ref: input was flagged as script injection: %+v", f)
+		}
+	}
+}
+
+func TestActionsScriptInjectionDispatchInputMedium(t *testing.T) {
+	wf := `.github/workflows/release.yml
+on:
+  workflow_dispatch:
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ github.event.inputs.bump_type }}"
+`
+	diff := extraDiff(".github/workflows/release.yml", wf)
+	findings := (ActionsScriptInjectionRule{}).Check(diff)
+	if len(findings) != 1 || findings[0].Severity != "medium" {
+		t.Fatalf("expected 1 medium finding, got %+v", findings)
+	}
+}
+
+// Python tests/data fixtures must not produce credential/entropy findings.
+func TestSecretRulesSkipPythonTestData(t *testing.T) {
+	fixture := `{"feedbackToken": "AOpD3f9xK2mQ8vLpR7tYwEzBcD4sFgHjKlMnBvCxZaSdFgHiJkLmNoPqRsTuVwXyZ0123456789abcdefghij",
+ "signatureCipher": "GKl3mQ8vLpR7tYwEzBcD4sFgHjKlMnBvCxZaSdFgHiJkLmNoPqRsTuVwXyZab12",
+ "trackingParams": "CAkQ8vLpR7tYwEzBcD4sFgHjKlMnBvCxZaSdFgHiJkLmNoPqRsTuVwXyZabc"}`
+	diff := extraDiff("tests/data/2024_03_get_album.json", fixture)
+	for _, r := range []Rule{EntropyRule{}, SecretRule{}} {
+		for _, f := range r.Check(diff) {
+			t.Fatalf("rule %s flagged test fixture: %+v", r.Name(), f)
+		}
+	}
+	// And hardcoded-credential on the same fixture.
+	sr := SecurityRule{}
+	for _, f := range sr.Check(diff) {
+		if f.Rule == "hardcoded-credential" {
+			t.Fatalf("hardcoded-credential flagged test fixture: %+v", f)
+		}
+	}
+}
+
+// URL constants named *TOKEN*/*SECRET* are endpoints, not credentials.
+func TestHardcodedCredentialSkipsURLValues(t *testing.T) {
+	src := `package main
+
+const OAuthTokenURL = "https://oauth2.googleapis.com/token"
+`
+	diff := extraDiff("auth/oauth.go", src)
+	for _, f := range (SecurityRule{}).Check(diff) {
+		if f.Rule == "hardcoded-credential" {
+			t.Fatalf("URL constant flagged as credential: %+v", f)
+		}
+	}
+}
+
+// Credential files written with permissive/default permissions must flag.
+func TestCredentialFilePermGo(t *testing.T) {
+	src := `package auth
+
+func (m *OAuthToken) SaveToken() error {
+	data, _ := json.Marshal(m)
+	return os.WriteFile(m.FilePath, data, 0644)
+}
+
+func WriteConfig(path string, data []byte) error {
+	return os.WriteFile(path, data, 0600)
+}
+`
+	diff := extraDiff("auth/oauth.go", src)
+	findings := (CredentialFilePermRule{}).Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %+v", findings)
+	}
+	if findings[0].Severity != "medium" {
+		t.Fatalf("expected medium for explicit 0644, got %s", findings[0].Severity)
+	}
+}
+
+func TestCredentialFilePermPython(t *testing.T) {
+	src := `import os
+
+def store_token(file_path, token):
+    with open(file_path, encoding="utf8", mode="w") as f:
+        json.dump(token, f)
+
+def save_report(path, data):
+    with open(path, "w") as f:
+        f.write(data)
+`
+	diff := extraDiff("auth/token.py", src)
+	findings := (CredentialFilePermRule{}).Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding (store_token only), got %+v", findings)
+	}
+}
+
+func TestDefaultHTTPClient(t *testing.T) {
+	src := `package auth
+
+func RequestDeviceCode() {
+	resp, err := http.DefaultClient.Do(req)
+	_ = resp
+	_ = err
+}
+
+func Other() {
+	resp, err := client.Do(req)
+	_ = resp
+	_ = err
+}
+`
+	diff := extraDiff("auth/oauth.go", src)
+	found := false
+	for _, r := range ExtraRules("") {
+		if r.Name() != "default-http-client" {
+			continue
+		}
+		for _, f := range r.Check(diff) {
+			found = true
+			if f.Severity != "low" {
+				t.Fatalf("expected low, got %s", f.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("default-http-client did not fire on http.DefaultClient.Do")
+	}
+}
+
+// AndroidManifest risky attributes must flag; structural/benign attrs must not.
+func TestAndroidManifestRule(t *testing.T) {
+	manifest := `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="true"
+        android:usesCleartextTraffic="true"
+        android:debuggable="false"
+        android:label="GPS">
+    </application>
+</manifest>
+`
+	diff := extraDiff("app/src/main/AndroidManifest.xml", manifest)
+	var found []Finding
+	for _, r := range ExtraRules("") {
+		if r.Name() == "android-manifest" {
+			found = append(found, r.Check(diff)...)
+		}
+	}
+	if len(found) != 2 {
+		t.Fatalf("expected 2 findings (allowBackup + cleartext), got %+v", found)
+	}
+	for _, f := range found {
+		if f.Severity != "medium" {
+			t.Fatalf("expected medium, got %s", f.Severity)
+		}
+	}
+}
+
+// Kotlin XXE-prone parser factories and unbounded OkHttp reads must flag.
+func TestKotlinCoveragePatterns(t *testing.T) {
+	kt := `package com.example
+
+fun parseXml(data: String) {
+    val factory = DocumentBuilderFactory.newInstance()
+    val builder = factory.newDocumentBuilder()
+}
+
+fun fetch(url: String): String {
+    val response = client.newCall(request).execute()
+    return response.body?.string() ?: ""
+}
+`
+	diff := extraDiff("app/src/main/java/com/example/Net.kt", kt)
+	rules := map[string]bool{}
+	for _, r := range ExtraRules("") {
+		switch r.Name() {
+		case "xxe", "unbounded-read":
+			if len(r.Check(diff)) > 0 {
+				rules[r.Name()] = true
+			}
+		}
+	}
+	if !rules["xxe"] {
+		t.Fatal("xxe did not fire on Kotlin DocumentBuilderFactory")
+	}
+	if !rules["unbounded-read"] {
+		t.Fatal("unbounded-read did not fire on OkHttp body.string()")
+	}
+}
+
+// JS/TS request-taint: Express handler input reaching exec/fs sinks.
+func TestJSTaintExpressExec(t *testing.T) {
+	src := `const express = require('express');
+const { exec } = require('child_process');
+const app = express();
+
+app.get('/run', (req, res) => {
+    const cmd = req.query.cmd;
+    exec(cmd, (err, stdout) => {
+        res.send(stdout);
+    });
+});
+
+app.get('/safe', (req, res) => {
+    res.send('ok');
+});
+`
+	diff := extraDiff("src/routes.js", src)
+	var findings []Finding
+	for _, f := range (TaintRule{}).Check(diff) {
+		if f.Rule == "request-taint" {
+			findings = append(findings, f)
+		}
+	}
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 request-taint finding, got %+v", findings)
+	}
+	if findings[0].Severity != "high" {
+		t.Fatalf("expected high for exec sink, got %s", findings[0].Severity)
+	}
+	if findings[0].Confidence != "medium" {
+		t.Fatalf("expected medium confidence for JS intra-file analysis, got %s", findings[0].Confidence)
+	}
+}
+
+// Taint must not cross function boundaries: a tainted var in handler A
+// must not flag sinks in unrelated handler B.
+func TestJSTaintBoundaryIsolation(t *testing.T) {
+	src := `function handlerA(req, res) {
+    const path = req.query.path;
+    return path;
+}
+
+function helper() {
+    const path = '/tmp/static.txt';
+    fs.readFileSync(path);
+}
+`
+	diff := extraDiff("src/handlers.js", "const fs = require('fs');\n"+src)
+	for _, f := range (TaintRule{}).Check(diff) {
+		if f.Rule == "request-taint" {
+			t.Fatalf("unexpected request-taint finding across function boundary: %+v", f)
+		}
+	}
+}
+
+// fs sinks and serving APIs flag at medium; sanitized args downgrade.
+func TestJSTaintFsAndServe(t *testing.T) {
+	src := `const fs = require('fs');
+const express = require('express');
+const app = express();
+
+app.get('/file', (req, res) => {
+    const name = req.params.name;
+    fs.readFileSync('/data/' + name);
+    res.sendFile('/data/' + name);
+});
+
+app.get('/clean', (req, res) => {
+    const name = encodeURIComponent(req.query.name);
+    eval(name);
+});
+`
+	diff := extraDiff("src/app.js", src)
+	var findings []Finding
+	for _, f := range (TaintRule{}).Check(diff) {
+		if f.Rule == "request-taint" {
+			findings = append(findings, f)
+		}
+	}
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 rolled-up finding, got %+v", findings)
+	}
+	if findings[0].Severity != "medium" {
+		t.Fatalf("expected medium (fs/serve sinks; guarded eval suppressed), got %s", findings[0].Severity)
+	}
+	// eval(name) must NOT appear: name was assigned through
+	// encodeURIComponent, so the guard stripped the taint at assignment.
+	if len(findings[0].Evidence) != 2 {
+		t.Fatalf("expected 2 sink evidence entries (fs + sendFile), got %+v", findings[0].Evidence)
+	}
+	for _, e := range findings[0].Evidence {
+		if strings.Contains(e.Message, "eval") {
+			t.Fatalf("guarded eval should not be flagged: %+v", e)
+		}
+	}
+}
+
+func credPermFindings(t *testing.T, file, src string) []Finding {
+	t.Helper()
+	return (CredentialFilePermRule{}).Check(extraDiff(file, src))
+}
+
+func TestCredentialFilePermPythonUmaskAndChmod(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"conditional umask still flags", `def save_token(path, token, private_mode):
+    if private_mode:
+        os.umask(0o077)
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"inline conditional umask still flags", `def save_token(path, token, private_mode):
+    if private_mode: os.umask(0o077)
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"umask in comment still flags", `def save_token(path, token):
+    # os.umask(0o077)
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"umask restored before write flags", `def save_token(path, token):
+    old = os.umask(0o077)
+    os.umask(old)
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"unconditional restrictive umask suppresses", `def save_token(path, token):
+    old = os.umask(0o077)
+    with open(path, "w") as f:
+        f.write(token)
+`, 0},
+		{"multiline signature with umask suppresses", `def save_token(path,
+               token):
+    os.umask(0o077)
+    with open(path, "w") as f:
+        f.write(token)
+`, 0},
+		{"multiline umask call suppresses", `def save_token(path, token):
+    os.umask(
+        0o077
+    )
+    with open(path, "w") as f:
+        f.write(token)
+`, 0},
+		{"multiline conditional umask still flags", `def save_token(path, token, private_mode):
+    if private_mode:
+        os.umask(
+            0o077
+        )
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"permissive umask flags", `def save_token(path, token):
+    os.umask(0o022)
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"pathlib chmod 0o600 suppresses", `def save_token(token_path, secret):
+    token_path.write_text(secret)
+    token_path.chmod(0o600)
+`, 0},
+		{"os.chmod 0o600 suppresses", `def save_token(token_path, secret):
+    with open(token_path, "w") as f:
+        f.write(secret)
+    os.chmod(token_path, 0o600)
+`, 0},
+		{"pathlib chmod with S_IROTH flags", `def save_token(token_path, secret):
+    token_path.write_text(secret)
+    token_path.chmod(0o600 | stat.S_IROTH)
+`, 1},
+		{"os.chmod 0o644 flags", `def save_token(token_path, secret):
+    with open(token_path, "w") as f:
+        f.write(secret)
+    os.chmod(token_path, 0o644)
+`, 1},
+		{"unrelated chmod does not suppress", `def save_token(token_path, cache_dir, secret):
+    os.chmod(cache_dir, 0o700)
+    with open(token_path, "w") as f:
+        f.write(secret)
+`, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := credPermFindings(t, "auth/token.py", tc.src)
+			if len(got) != tc.want {
+				t.Fatalf("expected %d findings, got %d: %+v", tc.want, len(got), got)
+			}
+		})
+	}
+}
+
+func TestCredentialFilePermGoModes(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"0o644 flags", `package auth
+
+func SaveToken(p string, d []byte) error {
+	return os.WriteFile(p, d, 0o644)
+}
+`, 1},
+		{"os.ModePerm flags", `package auth
+
+func SaveToken(p string, d []byte) error {
+	return os.WriteFile(p, d, os.ModePerm)
+}
+`, 1},
+		{"masked ModePerm dir is private", `package auth
+
+func SaveToken(dir string) error {
+	return os.MkdirAll(dir, os.ModePerm&^0077)
+}
+`, 0},
+		{"0o600 is private", `package auth
+
+func SaveToken(p string, d []byte) error {
+	return os.WriteFile(p, d, 0o600)
+}
+`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := credPermFindings(t, "auth/store.go", tc.src)
+			if len(got) != tc.want {
+				t.Fatalf("expected %d findings, got %d: %+v", tc.want, len(got), got)
+			}
+		})
+	}
+}
+
+func jsTaintFindings(file, src string) []Finding {
+	var out []Finding
+	for _, f := range (TaintRule{}).Check(extraDiff(file, src)) {
+		if f.Rule == "request-taint" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func TestJSTaintTemplatesAndArgSpans(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"template in line comment ignored", "const { exec } = require('child_process');\n// `${exec(req.query.cmd)}`\n", 0},
+		{"template in block comment ignored", "const { exec } = require('child_process');\n/* `${exec(req.query.cmd)}` */\n", 0},
+		{"template in quoted string ignored", "const { exec } = require('child_process');\nconst s = \"`${exec(req.query.cmd)}`\";\n", 0},
+		{"live template interpolation flags", "const { exec } = require('child_process');\napp.get('/x', (req, res) => {\n    exec(`echo ${req.query.name}`);\n});\n", 1},
+		{"multiline exec args flag", "const { exec } = require('child_process');\napp.get('/x', (req, res) => {\n    const cmd = req.query.cmd;\n    exec(\n        cmd\n    );\n});\n", 1},
+		{"unrelated request use on line ignored", "const fs = require('fs');\napp.get('/x', (req, res) => {\n    fs.readFileSync('/etc/hosts'); console.log(req.query.name);\n});\n", 0},
+		{"String() does not sanitize", "const { exec } = require('child_process');\napp.get('/x', (req, res) => {\n    const cmd = String(req.query.cmd);\n    exec(cmd);\n});\n", 1},
+		{"nested guards do not panic", "const { exec } = require('child_process');\napp.get('/x', (req, res) => {\n    const name = sanitize(path.basename(req.query.name));\n    exec(req.query.cmd);\n});\n", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := jsTaintFindings("src/app.js", tc.src)
+			if len(got) != tc.want {
+				t.Fatalf("expected %d request-taint findings, got %d: %+v", tc.want, len(got), got)
+			}
+		})
+	}
+}
+
+func TestActionsScriptInjectionStepEnvClosesBlock(t *testing.T) {
+	wf := `.github/workflows/ci.yml
+on:
+  issues:
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo ok
+        env:
+          TITLE: ${{ github.event.issue.title }}
+`
+	findings := (ActionsScriptInjectionRule{}).Check(extraDiff(".github/workflows/ci.yml", wf))
+	if len(findings) != 0 {
+		t.Fatalf("step env value flagged as script: %+v", findings)
+	}
+}
+
+func TestAndroidManifestQuotesAndDebugVariant(t *testing.T) {
+	manifest := `<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:debuggable='true' />
+</manifest>
+`
+	run := func(path string) int {
+		n := 0
+		for _, r := range ExtraRules("") {
+			if r.Name() == "android-manifest" {
+				n += len(r.Check(extraDiff(path, manifest)))
+			}
+		}
+		return n
+	}
+	if got := run("app/src/main/AndroidManifest.xml"); got != 1 {
+		t.Fatalf("single-quoted debuggable: expected 1 finding, got %d", got)
+	}
+	if got := run("app/src/debug/AndroidManifest.xml"); got != 0 {
+		t.Fatalf("debug variant manifest should be excluded, got %d", got)
+	}
+}
+
+func TestKotlinUnboundedReadNonNullAssertion(t *testing.T) {
+	kt := "package x\n\nfun f(): String {\n    return response.body!!.string()\n}\n"
+	diff := extraDiff("app/src/main/java/x/F.kt", kt)
+	for _, r := range ExtraRules("") {
+		if r.Name() == "unbounded-read" && len(r.Check(diff)) > 0 {
+			return
+		}
+	}
+	t.Fatal("unbounded-read did not fire on body!!.string()")
+}

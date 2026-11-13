@@ -2,6 +2,7 @@ package review
 
 import (
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -101,8 +102,14 @@ func isGeneratedDependencyFile(file string) bool {
 // keys) used to exercise auth and parsing code.
 func isTestSourceFile(file string) bool {
 	base := strings.ToLower(path.Base(file))
-	if strings.Contains(strings.ToLower(file), "/testdata/") {
-		return true
+	lower := strings.ToLower(file)
+	slashPath := "/" + strings.TrimPrefix(filepath.ToSlash(file), "/")
+	// Fixture/data directories across ecosystems: Go testdata/, Python
+	// tests/ and tests/data/, generic fixtures/, JS test/ dirs.
+	for _, seg := range []string{"/testdata/", "/tests/", "/test/", "/fixtures/", "/fixture/"} {
+		if strings.Contains(slashPath, seg) || strings.Contains(lower, seg) {
+			return true
+		}
 	}
 	for _, suffix := range []string{
 		"_test.go", "_test.py", "_test.rb", "_test.java", "_test.kt",
@@ -150,6 +157,11 @@ func (r SecurityRule) Check(diff string) []Finding {
 				}
 				value := credentialValueFromMatch(block.text, match)
 				if value == "" || isPlaceholderValue(value) {
+					continue
+				}
+				// Constants named *TOKEN*/*SECRET* that hold URLs (endpoint,
+				// callback, verification URLs) are not credentials.
+				if strings.Contains(value, "://") {
 					continue
 				}
 				line := lineAtOffset(block.firstLine, block.text, nameStart)

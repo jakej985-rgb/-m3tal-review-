@@ -3,7 +3,7 @@
 ## What this tool is
 
 m3tal-review is a **deterministic, heuristic, local** code reviewer. It parses
-diffs (staged, unstaged, `--base`, patch files, or stdin) and applies ~70
+diffs (staged, unstaged, `--base`, patch files, or stdin) and applies ~95
 pattern/AST rules plus language-aware slop analyzers. It makes no network
 calls except when explicitly asked (`--with-tools` scanners, `--check-run`).
 
@@ -26,6 +26,30 @@ calls except when explicitly asked (`--with-tools` scanners, `--check-run`).
 - **Not exhaustive.** Masked-mode rules cannot see inside string literals;
   several detectors therefore only fire on code-shaped signals. Obfuscated,
   dynamically constructed, or semantically disguised issues will be missed.
+- **Language coverage is uneven.** The rule set is deepest for Go, JS/TS,
+  Python, and CI workflows. Go has the full package-scoped taint engine;
+  JS/TS has an intra-file approximation (request-context identifiers →
+  exec/fs/serving sinks, medium confidence, no call edges); Python and
+  Kotlin/Android have pattern coverage only — no taint engine or
+  component-export analysis. Other languages get generic pattern coverage
+  only. On repos dominated by uncovered languages the tool behaves
+  primarily as a CI/supply-chain checker.
+- **Fixture awareness is path-based.** Files under `tests/`, `test/`,
+  `testdata/`, or `fixtures/` segments (and `*_test.*` names) are excluded
+  from credential, entropy, secret-token, and file-permission rules because
+  fixtures legitimately embed token-shaped and credential-shaped values.
+  Test fixtures containing *real* leaked secrets will therefore be missed —
+  PEM private-key blocks are the exception and still flag everywhere.
+- **Workflow injection detection is syntax-scoped.** `actions-script-injection`
+  only fires inside `run:`/`script:` executable contexts (including
+  block-scalar bodies); `${{ github.event.* }}` in structural keys (`ref:`,
+  `with:` inputs, `if:`, `env:`) is data, not shell, and is not flagged.
+  Complex YAML (anchors, multi-document files, unusual indentation) may
+  confuse the block tracker.
+- **Credential classification is heuristic.** Google `AIza...` API keys are
+  reported at medium because they are public-by-design in many first-party
+  clients; genuinely private Google Cloud keys committed to source will be
+  under-prioritized. URL-valued constants are never treated as credentials.
 
 ## Untrusted-input handling
 

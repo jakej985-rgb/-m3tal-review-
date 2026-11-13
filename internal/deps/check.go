@@ -121,7 +121,12 @@ func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []ne
 	var findings []review.Finding
 	var requires []nestedRequire
 	var countedDirs []string
+	var modPaths []string
 
+	// Pass 1: collect nested go.mod paths. WalkDir visits entries in lexical
+	// order, so a child module's go.mod can be seen before its parent's;
+	// analysis must run shallowest-first for countedDirs to suppress
+	// double-counted source files.
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -148,15 +153,31 @@ func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []ne
 		if err != nil || info.Size() > 4<<20 {
 			return nil
 		}
+		modPaths = append(modPaths, p)
+		return nil
+	})
+	_ = err // walk errors are non-fatal; partial results are returned
+
+	// Shallowest modules first so a parent's source scan (which includes
+	// nested module dirs) marks descendants as already counted.
+	sort.Slice(modPaths, func(i, j int) bool {
+		ci, cj := strings.Count(modPaths[i], string(filepath.Separator)), strings.Count(modPaths[j], string(filepath.Separator))
+		if ci != cj {
+			return ci < cj
+		}
+		return modPaths[i] < modPaths[j]
+	})
+
+	for _, p := range modPaths {
 		modDir := filepath.Dir(p)
 		relDir, err := filepath.Rel(root, modDir)
 		if err != nil {
-			return nil
+			continue
 		}
 		relDir = filepath.ToSlash(relDir)
 		modReport, modFindings, err := AnalyzeGoModules(modDir)
 		if err != nil {
-			return nil
+			continue
 		}
 		report.NestedModules++
 		report.DirectDeps += modReport.DirectDeps
@@ -164,7 +185,7 @@ func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []ne
 		// A module's source scan already walks nested directories, including
 		// child modules. Only count files for top-most modules: skip when
 		// there is a root module, or when an ancestor nested module was
-		// already counted (WalkDir visits parents before children).
+		// already counted (modules are processed shallowest-first).
 		if !report.IsGoModule && !underCountedModule(modDir, countedDirs) {
 			report.TotalGoFiles += modReport.TotalGoFiles
 			countedDirs = append(countedDirs, modDir)
@@ -183,8 +204,6 @@ func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []ne
 				requires = append(requires, nestedRequire{req: r, file: relDir + "/go.mod"})
 			}
 		}
-		return nil
-	})
-	_ = err // walk errors are non-fatal; partial results are returned
+	}
 	return findings, requires
 }
