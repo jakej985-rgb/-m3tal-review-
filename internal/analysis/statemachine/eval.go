@@ -731,6 +731,14 @@ func (e *explorer) fireEvent(eventName string, caller *semantic.Function, ins *s
 	c := e.bc.Contract
 	argIdx := e.bc.SubjectArg[eventName]
 	instKey := e.instanceKey(e.bc, ins, call, callee, argIdx, caller)
+	if strings.Contains(instKey, "?") {
+		// Instance identity could not be fully resolved: the machine
+		// may merge distinct resources (or fail to merge aliases), so
+		// any violation observed on this path must stay potential —
+		// never proven.
+		e.pathUnknown = true
+		e.noteAssumption("resource instance identity unresolved at some event sites; related findings are potential, not proven")
+	}
 
 	m := e.machines[instKey]
 	if m == nil {

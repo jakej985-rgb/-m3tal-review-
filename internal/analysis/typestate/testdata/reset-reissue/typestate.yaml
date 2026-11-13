@@ -1,0 +1,15 @@
+schema_version: typestate/1
+id: challenge-lifecycle
+resource:
+  type: "example.com/tsfx/reset-reissue.Challenge"
+operations:
+  - kind: consume
+    function:
+      name: Consume
+      receiver: "example.com/tsfx/reset-reissue.Challenge"
+  - kind: reset
+    function:
+      name: Reset
+      receiver: "example.com/tsfx/reset-reissue.Challenge"
+entry:
+  - id: "example.com/tsfx/reset-reissue.main"

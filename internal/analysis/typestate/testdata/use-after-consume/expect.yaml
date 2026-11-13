@@ -1,0 +1,5 @@
+findings:
+  - rule: typestate-use-after-consume
+    message_contains: "used after it was consumed"
+    status: proven
+covered: [consumed]

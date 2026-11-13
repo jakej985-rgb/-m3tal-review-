@@ -1,0 +1,9 @@
+schema_version: typestate/1
+id: challenge-single-use
+resource:
+  type: "example.com/tsfx/unresolved-entry.Challenge"
+operations:
+  - kind: consume
+    function:
+      name: Consume
+      receiver: "example.com/tsfx/unresolved-entry.Challenge"

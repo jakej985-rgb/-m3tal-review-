@@ -1,0 +1,11 @@
+schema_version: typestate/1
+id: challenge-single-use
+resource:
+  type: "example.com/tsfx/aliases.Challenge"
+operations:
+  - kind: consume
+    function:
+      name: Consume
+      receiver: "example.com/tsfx/aliases.Challenge"
+entry:
+  - id: "example.com/tsfx/aliases.main"

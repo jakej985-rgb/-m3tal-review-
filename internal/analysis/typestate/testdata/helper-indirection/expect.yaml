@@ -1,0 +1,5 @@
+findings:
+  - rule: typestate-double-consume
+    message_contains: "consumed more than once"
+    status: proven
+covered: [consumed]
