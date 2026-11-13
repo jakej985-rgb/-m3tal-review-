@@ -1001,3 +1001,208 @@ app.get('/clean', (req, res) => {
 		}
 	}
 }
+
+func credPermFindings(t *testing.T, file, src string) []Finding {
+	t.Helper()
+	return (CredentialFilePermRule{}).Check(extraDiff(file, src))
+}
+
+func TestCredentialFilePermPythonUmaskAndChmod(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"conditional umask still flags", `def save_token(path, token, private_mode):
+    if private_mode:
+        os.umask(0o077)
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"inline conditional umask still flags", `def save_token(path, token, private_mode):
+    if private_mode: os.umask(0o077)
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"umask in comment still flags", `def save_token(path, token):
+    # os.umask(0o077)
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"umask restored before write flags", `def save_token(path, token):
+    old = os.umask(0o077)
+    os.umask(old)
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"unconditional restrictive umask suppresses", `def save_token(path, token):
+    old = os.umask(0o077)
+    with open(path, "w") as f:
+        f.write(token)
+`, 0},
+		{"permissive umask flags", `def save_token(path, token):
+    os.umask(0o022)
+    with open(path, "w") as f:
+        f.write(token)
+`, 1},
+		{"pathlib chmod 0o600 suppresses", `def save_token(token_path, secret):
+    token_path.write_text(secret)
+    token_path.chmod(0o600)
+`, 0},
+		{"os.chmod 0o600 suppresses", `def save_token(token_path, secret):
+    with open(token_path, "w") as f:
+        f.write(secret)
+    os.chmod(token_path, 0o600)
+`, 0},
+		{"pathlib chmod with S_IROTH flags", `def save_token(token_path, secret):
+    token_path.write_text(secret)
+    token_path.chmod(0o600 | stat.S_IROTH)
+`, 1},
+		{"os.chmod 0o644 flags", `def save_token(token_path, secret):
+    with open(token_path, "w") as f:
+        f.write(secret)
+    os.chmod(token_path, 0o644)
+`, 1},
+		{"unrelated chmod does not suppress", `def save_token(token_path, cache_dir, secret):
+    os.chmod(cache_dir, 0o700)
+    with open(token_path, "w") as f:
+        f.write(secret)
+`, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := credPermFindings(t, "auth/token.py", tc.src)
+			if len(got) != tc.want {
+				t.Fatalf("expected %d findings, got %d: %+v", tc.want, len(got), got)
+			}
+		})
+	}
+}
+
+func TestCredentialFilePermGoModes(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"0o644 flags", `package auth
+
+func SaveToken(p string, d []byte) error {
+	return os.WriteFile(p, d, 0o644)
+}
+`, 1},
+		{"os.ModePerm flags", `package auth
+
+func SaveToken(p string, d []byte) error {
+	return os.WriteFile(p, d, os.ModePerm)
+}
+`, 1},
+		{"masked ModePerm dir is private", `package auth
+
+func SaveToken(dir string) error {
+	return os.MkdirAll(dir, os.ModePerm&^0077)
+}
+`, 0},
+		{"0o600 is private", `package auth
+
+func SaveToken(p string, d []byte) error {
+	return os.WriteFile(p, d, 0o600)
+}
+`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := credPermFindings(t, "auth/store.go", tc.src)
+			if len(got) != tc.want {
+				t.Fatalf("expected %d findings, got %d: %+v", tc.want, len(got), got)
+			}
+		})
+	}
+}
+
+func jsTaintFindings(file, src string) []Finding {
+	var out []Finding
+	for _, f := range (TaintRule{}).Check(extraDiff(file, src)) {
+		if f.Rule == "request-taint" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func TestJSTaintTemplatesAndArgSpans(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"template in line comment ignored", "const { exec } = require('child_process');\n// `${exec(req.query.cmd)}`\n", 0},
+		{"template in block comment ignored", "const { exec } = require('child_process');\n/* `${exec(req.query.cmd)}` */\n", 0},
+		{"template in quoted string ignored", "const { exec } = require('child_process');\nconst s = \"`${exec(req.query.cmd)}`\";\n", 0},
+		{"live template interpolation flags", "const { exec } = require('child_process');\napp.get('/x', (req, res) => {\n    exec(`echo ${req.query.name}`);\n});\n", 1},
+		{"multiline exec args flag", "const { exec } = require('child_process');\napp.get('/x', (req, res) => {\n    const cmd = req.query.cmd;\n    exec(\n        cmd\n    );\n});\n", 1},
+		{"unrelated request use on line ignored", "const fs = require('fs');\napp.get('/x', (req, res) => {\n    fs.readFileSync('/etc/hosts'); console.log(req.query.name);\n});\n", 0},
+		{"String() does not sanitize", "const { exec } = require('child_process');\napp.get('/x', (req, res) => {\n    const cmd = String(req.query.cmd);\n    exec(cmd);\n});\n", 1},
+		{"nested guards do not panic", "const { exec } = require('child_process');\napp.get('/x', (req, res) => {\n    const name = sanitize(path.basename(req.query.name));\n    exec(req.query.cmd);\n});\n", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := jsTaintFindings("src/app.js", tc.src)
+			if len(got) != tc.want {
+				t.Fatalf("expected %d request-taint findings, got %d: %+v", tc.want, len(got), got)
+			}
+		})
+	}
+}
+
+func TestActionsScriptInjectionStepEnvClosesBlock(t *testing.T) {
+	wf := `.github/workflows/ci.yml
+on:
+  issues:
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo ok
+        env:
+          TITLE: ${{ github.event.issue.title }}
+`
+	findings := (ActionsScriptInjectionRule{}).Check(extraDiff(".github/workflows/ci.yml", wf))
+	if len(findings) != 0 {
+		t.Fatalf("step env value flagged as script: %+v", findings)
+	}
+}
+
+func TestAndroidManifestQuotesAndDebugVariant(t *testing.T) {
+	manifest := `<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:debuggable='true' />
+</manifest>
+`
+	run := func(path string) int {
+		n := 0
+		for _, r := range ExtraRules("") {
+			if r.Name() == "android-manifest" {
+				n += len(r.Check(extraDiff(path, manifest)))
+			}
+		}
+		return n
+	}
+	if got := run("app/src/main/AndroidManifest.xml"); got != 1 {
+		t.Fatalf("single-quoted debuggable: expected 1 finding, got %d", got)
+	}
+	if got := run("app/src/debug/AndroidManifest.xml"); got != 0 {
+		t.Fatalf("debug variant manifest should be excluded, got %d", got)
+	}
+}
+
+func TestKotlinUnboundedReadNonNullAssertion(t *testing.T) {
+	kt := "package x\n\nfun f(): String {\n    return response.body!!.string()\n}\n"
+	diff := extraDiff("app/src/main/java/x/F.kt", kt)
+	for _, r := range ExtraRules("") {
+		if r.Name() == "unbounded-read" && len(r.Check(diff)) > 0 {
+			return
+		}
+	}
+	t.Fatal("unbounded-read did not fire on body!!.string()")
+}

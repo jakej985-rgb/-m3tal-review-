@@ -160,10 +160,11 @@ func pyWriteIsRestricted(text, body string, relStart, absStart, matchLen, callEn
 	}
 	// A restrictive umask (…077) is active at the write when it is the last
 	// umask call before the write; a later umask(old) restore cancels it.
-	if calls := pyUmaskCallRe.FindAllStringSubmatch(body[:relStart], -1); len(calls) > 0 {
-		if pyRestrictiveMaskRe.MatchString(strings.TrimSpace(calls[len(calls)-1][1])) {
-			return true
-		}
+	// Only unconditional umask statements count: the call must start its
+	// own line at the function body's base indent (not inside if/try/with
+	// blocks, comments, or strings). Any later umask at any depth resets it.
+	if pyUnconditionalRestrictiveUmask(body[:relStart]) {
+		return true
 	}
 	// Path expression: first positional arg of open(), or the receiver of
 	// .write_text/.write_bytes.
@@ -183,7 +184,9 @@ func pyWriteIsRestricted(text, body string, relStart, absStart, matchLen, callEn
 	}
 	// Both os.chmod(target, mode) and pathlib target.chmod(mode), with a
 	// complete owner-only mode (0o600/0o400 or S_IRUSR|S_IWUSR).
-	const mode = `(?:0o?[46]00\b|stat\.S_I[RW]USR(?:\s*\|\s*stat\.S_I[RW]USR)?\s*\))`
+	// The accepted mode must be the entire argument: the closing paren must
+	// follow, so `0o600 | stat.S_IROTH` is rejected.
+	const mode = `(?:0o?[46]00|stat\.S_I[RW]USR(?:\s*\|\s*stat\.S_I[RW]USR)?)\s*\)`
 	q := regexp.QuoteMeta(target)
 	chmodRe := regexp.MustCompile(`chmod\s*\(\s*` + q + `\s*,\s*` + mode + `|` + q + `\.chmod\s*\(\s*(?:mode\s*=\s*)?` + mode)
 	return chmodRe.MatchString(body)
@@ -191,8 +194,35 @@ func pyWriteIsRestricted(text, body string, relStart, absStart, matchLen, callEn
 
 var (
 	pyUmaskCallRe       = regexp.MustCompile(`\bumask\s*\(([^)]*)\)`)
+	pyUmaskStmtRe       = regexp.MustCompile(`^(?:[A-Za-z_]\w*\s*=\s*)?(?:os\.)?umask\s*\(([^)]*)\)\s*(?:#.*)?$`)
 	pyRestrictiveMaskRe = regexp.MustCompile(`^0o?0?[0-7]?77$`)
 )
+
+// pyUnconditionalRestrictiveUmask reports whether the last umask call in
+// prefix (function text up to the write) is a restrictive, unconditional
+// statement at the function body's base indent.
+func pyUnconditionalRestrictiveUmask(prefix string) bool {
+	lines := strings.Split(prefix, "\n")
+	baseIndent := -1
+	restrictive := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if i == 0 || trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue // def line, blanks, comments
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if baseIndent < 0 {
+			baseIndent = indent
+		}
+		if !pyUmaskCallRe.MatchString(trimmed) {
+			continue
+		}
+		m := pyUmaskStmtRe.FindStringSubmatch(trimmed)
+		restrictive = m != nil && indent == baseIndent &&
+			pyRestrictiveMaskRe.MatchString(strings.TrimSpace(m[1]))
+	}
+	return restrictive
+}
 
 func (r CredentialFilePermRule) checkPython(block diffSourceBlock) []Finding {
 	var findings []Finding
