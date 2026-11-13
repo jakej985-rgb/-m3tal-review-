@@ -1,0 +1,10 @@
+# device_id type change and auth.scheme change are suppressed;
+# ttl requiredness + default changes partially remain.
+suppressed: 3
+findings:
+  - element: request.CreateSession.field.ttl
+    change_kind: requiredness-changed
+    directions: old-client/new-server
+    severity: medium
+    status: proven
+diagnostics: []

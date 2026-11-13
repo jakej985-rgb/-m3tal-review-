@@ -1,0 +1,14 @@
+matrix_versions: ["1.0.0", "1.1.0", "2.0.0", "9.9.9"]
+matrix:
+  compatible:
+    - "1.0.0->1.0.0"
+    - "1.0.0->1.1.0"
+    - "1.1.0->1.0.0"
+    - "1.1.0->1.1.0"
+    - "2.0.0->1.0.0"          # new client, old server: fine
+    - "2.0.0->2.0.0"
+  incompatible:
+    - "1.0.0->2.0.0"          # old client doesn't send required ttl
+    - "1.1.0->2.0.0"
+diagnostics:
+  - message_contains: 'missing protocol snapshot for deployed version "9.9.9"'
