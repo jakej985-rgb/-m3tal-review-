@@ -33,11 +33,6 @@ type AliasChain = UserID
 
 type DeepChain = AliasChain
 
-type Pair struct {
-	First  UserID
-	Second SessionID
-}
-
 func Lookup(id UserID) SessionID { return SessionID(id) }
 `,
 }
