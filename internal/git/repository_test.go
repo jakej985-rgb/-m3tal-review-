@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -22,8 +23,12 @@ func TestRepositoryRoot(t *testing.T) {
 		t.Fatalf("RepositoryRoot() error: %v", err)
 	}
 
-	if root != filepath.Clean(repoDir) {
-		t.Errorf("RepositoryRoot() = %q, want %q", root, filepath.Clean(repoDir))
+	want, err := filepath.EvalSymlinks(repoDir)
+	if err != nil {
+		t.Fatalf("resolve test repository path: %v", err)
+	}
+	if root != filepath.Clean(want) {
+		t.Errorf("RepositoryRoot() = %q, want %q", root, filepath.Clean(want))
 	}
 }
 
@@ -259,6 +264,9 @@ func TestChangedFiles(t *testing.T) {
 }
 
 func TestChangedFilesHandlesNewlineInFilename(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not allow filenames containing newlines")
+	}
 	repoDir := t.TempDir()
 
 	initRepo := exec.Command("git", "init", repoDir)
@@ -362,6 +370,9 @@ func TestUntrackedFilesIgnoresGitIgnoredFiles(t *testing.T) {
 }
 
 func TestUntrackedFilesHandlesNewlineInFilename(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not allow filenames containing newlines")
+	}
 	repoDir := t.TempDir()
 
 	initRepo := exec.Command("git", "init", repoDir)
@@ -433,6 +444,9 @@ func TestStagedFilesEmpty(t *testing.T) {
 }
 
 func TestStagedFilesHandlesNewlineInFilename(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not allow filenames containing newlines")
+	}
 	repoDir := t.TempDir()
 
 	initRepo := exec.Command("git", "init", repoDir)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -64,7 +65,9 @@ func ValidateExecutable(path string) error {
 	if fi.IsDir() {
 		return fmt.Errorf("plugin path %s is a directory", path)
 	}
-	if fi.Mode()&0111 == 0 {
+	// Windows file modes do not record executable bits; executability is
+	// determined when the process is launched.
+	if runtime.GOOS != "windows" && fi.Mode()&0111 == 0 {
 		return fmt.Errorf("plugin file %s is not executable", path)
 	}
 	return nil

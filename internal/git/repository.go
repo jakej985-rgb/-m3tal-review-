@@ -21,9 +21,12 @@ func RepositoryRoot(path string) (string, error) {
 		)
 	}
 
-	root := strings.TrimSpace(string(output))
+	root := filepath.Clean(filepath.FromSlash(strings.TrimSpace(string(output))))
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 
-	return filepath.Clean(filepath.FromSlash(root)), nil
+	return root, nil
 }
 
 func Available() error {
