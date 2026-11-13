@@ -1,0 +1,17 @@
+schema_version: statemachine/1
+id: ghost
+states:
+  - name: a
+    initial: true
+  - name: b
+events:
+  - name: ping
+    function:
+      name: DoesNotExist
+      package: "example.com/smfx/unbound"
+transitions:
+  - event: ping
+    from: a
+    to: b
+entry:
+  - id: "example.com/smfx/unbound.main"

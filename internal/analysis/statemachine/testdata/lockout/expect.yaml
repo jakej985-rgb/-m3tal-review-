@@ -1,0 +1,4 @@
+findings:
+  - rule: statemachine-illegal-transition
+    message_contains: "attempt"
+covered: [active, locked]

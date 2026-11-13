@@ -1,0 +1,68 @@
+schema_version: statemachine/1
+id: login-lockout
+name: Login attempt lockout
+resource:
+  type: "example.com/smfx/lockout.Guard"
+states:
+  - name: active
+    initial: true
+  - name: locked
+events:
+  - name: attempt
+    function:
+      name: Attempt
+      receiver: "example.com/smfx/lockout.Guard"
+  - name: unlock
+    function:
+      name: Unlock
+      receiver: "example.com/smfx/lockout.Guard"
+  - name: success
+    function:
+      name: Success
+      receiver: "example.com/smfx/lockout.Guard"
+transitions:
+  - event: attempt
+    from: active
+    to: active
+    guard: "attempts < max_attempts"
+    effects:
+      - inc: attempts
+      - set: last_attempt = arg[1]
+  - event: attempt
+    from: active
+    to: locked
+    guard: "attempts >= max_attempts"
+    effects:
+      - set: locked_until = arg[1] + window
+  - event: unlock
+    from: locked
+    to: active
+    guard: "arg[1] >= locked_until"
+    effects:
+      - reset: [attempts, locked_until]
+  - event: success
+    from: any
+    to: active
+    effects:
+      - reset: [attempts, locked_until]
+invariants:
+  - expr: "attempts <= max_attempts"
+    message: "attempt counter exceeded max_attempts"
+fields:
+  - name: attempts
+    kind: int
+    initial: 0
+  - name: max_attempts
+    kind: int
+    initial: 3
+  - name: window
+    kind: int
+    initial: 60
+  - name: last_attempt
+    kind: int
+    initial: 0
+  - name: locked_until
+    kind: int
+    initial: 0
+entry:
+  - id: "example.com/smfx/lockout.main"

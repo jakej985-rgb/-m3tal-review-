@@ -1,0 +1,16 @@
+schema_version: statemachine/1
+id: amb
+states:
+  - name: a
+    initial: true
+  - name: b
+events:
+  - name: go
+    function:
+      name: Foo
+transitions:
+  - event: go
+    from: a
+    to: b
+entry:
+  - id: "example.com/smfx/ambiguous.main"
