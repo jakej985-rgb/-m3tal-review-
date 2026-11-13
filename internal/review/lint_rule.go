@@ -193,7 +193,7 @@ func (r LintRule) Check(_ string) []Finding {
 						continue
 					}
 
-					file := filepath.ToSlash(strings.TrimPrefix(match[1], "./"))
+					file := strings.TrimPrefix(filepath.ToSlash(match[1]), "./")
 					if isPathExcluded(file, exclusions) {
 						parsed = true
 						continue
@@ -254,7 +254,7 @@ func (r LintRule) Check(_ string) []Finding {
 						continue
 					}
 
-					file := filepath.ToSlash(strings.TrimPrefix(match[1], "./"))
+					file := strings.TrimPrefix(filepath.ToSlash(match[1]), "./")
 					if isPathExcluded(file, exclusions) {
 						continue
 					}
@@ -300,7 +300,7 @@ func (r LintRule) Check(_ string) []Finding {
 						continue
 					}
 
-					file := filepath.ToSlash(strings.TrimPrefix(match[1], "./"))
+					file := strings.TrimPrefix(filepath.ToSlash(match[1]), "./")
 					if isPathExcluded(file, exclusions) {
 						continue
 					}

@@ -17,8 +17,8 @@ func TestRunCommandSubprocessCancellation(t *testing.T) {
 	var cmdArgs []string
 
 	if runtime.GOOS == "windows" {
-		cmdName = "cmd"
-		cmdArgs = []string{"/c", "timeout", "/t", "10", "/nobreak"}
+		cmdName = "ping"
+		cmdArgs = []string{"-n", "10", "127.0.0.1"}
 	} else {
 		cmdName = "sh"
 		cmdArgs = []string{"-c", "sleep 10"}
@@ -60,8 +60,8 @@ func TestRunCommandOutputCancellation(t *testing.T) {
 	var cmdArgs []string
 
 	if runtime.GOOS == "windows" {
-		cmdName = "cmd"
-		cmdArgs = []string{"/c", "timeout", "/t", "10", "/nobreak"}
+		cmdName = "ping"
+		cmdArgs = []string{"-n", "10", "127.0.0.1"}
 	} else {
 		cmdName = "sh"
 		cmdArgs = []string{"-c", "sleep 10"}
