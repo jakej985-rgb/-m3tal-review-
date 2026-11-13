@@ -31,14 +31,14 @@ type Program struct {
 	// skipped: problems surface here.
 	Diagnostics []Diagnostic
 
-	byPath     map[string]*Package
+	byKey      map[string]*Package
 	byFuncID   map[string]*Function
 	callBySite map[*Instruction]*Call
 }
 
 // Package returns the package with the given ID (the import path for
 // ordinary packages, or e.g. "x [x.test]" for test variants), or nil.
-func (p *Program) Package(path string) *Package { return p.byPath[path] }
+func (p *Program) Package(key string) *Package { return p.byKey[key] }
 
 // Function returns the function with the given stable ID, or nil.
 func (p *Program) Function(id string) *Function { return p.byFuncID[id] }
@@ -47,11 +47,11 @@ func (p *Program) Function(id string) *Function { return p.byFuncID[id] }
 // Frontends call it once after the package graph is fully
 // materialized.
 func (p *Program) Index() {
-	p.byPath = make(map[string]*Package, len(p.Packages))
+	p.byKey = make(map[string]*Package, len(p.Packages))
 	p.byFuncID = make(map[string]*Function)
 	p.callBySite = make(map[*Instruction]*Call)
 	for _, pkg := range p.Packages {
-		p.byPath[pkg.Key()] = pkg
+		p.byKey[pkg.Key()] = pkg
 		for _, fn := range pkg.Functions {
 			if _, dup := p.byFuncID[fn.ID]; !dup {
 				p.byFuncID[fn.ID] = fn
