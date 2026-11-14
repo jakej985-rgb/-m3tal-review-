@@ -39,6 +39,7 @@ type reviewOptions struct {
 	PluginDir        string
 	AllowRepoPlugins bool
 	Progress         *bool
+	Semantic         semanticCLIOptions
 	// seen records which flags were explicitly passed, so user config
 	// defaults only fill in flags the user did not set.
 	seen map[string]bool
@@ -249,6 +250,12 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 		case "--allow-repo-plugins":
 			options.AllowRepoPlugins = true
 		default:
+			if handled, err := options.Semantic.parseSemanticFlag(arg, next); handled {
+				if err != nil {
+					return options, err
+				}
+				break
+			}
 			if strings.HasPrefix(arg, "--tool-path=") {
 				v := strings.TrimPrefix(arg, "--tool-path=")
 				parts := strings.SplitN(v, "=", 2)

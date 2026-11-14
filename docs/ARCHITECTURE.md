@@ -21,6 +21,18 @@ internal/semantic/            # engine-neutral program model (packages,
                               # functions, CFG blocks, instructions, calls,
                               # types, positions, diagnostics)
 internal/semantic/golang/     # Go frontend: go/packages + SSA + CHA
+internal/analysis/            # shared result contract: Finding, Evidence,
+                              # status/confidence, Diagnostics, Budgets,
+                              # Report + legacy adapter
+internal/analysis/flow/       # interprocedural data-flow engine
+internal/analysis/statemachine/ # statemachine/1 contract evaluator
+internal/analysis/typestate/  # typestate/1 single-use resource specs
+internal/analysis/concurrency/  # check-then-act / lock-order analysis
+internal/analysis/protocol/   # protocol/1 contract comparator + matrix
+internal/analysis/authproto/  # authproto/1 modeled crypto checks
+internal/analysis/pipeline/   # semantic orchestrator: shared frontend
+                              # load, contract discovery, bounded
+                              # parallel analyzers, deterministic merge
 ```
 
 `internal/cli` never contains detection logic; it gathers input (a diff, a
@@ -60,12 +72,25 @@ analysis commands share a pipeline:
    recovery and a per-rule timeout (`M3TAL_RULE_TIMEOUT`, default 2m); a
    crashing or hanging rule produces a `<rule>-error`/`<rule>-timeout`
    confidence finding rather than failing the run. Results are concatenated
-   in registration order, keeping output deterministic.
-4. **Post-processing**: `ApplyFindingFilters` applies inline suppressions,
+   in registration order, keeping output deterministic. This is the
+   low-cost pattern/inventory tier.
+4. **Semantic tier (opt-in)**: when `--semantic` is passed (or
+   `semantic.enabled` is set in user config), `RunPipeline` invokes
+   `internal/analysis/pipeline`: the Go frontend loads the program
+   model once, contracts under `.m3tal/contracts/` are discovered by
+   `schema_version`, and the enabled analyzers (flow, statemachine,
+   typestate, concurrency, authproto, protocol) run with bounded
+   parallelism, per-analyzer timeouts, and deterministic ordering.
+   Findings are normalized to the shared `analysis.Finding` contract
+   and adapted to the report with `category: "semantic"`; analyzer
+   outcomes and merged diagnostics land in `report.analysis`. Load
+   failures degrade to diagnostics + skipped analyzers, never abort
+   the run. See [semantic-pipeline.md](semantic-pipeline.md).
+5. **Post-processing**: `ApplyFindingFilters` applies inline suppressions,
    ignore globs, and policy overrides; `--only`/`--skip`/`--rule`,
    `--include`/`--exclude`, `--fail-on`, `--sort-by`, `--max-findings`, and
    `--baseline`/`--write-baseline` narrow or gate the result.
-5. **Side effects**: the run writes `.m3tal-review/reports/<run-id>.json`
+6. **Side effects**: the run writes `.m3tal-review/reports/<run-id>.json`
    (atomic tmp+fsync+rename), appends to `.m3tal-review/history.jsonl`
    (fsync before close), and optionally posts to GitHub (`--check-run`,
    `--pr-comment`) or invokes external scanners (`--with-tools`,
@@ -123,11 +148,15 @@ Per repository root (gitignored in this repo; consumers should gitignore it):
   `repository`, `branch`, `commit_sha`, `base_commit_sha`, `diff_hash`,
   `tool_version`, `profile`, `scope`, `reviewed_files`,
   `unanalyzed_files`, `passed`, `summary`, `findings[]`, `checks[]`,
-  `finding_changes`.
+  `finding_changes`, and (when `--semantic` ran) `analysis` — the
+  semantic pipeline's program summary, per-analyzer check results,
+  and merged analysis diagnostics. Semantic findings carry
+  `category: "semantic"` and `analyzers[]`.
 - **Finding** (`internal/review/model/finding.go`): `rule`, `severity`
   (`low|medium|high`), `file`, `line`, `message`, `remediation`, plus
-  `category` (`security|review|confidence|risk|drift`, assigned by
-  `categoryForRule` in engine.go), `id`, and diff-change metadata.
+  `category` (`security|review|confidence|risk|drift|semantic`, assigned by
+  `categoryForRule` in engine.go or the semantic adapter), `id`, and
+  diff-change metadata.
 - **Durability**: report writes are tmp-file + `fsync` + `os.Rename`;
   history appends `fsync` before close; directory sync is best-effort.
   `recover-history` rebuilds `history.jsonl` from valid reports
@@ -144,7 +173,9 @@ Per repository root (gitignored in this repo; consumers should gitignore it):
 
 - `~/.config/m3tal-review/config.json` — user defaults (`profile`,
   `fail_on`, `format`, `only`, `skip`, `plugin_dir`,
-  `plugin_allow_sha256`); CLI flags override.
+  `plugin_allow_sha256`, `semantic`); CLI flags override. The `semantic`
+  object enables/configures the opt-in semantic pipeline (analyzers,
+  contract dir, parallelism, timeout, depth, test variants).
 - `~/.config/m3tal-review/plugins/` — trusted external analyzer plugins,
   loaded by default. Plugins under `<repo>/.m3tal-review/plugins` are
   untrusted: they require `--allow-repo-plugins` plus a SHA-256 match in

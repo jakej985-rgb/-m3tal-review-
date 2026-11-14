@@ -31,6 +31,10 @@ type userConfig struct {
 	// executables the user trusts. Repo plugins require --allow-repo-plugins
 	// plus a matching hash here.
 	PluginAllowSHA256 []string `json:"plugin_allow_sha256,omitempty"`
+	// Semantic configures the opt-in semantic analysis pipeline
+	// (internal/analysis/pipeline). Disabled unless enabled=true or
+	// --semantic is passed; see docs/semantic-pipeline.md.
+	Semantic *semanticUserConfig `json:"semantic,omitempty"`
 }
 
 func userConfigDir() (string, error) {
@@ -111,7 +115,7 @@ func loadUserConfig() (userConfig, error) {
 }
 
 // applyUserConfig fills review options the user did not explicitly set.
-func applyUserConfig(options *reviewOptions, cfg userConfig) {
+func applyUserConfig(options *reviewOptions, cfg userConfig) error {
 	if !options.seen["--profile"] && cfg.Profile != "" {
 		options.Profile = cfg.Profile
 	}
@@ -152,10 +156,11 @@ func applyUserConfig(options *reviewOptions, cfg userConfig) {
 	if !options.seen["--plugin-dir"] && cfg.PluginDir != "" {
 		options.PluginDir = cfg.PluginDir
 	}
+	return applySemanticUserConfig(&options.Semantic, cfg.Semantic, options.seen)
 }
 
 // applyUserConfigAudit fills audit options the user did not explicitly set.
-func applyUserConfigAudit(options *auditOptions, cfg userConfig) {
+func applyUserConfigAudit(options *auditOptions, cfg userConfig) error {
 	// audit only supports fast|full profiles; review-only profiles are ignored.
 	if !options.seen["--profile"] && (cfg.Profile == "fast" || cfg.Profile == "full") {
 		options.Profile = cfg.Profile
@@ -197,6 +202,7 @@ func applyUserConfigAudit(options *auditOptions, cfg userConfig) {
 	if !options.seen["--plugin-dir"] && cfg.PluginDir != "" {
 		options.PluginDir = cfg.PluginDir
 	}
+	return applySemanticUserConfig(&options.Semantic, cfg.Semantic, options.seen)
 }
 
 // initLanguageOverrides loads language_overrides from user config, repo config (.m3tal-review-config.json),

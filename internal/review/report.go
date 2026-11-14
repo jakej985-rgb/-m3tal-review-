@@ -3,6 +3,8 @@ package review
 import (
 	"sort"
 	"time"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/analysis"
 )
 
 type CheckResult struct {
@@ -18,6 +20,34 @@ type FindingChanges struct {
 	New      []string `json:"new,omitempty"`
 	Resolved []string `json:"resolved,omitempty"`
 	Existing int      `json:"existing"`
+}
+
+// AnalysisProgramSummary describes the shared semantic program a
+// pipeline run analyzed.
+type AnalysisProgramSummary struct {
+	Packages  int    `json:"packages"`
+	Functions int    `json:"functions"`
+	Values    int    `json:"values"`
+	RootDir   string `json:"root_dir,omitempty"`
+}
+
+// AnalysisSection separates semantic-engine output from the
+// pattern/inventory tier: per-analyzer check results, the shared
+// program summary, and the merged analysis diagnostics (load
+// problems, unsupported constructs, budget exhaustion). Findings
+// themselves flow through Report.Findings with Category "semantic".
+type AnalysisSection struct {
+	// Status is "completed", "degraded" (partial analysis: analyzer
+	// failures, truncation, or error diagnostics), or "failed" (the
+	// shared frontend could not load a program at all).
+	Status    string                  `json:"status"`
+	LoadError string                  `json:"load_error,omitempty"`
+	Program   *AnalysisProgramSummary `json:"program,omitempty"`
+	Analyzers []CheckResult           `json:"analyzers,omitempty"`
+	// Diagnostics are the merged analysis-contract diagnostics,
+	// deterministically sorted.
+	Diagnostics []analysis.Diagnostic `json:"diagnostics,omitempty"`
+	Truncated   bool                  `json:"truncated,omitempty"`
 }
 
 type Report struct {
@@ -41,6 +71,10 @@ type Report struct {
 	FindingChanges  *FindingChanges    `json:"finding_changes,omitempty"`
 	Coverage        *CoverageMetadata  `json:"coverage,omitempty"`
 	Attestation     *ReportAttestation `json:"attestation,omitempty"`
+	// Analysis is present only when the semantic pipeline ran; it
+	// separates semantic-engine diagnostics and per-analyzer status
+	// from the pattern-tier findings.
+	Analysis *AnalysisSection `json:"analysis,omitempty"`
 }
 
 func NewReport(

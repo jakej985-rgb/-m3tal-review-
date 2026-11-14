@@ -121,6 +121,16 @@
   to filesystem/serving/exec sinks), `wildcard-default-scope`,
   `plugin-trust`, `privileged-pkg-exec`, `process-kill-abuse`, and
   `credential-in-query`
+- Opt-in semantic analysis pipeline (`--semantic` on `review`/`audit`,
+  or `semantic` section in user config): loads the Go program model once
+  and runs the flow, statemachine, typestate, concurrency, authproto, and
+  protocol engines with bounded parallelism, per-analyzer timeouts, and
+  deterministic ordering. Contracts/specs are discovered under
+  `.m3tal/contracts/` (`statemachine/1`, `typestate/1`, `authproto/1`,
+  `protocol/1`). Semantic findings report with category `semantic`;
+  per-analyzer status, program summary, and analysis diagnostics are
+  recorded in the report's new `analysis` section. See
+  `docs/semantic-pipeline.md`.
 
 ### Changed
 - False-positive reductions: `chi-missing-recovery` accepts custom Recoverer

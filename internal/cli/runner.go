@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jakej985-rgb/m3tal-review/internal/analysis/pipeline"
 	"github.com/jakej985-rgb/m3tal-review/internal/git"
 	"github.com/jakej985-rgb/m3tal-review/internal/plugin"
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
@@ -66,6 +67,13 @@ type RunnerConfig struct {
 	// only executed when AllowRepoPlugins is set AND their executable hash is
 	// on this list; an empty list loads no repository plugins.
 	RepoPluginAllowSHA256 []string
+
+	// Semantic configures the opt-in semantic analysis pipeline
+	// (internal/analysis/pipeline). Nil disables it entirely.
+	Semantic *pipeline.Options
+	// Context optionally carries cancellation/deadline into the
+	// semantic pipeline; nil means context.Background().
+	Context context.Context
 }
 
 // RunPipeline executes the shared review-runner pipeline for both review and audit.
@@ -89,6 +97,22 @@ func RunPipeline(cfg RunnerConfig) error {
 		toolFindings, results := runOptionalLocalToolsWithOverrides(cfg.RepositoryRoot, cfg.ToolPaths)
 		findings = append(findings, toolFindings...)
 		confidenceChecks = append(confidenceChecks, results...)
+	}
+
+	// Semantic pipeline: loads the Go program model once and runs the
+	// enabled analysis engines over it. Findings are normalized into
+	// the shared analysis contract and adapted to the legacy report
+	// shape with category "semantic"; per-analyzer outcomes and
+	// diagnostics land in report.Analysis.
+	var analysisSection *review.AnalysisSection
+	if cfg.Semantic != nil {
+		if cfg.Progress != nil {
+			cfg.Progress.Tick("Running semantic analyzers")
+		}
+		semFindings, semChecks, section := runSemanticPipeline(cfg)
+		findings = append(findings, semFindings...)
+		confidenceChecks = append(confidenceChecks, semChecks...)
+		analysisSection = section
 	}
 
 	// Discover and execute plugin analyzers
@@ -216,6 +240,7 @@ func RunPipeline(cfg RunnerConfig) error {
 	report.Checks = append(report.Checks, cfg.Checks...)
 	report.Scope = cfg.Scope
 	report.Coverage = cfg.Coverage
+	report.Analysis = analysisSection
 
 	if cfg.Scope == "working-tree" {
 		if len(cfg.UnanalyzedFiles) > 0 {
