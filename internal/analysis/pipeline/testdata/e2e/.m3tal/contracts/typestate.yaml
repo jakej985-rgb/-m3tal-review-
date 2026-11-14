@@ -1,0 +1,12 @@
+schema_version: typestate/1
+id: challenge-single-use
+name: Single-use auth challenge
+resource:
+  type: "example.com/e2e.Challenge"
+operations:
+  - kind: consume
+    function:
+      name: Consume
+      receiver: "example.com/e2e.Challenge"
+entry:
+  - id: "example.com/e2e.main"

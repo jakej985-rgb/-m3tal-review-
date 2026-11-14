@@ -274,7 +274,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if cfgErr != nil {
 			return cfgErr
 		}
-		applyUserConfig(&options, cfg)
+		if err := applyUserConfig(&options, cfg); err != nil {
+			return err
+		}
 		workingDir, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get working directory: %w", err)
@@ -447,6 +449,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 			PluginDir:             reviewPluginDir(options.PluginDir),
 			AllowRepoPlugins:      options.AllowRepoPlugins,
 			RepoPluginAllowSHA256: cfg.PluginAllowSHA256,
+			Semantic:              options.Semantic.pipelineOptions(repositoryRoot),
 			Progress:              progress,
 		})
 
@@ -459,7 +462,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if cfgErr != nil {
 			return cfgErr
 		}
-		applyUserConfigAudit(&options, cfg)
+		if err := applyUserConfigAudit(&options, cfg); err != nil {
+			return err
+		}
 		// Audit defaults to security signal: code-slop volume drowns real
 		// findings, so it is skipped unless --with-slop or an explicit
 		// --only/--skip selection is given.
@@ -572,6 +577,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 			PluginDir:             reviewPluginDir(options.PluginDir),
 			AllowRepoPlugins:      options.AllowRepoPlugins,
 			RepoPluginAllowSHA256: cfg.PluginAllowSHA256,
+			Semantic:              options.Semantic.pipelineOptions(repositoryRoot),
 			Progress:              progress,
 		})
 
@@ -906,6 +912,7 @@ type auditOptions struct {
 	PluginDir        string
 	AllowRepoPlugins bool
 	Progress         *bool
+	Semantic         semanticCLIOptions
 	seen             map[string]bool
 }
 
@@ -1084,6 +1091,30 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 		case arg == "--allow-repo-plugins":
 			options.AllowRepoPlugins = true
 		default:
+			if strings.HasPrefix(arg, "--semantic") {
+				flag := arg
+				hasValue := false
+				if idx := strings.Index(arg, "="); idx >= 0 {
+					flag, hasValue = arg[:idx], true
+				}
+				next := func() (string, error) {
+					if hasValue {
+						return arg[strings.Index(arg, "=")+1:], nil
+					}
+					if i+1 >= len(args) {
+						return "", fmt.Errorf("%s requires a value", flag)
+					}
+					i++
+					return args[i], nil
+				}
+				handled, err := options.Semantic.parseSemanticFlag(flag, next)
+				if err != nil {
+					return auditOptions{}, err
+				}
+				if handled {
+					break
+				}
+			}
 			if strings.HasPrefix(arg, "--tool-path=") {
 				v := strings.TrimPrefix(arg, "--tool-path=")
 				parts := strings.SplitN(v, "=", 2)

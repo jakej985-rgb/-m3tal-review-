@@ -13,7 +13,10 @@
 // two loads of the same repository state produce identical models.
 package semantic
 
-import "sort"
+import (
+	"sort"
+	"sync"
+)
 
 // Program is the root of a loaded codebase.
 type Program struct {
@@ -41,6 +44,11 @@ type Program struct {
 	byValueID  map[string]*Value
 	uses       map[*Value][]*Instruction
 	callBySite map[*Instruction]*Call
+
+	// indexOnce makes Index idempotent and safe to call concurrently:
+	// analyzers sharing one Program may each defensively call Index,
+	// but the lookup maps are built exactly once.
+	indexOnce sync.Once
 }
 
 // Package returns the package with the given ID (the import path for
@@ -60,8 +68,14 @@ func (p *Program) Uses(v *Value) []*Instruction { return p.uses[v] }
 
 // Index builds the lookup maps used by Package, Function, and CallAt.
 // Frontends call it once after the package graph is fully
-// materialized.
+// materialized. Index is idempotent: repeated and concurrent calls are
+// no-ops once the maps have been built, so a Program shared across
+// parallel analyzers is safe.
 func (p *Program) Index() {
+	p.indexOnce.Do(func() { p.buildIndex() })
+}
+
+func (p *Program) buildIndex() {
 	p.byKey = make(map[string]*Package, len(p.Packages))
 	p.byFuncID = make(map[string]*Function)
 	p.byValueID = make(map[string]*Value, len(p.Values))

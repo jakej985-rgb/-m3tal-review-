@@ -33,6 +33,7 @@ var ValidCategories = map[string]bool{
 	"confidence": true,
 	"risk":       true,
 	"drift":      true,
+	"semantic":   true,
 }
 
 var ValidCheckStatuses = map[string]bool{
@@ -153,7 +154,7 @@ func ValidateReport(report Report, filePath string) ReportValidationResult {
 		}
 
 		if f.Category != "" && !ValidCategories[f.Category] {
-			addErr(idxStr+".category", fmt.Sprintf("invalid category %q; valid: security, review, confidence, risk, drift", f.Category))
+			addErr(idxStr+".category", fmt.Sprintf("invalid category %q; valid: security, review, confidence, risk, drift, semantic", f.Category))
 		}
 
 		if f.ID == "" {
