@@ -127,8 +127,11 @@ func relativizeSpanFile(file, repoRoot string) string {
 		return file
 	}
 	root := filepath.ToSlash(filepath.Clean(repoRoot))
-	if rel, err := filepath.Rel(root, file); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
-		return filepath.ToSlash(rel)
+	if rel, err := filepath.Rel(root, file); err == nil {
+		rel = filepath.ToSlash(rel)
+		if rel != ".." && !strings.HasPrefix(rel, "../") {
+			return rel
+		}
 	}
 	return file
 }
