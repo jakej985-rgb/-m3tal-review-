@@ -157,7 +157,11 @@ func RunPipeline(cfg RunnerConfig) error {
 		} else {
 			targetFiles = cfg.StagedFiles
 		}
-		pFindings, pChecks := pluginRegistry.RunPlugins(context.Background(), plugin.PluginInput{
+		pluginCtx := cfg.Context
+		if pluginCtx == nil {
+			pluginCtx = context.Background()
+		}
+		pFindings, pChecks := pluginRegistry.RunPlugins(pluginCtx, plugin.PluginInput{
 			RepositoryRoot: cfg.RepositoryRoot,
 			Scope:          cfg.Scope,
 			Files:          targetFiles,
@@ -192,20 +196,6 @@ func RunPipeline(cfg RunnerConfig) error {
 			return err
 		}
 		fmt.Println("Baseline written:", displayText(cfg.WriteBaseline))
-	}
-
-	if cfg.CheckRun {
-		if err := postCheckRun(findings, cfg.CheckRunSHA); err != nil {
-			return fmt.Errorf("post check run: %w", err)
-		}
-		fmt.Println("Check run posted.")
-	}
-
-	if cfg.PRComment {
-		if err := postPRComment(cfg.RepositoryRoot, findings); err != nil {
-			return fmt.Errorf("post pr comment: %w", err)
-		}
-		fmt.Println("PR comment posted.")
 	}
 
 	currentSHA, err := git.CurrentCommitSHA(cfg.RepositoryRoot)
@@ -292,6 +282,23 @@ func RunPipeline(cfg RunnerConfig) error {
 	}
 	if err := review.AppendHistory(historyPath, review.NewHistoryEntry(report)); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to append to history log (report was successfully saved to %s): %s\n", displayText(reportPath), displayText(err.Error()))
+	}
+
+	// External integrations run only after the local report and history
+	// are durable: an integration failure must not lose the review
+	// result (previously these ran before persistence).
+	if cfg.CheckRun {
+		if err := postCheckRun(findings, cfg.CheckRunSHA); err != nil {
+			return fmt.Errorf("post check run: %w", err)
+		}
+		fmt.Println("Check run posted.")
+	}
+
+	if cfg.PRComment {
+		if err := postPRComment(cfg.RepositoryRoot, findings); err != nil {
+			return fmt.Errorf("post pr comment: %w", err)
+		}
+		fmt.Println("PR comment posted.")
 	}
 	if cfg.Progress != nil {
 		cfg.Progress.Done("Analysis pipeline complete")

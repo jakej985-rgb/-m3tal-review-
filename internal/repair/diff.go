@@ -10,10 +10,7 @@ import (
 func FileToAddedDiff(filename, content string) string {
 	normPath := filepath.ToSlash(filepath.Clean(filename))
 	normPath = strings.TrimPrefix(normPath, "/")
-	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
+	lines := splitFileLines(content)
 	newStart := 1
 	if len(lines) == 0 {
 		newStart = 0
@@ -22,9 +19,7 @@ func FileToAddedDiff(filename, content string) string {
 	fmt.Fprintf(&b, "--- /dev/null\n+++ b/%s\n", normPath)
 	fmt.Fprintf(&b, "@@ -0,0 +%d,%d @@\n", newStart, len(lines))
 	for _, line := range lines {
-		b.WriteByte('+')
-		b.WriteString(line)
-		b.WriteByte('\n')
+		writePatchLine(&b, '+', line)
 	}
 	return b.String()
 }
@@ -35,8 +30,8 @@ func GenerateUnifiedDiff(filename, original, proposed string) string {
 		return ""
 	}
 
-	origLines := splitLines(original)
-	propLines := splitLines(proposed)
+	origLines := splitFileLines(original)
+	propLines := splitFileLines(proposed)
 
 	// Compute edit operations via LCS
 	ops := computeDiffOps(origLines, propLines)
@@ -55,25 +50,46 @@ func GenerateUnifiedDiff(filename, original, proposed string) string {
 	for _, h := range hunks {
 		fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n", h.oldStart, h.oldCount, h.newStart, h.newCount)
 		for _, line := range h.lines {
-			b.WriteString(line)
-			b.WriteByte('\n')
+			writePatchLine(&b, line[0], line[1:])
 		}
 	}
 
 	return b.String()
 }
 
-func splitLines(s string) []string {
+// splitFileLines splits s into lines that retain their trailing '\n'
+// terminator. Only the final line of a file may lack a terminator, which
+// is how end-of-file newline state is represented. "\r\n" sequences keep
+// their '\r' as content so CRLF files round-trip byte-identically.
+// The empty string yields no lines.
+func splitFileLines(s string) []string {
 	if s == "" {
-		return []string{}
+		return nil
 	}
-	// Normalize \r\n to \n
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	lines := strings.Split(s, "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
+	lines := strings.SplitAfter(s, "\n")
+	if lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
 	return lines
+}
+
+// lineBody strips the trailing '\n' terminator for patch output, keeping
+// any '\r' so CRLF content survives the round trip.
+func lineBody(s string) string {
+	return strings.TrimSuffix(s, "\n")
+}
+
+// writePatchLine emits one unified-diff body line. pl is the raw source
+// line including its terminator (if any); a missing terminator means the
+// line is the last of its file and is followed by the standard
+// "\ No newline at end of file" marker.
+func writePatchLine(b *strings.Builder, prefix byte, raw string) {
+	b.WriteByte(prefix)
+	b.WriteString(lineBody(raw))
+	b.WriteByte('\n')
+	if !strings.HasSuffix(raw, "\n") {
+		b.WriteString("\\ No newline at end of file\n")
+	}
 }
 
 type diffOpType int

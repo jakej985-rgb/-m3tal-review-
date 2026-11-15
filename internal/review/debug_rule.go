@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"path"
 	"regexp"
 	"strings"
@@ -47,8 +48,15 @@ var debugPatterns = []struct {
 }
 
 func (r DebugRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r DebugRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, fileDiff := range ParseDiff(diff) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if (language.CodeChecker{}).Language(fileDiff.Path) == language.LanguageUnknown && !language.IsLikelySourceFile(fileDiff.Path) {
 			continue
 		}

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -41,6 +42,9 @@ func IsVendorOrDependencyPath(path string) bool {
 }
 
 // ReportAttestation provides a tamper-evident digest of review execution inputs and verdict.
+// The Signature field is an unkeyed SHA-256 checksum (see
+// ComputeAttestationSignature): it detects accidental modification, not
+// adversarial tampering.
 type ReportAttestation struct {
 	Version      string    `json:"version"`
 	Repository   string    `json:"repository"`
@@ -71,7 +75,11 @@ func ValidateCommitSHA(sha string) error {
 	return nil
 }
 
-// ComputeAttestationSignature calculates the canonical SHA-256 integrity signature.
+// ComputeAttestationSignature calculates the canonical SHA-256 integrity
+// checksum over the attestation payload. NOTE: this is an UNSALTED,
+// UNKEYED digest — it is tamper-evident against accidental corruption or
+// naive edits, but provides no protection against an adversary who can
+// recompute the hash. It is not a cryptographic signature.
 func ComputeAttestationSignature(version, repository, commitSHA, diffHash, snapshotHash, toolVersion string, timestampUnix int64, passed bool) string {
 	payload := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n%d\n%t",
 		version,
@@ -198,7 +206,20 @@ type RemediationVerificationResult struct {
 }
 
 // VerifyRemediation re-runs originating rule and test suites against the repaired snapshot.
-func VerifyRemediation(originalFinding Finding, originalDiff, repairedDiff string, rules []Rule, testRunner func() error) RemediationVerificationResult {
+func VerifyRemediation(ctx context.Context, originalFinding Finding, originalDiff, repairedDiff string, rules []Rule, testRunner func() error) RemediationVerificationResult {
+	return verifyRemediation(ctx, originalFinding, originalDiff, repairedDiff, rules, testRunner, nil, false)
+}
+
+// VerifyRemediationWithBaseline is VerifyRemediation with caller-supplied
+// baseline findings. Repair sandboxes must use this: rules read file
+// contents from disk, so by the time the repaired snapshot exists the
+// original diff can no longer be re-evaluated — the baseline has to be
+// captured while the sandbox still holds the original content.
+func VerifyRemediationWithBaseline(ctx context.Context, originalFinding Finding, originalDiff, repairedDiff string, rules []Rule, testRunner func() error, baselineFindings []Finding) RemediationVerificationResult {
+	return verifyRemediation(ctx, originalFinding, originalDiff, repairedDiff, rules, testRunner, baselineFindings, true)
+}
+
+func verifyRemediation(ctx context.Context, originalFinding Finding, originalDiff, repairedDiff string, rules []Rule, testRunner func() error, baselineFindings []Finding, hasBaseline bool) RemediationVerificationResult {
 	res := RemediationVerificationResult{
 		FindingID:    originalFinding.ID,
 		OriginalRule: originalFinding.Rule,
@@ -220,7 +241,12 @@ func VerifyRemediation(originalFinding Finding, originalDiff, repairedDiff strin
 	}
 
 	if originatingRule != nil {
-		postCheckFindings := originatingRule.Check(repairedDiff)
+		var postCheckFindings []Finding
+		if cr, ok := originatingRule.(ContextualRule); ok {
+			postCheckFindings = cr.CheckContext(ctx, repairedDiff)
+		} else {
+			postCheckFindings = originatingRule.Check(repairedDiff)
+		}
 		for _, f := range postCheckFindings {
 			if f.Rule == originalFinding.Rule && f.File == originalFinding.File {
 				res.Status = "unfixed"
@@ -232,13 +258,25 @@ func VerifyRemediation(originalFinding Finding, originalDiff, repairedDiff strin
 	}
 
 	// Check if new blocking findings were introduced by the repair
-	engine := NewEngine(rules...)
 	originalSet := make(map[string]bool)
-	for _, f := range engine.Run(originalDiff) {
+	var baseline []Finding
+	if hasBaseline {
+		baseline = baselineFindings
+	} else {
+		baseline = NewEngine(rules...).RunContext(ctx, originalDiff)
+	}
+	for _, f := range baseline {
 		originalSet[FindingID(f)] = true
 	}
 
-	newFindings := engine.Run(repairedDiff)
+	newFindings := NewEngine(rules...).RunContext(ctx, repairedDiff)
+	// Cancelled rules return empty findings, which must not be read as a
+	// clean verification.
+	if err := ctx.Err(); err != nil {
+		res.Status = "unresolved"
+		res.Explanation = fmt.Sprintf("verification cancelled before completion: %v", err)
+		return res
+	}
 	for _, nf := range newFindings {
 		if !originalSet[FindingID(nf)] && (nf.Severity == "high" || nf.Severity == "critical" || nf.Severity == "medium") {
 			res.Status = "new_blocking_findings"
@@ -255,6 +293,11 @@ func VerifyRemediation(originalFinding Finding, originalDiff, repairedDiff strin
 			res.Explanation = fmt.Sprintf("project test runner failed on repaired code: %v", err)
 			return res
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		res.Status = "unresolved"
+		res.Explanation = fmt.Sprintf("verification cancelled before completion: %v", err)
+		return res
 	}
 
 	res.Status = "fixed"

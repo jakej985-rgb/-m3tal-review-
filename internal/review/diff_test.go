@@ -261,3 +261,25 @@ func BenchmarkParseDiff(b *testing.B) {
 		_ = ParseDiff(diff)
 	}
 }
+
+// G2 regression: binary diffs have no ---/+++ lines, so the diff --git
+// header is authoritative. Filenames containing " b/" or starting with
+// "b/" must parse correctly.
+func TestParseDiffBinaryHeaderAmbiguousPaths(t *testing.T) {
+	diff := "diff --git a/weird b/name.bin b/weird b/name.bin\n" +
+		"index 1111111..2222222 100644\n" +
+		"Binary files a/weird b/name.bin and b/weird b/name.bin differ\n" +
+		"diff --git a/b/x.bin b/b/x.bin\n" +
+		"index 3333333..4444444 100644\n" +
+		"Binary files a/b/x.bin and b/b/x.bin differ\n"
+	fileDiffs := ParseDiff(diff)
+	if len(fileDiffs) != 2 {
+		t.Fatalf("expected 2 file diffs, got %d: %+v", len(fileDiffs), fileDiffs)
+	}
+	if fileDiffs[0].Path != "weird b/name.bin" {
+		t.Errorf("fileDiffs[0].Path = %q, want %q", fileDiffs[0].Path, "weird b/name.bin")
+	}
+	if fileDiffs[1].Path != "b/x.bin" {
+		t.Errorf("fileDiffs[1].Path = %q, want %q", fileDiffs[1].Path, "b/x.bin")
+	}
+}

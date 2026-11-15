@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -19,6 +20,12 @@ func NewEngine(rules ...Rule) *Engine {
 }
 
 func (e *Engine) Run(diff string) []Finding {
+	return e.RunContext(context.Background(), diff)
+}
+
+// RunContext is Run with caller cancellation propagated to rules that
+// implement ContextualRule.
+func (e *Engine) RunContext(ctx context.Context, diff string) []Finding {
 	// Rules are independent; run them concurrently but concatenate results
 	// in registration order so output stays deterministic.
 	results := make([][]Finding, len(e.rules))
@@ -27,7 +34,7 @@ func (e *Engine) Run(diff string) []Finding {
 		wg.Add(1)
 		go func(i int, rule Rule) {
 			defer wg.Done()
-			results[i] = checkRuleSafely(rule, diff)
+			results[i] = checkRuleSafely(ctx, rule, diff)
 		}(i, rule)
 	}
 	wg.Wait()
@@ -79,9 +86,21 @@ var ruleTimeout = func() time.Duration {
 
 var debugRules = os.Getenv("M3TAL_DEBUG") != ""
 
+// RunRuleSafely executes a single rule with panic recovery and the
+// per-rule timeout, for callers that must run rules outside Engine
+// (e.g. package-scoped taint analysis over grouped diffs).
+func RunRuleSafely(rule Rule, diff string) []Finding {
+	return checkRuleSafely(context.Background(), rule, diff)
+}
+
 // checkRuleSafely runs a rule and converts a panic or timeout into a
 // confidence finding so one buggy rule cannot crash or stall the review.
-func checkRuleSafely(rule Rule, diff string) (findings []Finding) {
+// The per-rule timeout is delivered through a context: rules implementing
+// ContextualRule observe cancellation and stop work; other rules are
+// bounded only by the returned timeout finding.
+func checkRuleSafely(parent context.Context, rule Rule, diff string) (findings []Finding) {
+	ctx, cancel := context.WithTimeout(parent, ruleTimeout)
+	defer cancel()
 	result := make(chan []Finding, 1)
 	go func() {
 		defer func() {
@@ -94,16 +113,36 @@ func checkRuleSafely(rule Rule, diff string) (findings []Finding) {
 				}}
 			}
 		}()
-		result <- rule.Check(diff)
+		if cr, ok := rule.(ContextualRule); ok {
+			result <- cr.CheckContext(ctx, diff)
+		} else {
+			result <- rule.Check(diff)
+		}
 	}()
 	start := time.Now()
 	select {
 	case findings = <-result:
+		// A cooperative rule may return partial results right after its
+		// deadline; both select cases can be ready, so recheck here.
+		if ctx.Err() != nil {
+			if parent.Err() != nil {
+				return nil
+			}
+			return []Finding{{
+				Rule:        rule.Name() + "-timeout",
+				Severity:    "medium",
+				Message:     "Rule " + rule.Name() + " exceeded the analysis time limit",
+				Remediation: "Report this as a bug; the rule may be stuck on pathological input.",
+			}}
+		}
 		if debugRules {
 			fmt.Fprintf(os.Stderr, "rule %-28s %s %d findings\n", rule.Name(), time.Since(start).Round(time.Millisecond), len(findings))
 		}
 		return findings
-	case <-time.After(ruleTimeout):
+	case <-ctx.Done():
+		if parent.Err() != nil {
+			return nil
+		}
 		return []Finding{{
 			Rule:        rule.Name() + "-timeout",
 			Severity:    "medium",

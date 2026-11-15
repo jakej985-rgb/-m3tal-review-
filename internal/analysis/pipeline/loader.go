@@ -2,7 +2,12 @@ package pipeline
 
 import (
 	"context"
+	"hash/fnv"
+	"io/fs"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/semantic"
@@ -26,17 +31,19 @@ type Loader struct {
 }
 
 type loadKey struct {
-	dir       string
-	pattern   string
-	tests     bool
-	callGraph golang.CallGraphMode
-	maxPkgs   int
-	maxDiags  int
+	dir        string
+	pattern    string
+	tests      bool
+	callGraph  golang.CallGraphMode
+	maxPkgs    int
+	maxDiags   int
+	buildFlags string
 }
 
 type loadEntry struct {
-	prog *semantic.Program
-	err  error
+	prog  *semantic.Program
+	err   error
+	stamp string
 }
 
 // NewLoader returns an empty program cache.
@@ -67,17 +74,24 @@ func (l *Loader) Invalidate() {
 func (l *Loader) Load(ctx context.Context, opts Options) (*semantic.Program, error) {
 	dir, _ := filepath.Abs(opts.Dir)
 	key := loadKey{
-		dir:       dir,
-		pattern:   opts.Pattern,
-		tests:     opts.Tests,
-		callGraph: opts.CallGraph,
-		maxPkgs:   opts.MaxPackages,
-		maxDiags:  opts.MaxDiagnostics,
+		dir:        dir,
+		pattern:    opts.Pattern,
+		tests:      opts.Tests,
+		callGraph:  opts.CallGraph,
+		maxPkgs:    opts.MaxPackages,
+		maxDiags:   opts.MaxDiagnostics,
+		buildFlags: strings.Join(opts.BuildFlags, "\x00"),
 	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if e, ok := l.entries[key]; ok {
+	// Validate cached entries against a fingerprint of the analyzed
+	// tree: embedded/watch-style Loader reuse must not serve programs
+	// built from since-changed sources. The stamp covers *.go files
+	// plus go.mod/go.sum (module boundaries and dependencies), which
+	// are the inputs golang.Load actually consumes.
+	stamp := programStamp(opts.Dir)
+	if e, ok := l.entries[key]; ok && (stamp == "" || e.stamp == stamp) {
 		return e.prog, e.err
 	}
 
@@ -88,15 +102,65 @@ func (l *Loader) Load(ctx context.Context, opts Options) (*semantic.Program, err
 		CallGraph:      opts.CallGraph,
 		MaxPackages:    opts.MaxPackages,
 		MaxDiagnostics: opts.MaxDiagnostics,
+		BuildFlags:     opts.BuildFlags,
 	})
 	if err != nil && (ctx.Err() != nil || err == context.Canceled || err == context.DeadlineExceeded) {
 		// Do not cache cancellation: the tree may be fine and the
 		// caller may retry with a fresh context.
 		return prog, err
 	}
-	l.entries[key] = &loadEntry{prog: prog, err: err}
+	l.entries[key] = &loadEntry{prog: prog, err: err, stamp: stamp}
 	l.loads++
 	return prog, err
+}
+
+// programStamp fingerprints the load-relevant files under dir: every
+// *.go file plus go.mod/go.sum anywhere in the tree (nested modules
+// change package boundaries). Returns "" when dir cannot be walked,
+// in which case callers fall back to trusting the cache.
+func programStamp(dir string) string {
+	var parts []string
+	root := filepath.Clean(dir)
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if path != root {
+				switch {
+				case name == ".git" || name == "vendor" || strings.HasPrefix(name, "."):
+					return fs.SkipDir
+				}
+			}
+			return nil
+		}
+		isGo := strings.HasSuffix(name, ".go")
+		isMod := name == "go.mod" || name == "go.sum"
+		if !isGo && !isMod {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			rel = path
+		}
+		parts = append(parts, rel+"\x00"+info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z")+"\x00"+strconv.FormatInt(info.Size(), 10))
+		return nil
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	sort.Strings(parts)
+	h := fnv.New64a()
+	for _, p := range parts {
+		_, _ = h.Write([]byte(p))
+		_, _ = h.Write([]byte{0})
+	}
+	return strconv.FormatUint(h.Sum64(), 16)
 }
 
 // loadProgram performs the shared frontend load for one Run, applying
@@ -119,5 +183,6 @@ func loadProgram(ctx context.Context, opts Options) (*semantic.Program, error) {
 		CallGraph:      opts.CallGraph,
 		MaxPackages:    opts.MaxPackages,
 		MaxDiagnostics: opts.MaxDiagnostics,
+		BuildFlags:     opts.BuildFlags,
 	})
 }

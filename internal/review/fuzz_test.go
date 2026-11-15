@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,7 +60,7 @@ func FuzzFixtureRules(f *testing.F) {
 			diff = diff[:1<<20]
 		}
 		for _, name := range names {
-			_ = checkRuleSafely(constructors[name](), diff)
+			_ = checkRuleSafely(context.Background(), constructors[name](), diff)
 		}
 	})
 }

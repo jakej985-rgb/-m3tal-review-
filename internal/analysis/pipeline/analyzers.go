@@ -153,7 +153,7 @@ func runAuthProto(ctx context.Context, env *Env) analyzerOutcome {
 
 // --- protocol -------------------------------------------------------
 
-func runProtocol(_ context.Context, env *Env) analyzerOutcome {
+func runProtocol(ctx context.Context, env *Env) analyzerOutcome {
 	set := env.Contracts.Protocol
 	versions := env.Contracts.ProtocolVersions
 	if set == nil || len(versions) < 2 {
@@ -161,8 +161,11 @@ func runProtocol(_ context.Context, env *Env) analyzerOutcome {
 	}
 	// The snapshot set's versions are the deployed-version labels the
 	// checkout knows about; EvaluateMatrix compares every unordered
-	// pair in both directions.
-	res := protocol.EvaluateMatrix(set, versions)
+	// pair in both directions. ctx bounds the O(V^2) comparison work.
+	res, err := protocol.EvaluateMatrix(ctx, set, versions)
+	if err != nil {
+		return analyzerOutcome{err: err}
+	}
 	out := analyzerOutcome{
 		Findings:    res.Findings,
 		Diagnostics: res.Diagnostics,

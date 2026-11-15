@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"path"
 	"regexp"
 	"strconv"
@@ -84,9 +85,16 @@ var evalPatterns = []struct {
 }
 
 func (r EvalRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r EvalRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		fileLanguage := (language.CodeChecker{}).Language(block.file)
 		ext := strings.ToLower(path.Ext(block.file))
 		codeMask := sourceCodeMask(block.file, block.text)

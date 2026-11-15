@@ -124,9 +124,33 @@ func commandRepair(args []string) error {
 	}
 
 	// Resolve findings to repair
-	findings, err := resolveFindingsForRepair(repositoryRoot, opts.runID)
+	findings, findingSource, err := resolveFindingsForRepair(repositoryRoot, opts.runID)
 	if err != nil {
 		return err
+	}
+
+	// Findings derived from the staged diff describe index content, but the
+	// repair engine reads and rewrites the working tree. When a finding's
+	// file also has unstaged changes, the staged finding may not describe
+	// the bytes that will actually be repaired — refuse those rather than
+	// fix the wrong content.
+	if findingSource == "staged" {
+		if unstaged, uerr := git.UnstagedFiles(repositoryRoot); uerr == nil && len(unstaged) > 0 {
+			unstagedSet := make(map[string]bool, len(unstaged))
+			for _, f := range unstaged {
+				unstagedSet[filepath.ToSlash(f)] = true
+			}
+			var kept []review.Finding
+			for _, f := range findings {
+				if unstagedSet[filepath.ToSlash(f.File)] {
+					fmt.Fprintf(os.Stderr, "Warning: skipping %s (%s): file has unstaged changes; staged finding may not match working tree\n",
+						f.File, f.Rule)
+					continue
+				}
+				kept = append(kept, f)
+			}
+			findings = kept
+		}
 	}
 
 	if len(findings) == 0 {
@@ -191,20 +215,20 @@ func commandRepair(args []string) error {
 	return nil
 }
 
-func resolveFindingsForRepair(repositoryRoot, runID string) ([]review.Finding, error) {
+func resolveFindingsForRepair(repositoryRoot, runID string) ([]review.Finding, string, error) {
 	if runID != "" {
 		if !review.IsValidRunID(runID) {
-			return nil, fmt.Errorf("invalid run ID %q: expected 16 lowercase hexadecimal characters", runID)
+			return nil, "", fmt.Errorf("invalid run ID %q: expected 16 lowercase hexadecimal characters", runID)
 		}
 		reportPath := filepath.Join(repositoryRoot, ".m3tal-review", "reports", runID+".json")
 		if err := ensureReviewStorageSafe(repositoryRoot, reportPath); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		report, err := review.ReadReport(reportPath)
 		if err != nil {
-			return nil, fmt.Errorf("read report %q: %w", runID, err)
+			return nil, "", fmt.Errorf("read report %q: %w", runID, err)
 		}
-		return report.Findings, nil
+		return report.Findings, "report", nil
 	}
 
 	// Check latest history report
@@ -215,7 +239,7 @@ func resolveFindingsForRepair(repositoryRoot, runID string) ([]review.Finding, e
 			reportPath := filepath.Join(repositoryRoot, ".m3tal-review", "reports", latest.RunID+".json")
 			if err := ensureReviewStorageSafe(repositoryRoot, reportPath); err == nil {
 				if report, err := review.ReadReport(reportPath); err == nil && len(report.Findings) > 0 {
-					return report.Findings, nil
+					return report.Findings, "report", nil
 				}
 			}
 		}
@@ -226,7 +250,7 @@ func resolveFindingsForRepair(repositoryRoot, runID string) ([]review.Finding, e
 	if err == nil && strings.TrimSpace(diff) != "" {
 		findings := review.NewEngine(defaultRules(repositoryRoot)...).Run(diff)
 		findings = review.ApplyFindingFilters(diff, findings, repositoryRoot, false)
-		return findings, nil
+		return findings, "staged", nil
 	}
 
 	// Fallback to checking unstaged working tree diff
@@ -234,10 +258,10 @@ func resolveFindingsForRepair(repositoryRoot, runID string) ([]review.Finding, e
 	if err == nil && strings.TrimSpace(wtDiff) != "" {
 		findings := review.NewEngine(defaultRules(repositoryRoot)...).Run(wtDiff)
 		findings = review.ApplyFindingFilters(wtDiff, findings, repositoryRoot, true)
-		return findings, nil
+		return findings, "unstaged", nil
 	}
 
-	return nil, nil
+	return nil, "", nil
 }
 
 func promptInteractiveApproval(prop *repair.Proposal, v review.RemediationVerificationResult) (bool, error) {
@@ -280,6 +304,11 @@ func printRepairSummary(results []repair.RepairResult) {
 			fmt.Printf("[ATTEMPTS-EXCEEDED] %s (%s): Exceeded %d repair attempt(s)\n", res.Finding.File, res.Finding.Rule, res.Attempts)
 		default:
 			fmt.Printf("[%s] %s (%s)\n", statusStr, res.Finding.File, res.Finding.Rule)
+		}
+		if res.AuditError != "" {
+			fmt.Printf("  [AUDIT-WARNING] %s: %s\n", res.Finding.File, res.AuditError)
+		} else if res.Error != nil {
+			fmt.Printf("  [ERROR] %s: %s\n", res.Finding.File, res.Error)
 		}
 	}
 

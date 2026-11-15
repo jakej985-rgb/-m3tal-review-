@@ -561,3 +561,49 @@ func TestCheckDependenciesNestedHygiene(t *testing.T) {
 		t.Fatalf("expected nested duplicate-require and go.sum conflict findings (dup=%v sum=%v), got %+v", sawDup, sawSum, findings)
 	}
 }
+
+// D1 regression: imports inside a nested module (own go.mod) must not
+// satisfy the root module's requirements — the nested module is analyzed
+// independently, so a root dep used only there is unused for the root.
+func TestAnalyzeGoModulesNestedModuleDoesNotMaskUnused(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(`module example.com/root
+
+go 1.23
+
+require github.com/only/nested v1.0.0
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	nestedDir := filepath.Join(tmpDir, "sub", "mod")
+	if err := os.MkdirAll(nestedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nestedDir, "go.mod"), []byte("module example.com/nested\n\ngo 1.23\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nestedDir, "main.go"), []byte(`package main
+
+import _ "github.com/only/nested"
+
+func main() {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, findings, err := AnalyzeGoModules(tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, f := range findings {
+		if f.Rule == "go-module-unused-dependency" && strings.Contains(f.Message, "github.com/only/nested") {
+			return // expected: root dep is unused within the root module
+		}
+	}
+	t.Fatalf("expected go-module-unused-dependency for github.com/only/nested (import lives in nested module), findings: %+v", findings)
+}

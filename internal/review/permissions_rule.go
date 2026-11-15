@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 )
@@ -19,8 +20,15 @@ var worldWritablePattern = regexp.MustCompile(
 )
 
 func (r PermissionsRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r PermissionsRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, fileDiff := range ParseDiff(diff) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		// Performance optimization: Generate diff source blocks directly from fileDiff
 		// instead of re-parsing the entire diff and scanning for fileDiff.Path.
 		blocks := fileDiffSourceBlocks(fileDiff)

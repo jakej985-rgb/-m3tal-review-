@@ -32,8 +32,14 @@ func ParseGoMod(content string) (*GoMod, []review.Finding) {
 	lines := strings.Split(content, "\n")
 	inRequireBlock := false
 	inReplaceBlock := false
+	inExcludeBlock := false
+	inRetractBlock := false
 	requireBlockStart := 0
 	replaceBlockStart := 0
+	blockDirectives := map[string]bool{
+		"require": true, "replace": true, "exclude": true, "retract": true,
+		"module": true, "go": true, "toolchain": true, "use": true, "godebug": true,
+	}
 
 	for i, rawLine := range lines {
 		lineNum := i + 1
@@ -93,20 +99,44 @@ func ParseGoMod(content string) (*GoMod, []review.Finding) {
 			continue
 		}
 
-		// Handle block ends
-		if inRequireBlock && line == ")" {
-			inRequireBlock = false
+		if line == "exclude (" || strings.HasPrefix(line, "exclude (") {
+			inExcludeBlock = true
 			continue
 		}
-		if inReplaceBlock && line == ")" {
-			inReplaceBlock = false
+
+		if line == "retract (" || strings.HasPrefix(line, "retract (") {
+			inRetractBlock = true
+			continue
+		}
+
+		// Handle block ends
+		if line == ")" {
+			if inRequireBlock {
+				inRequireBlock = false
+			}
+			if inReplaceBlock {
+				inReplaceBlock = false
+			}
+			if inExcludeBlock {
+				inExcludeBlock = false
+			}
+			if inRetractBlock {
+				inRetractBlock = false
+			}
+			continue
+		}
+
+		// exclude/retract block contents are not requirements; skip them.
+		if inExcludeBlock || inRetractBlock {
 			continue
 		}
 
 		// Inside require block
 		if inRequireBlock {
 			m := blockRequireRe.FindStringSubmatch(line)
-			if m != nil {
+			// Reject directive keywords and comment-leading tokens so a
+			// stray directive line cannot become a phantom requirement.
+			if m != nil && !blockDirectives[m[1]] && !strings.HasPrefix(m[1], "//") {
 				mod.Requires = append(mod.Requires, RequireEntry{
 					Path:     m[1],
 					Version:  m[2],
@@ -289,8 +319,16 @@ func collectImportPaths(repoRoot string) (map[string]bool, int, error) {
 			return nil
 		}
 		if d.IsDir() {
-			if p != repoRoot && skipSourceDir(d.Name()) {
-				return filepath.SkipDir
+			if p != repoRoot {
+				if skipSourceDir(d.Name()) {
+					return filepath.SkipDir
+				}
+				// A directory with its own go.mod is a separate module:
+				// its imports must not satisfy this module's requirements
+				// (analyzeNestedGoMods covers it independently).
+				if _, err := os.Stat(filepath.Join(p, "go.mod")); err == nil {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}

@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -176,7 +177,11 @@ type MatrixResult struct {
 // direction attribution; deploy order should therefore use
 // zero-padded or semver-sortable labels. Each unordered pair is
 // compared once and evaluated for both directions.
-func EvaluateMatrix(set *SnapshotSet, versions []string) *MatrixResult {
+//
+// The comparison is O(V^2) in the number of versions; ctx bounds the
+// work — cancellation or deadline returns the partial matrix with
+// ctx.Err() so callers can distinguish incomplete results.
+func EvaluateMatrix(ctx context.Context, set *SnapshotSet, versions []string) (*MatrixResult, error) {
 	res := &MatrixResult{
 		Cells: make(map[string]map[string]MatrixCell),
 	}
@@ -224,6 +229,9 @@ func EvaluateMatrix(set *SnapshotSet, versions []string) *MatrixResult {
 	// the matching (client, server) cells.
 	for i := 0; i < len(vers); i++ {
 		for j := i + 1; j < len(vers); j++ {
+			if err := ctx.Err(); err != nil {
+				return res, err
+			}
 			va, vb := vers[i], vers[j]
 			sa, sb := set.Snapshot(va), set.Snapshot(vb)
 			if sa == nil || sb == nil {
@@ -259,7 +267,7 @@ func EvaluateMatrix(set *SnapshotSet, versions []string) *MatrixResult {
 	}
 	res.Findings = analysis.AssignFindingIDs(all)
 	analysis.SortFindings(res.Findings)
-	return res
+	return res, nil
 }
 
 func (r *MatrixResult) cell(client, server string) MatrixCell {

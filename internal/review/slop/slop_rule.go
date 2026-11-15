@@ -1,6 +1,7 @@
 package slop
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -27,8 +28,17 @@ func (SlopRule) Name() string {
 }
 
 func (r SlopRule) Analyze(fileDiffs []FileDiff) []Finding {
+	return r.AnalyzeContext(context.Background(), fileDiffs)
+}
+
+// AnalyzeContext is Analyze with cancellation: the per-file loop checks
+// ctx so a timed-out review stops scheduling further file analyses.
+func (r SlopRule) AnalyzeContext(ctx context.Context, fileDiffs []FileDiff) []Finding {
 	var findings []Finding
 	for _, fd := range fileDiffs {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		// Do not attempt AST analysis on deleted files
 		if fd.ChangeType == FileDeleted {
 			continue

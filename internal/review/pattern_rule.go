@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -24,6 +25,15 @@ type ruleRuntime struct {
 
 // EnableWorkingTree switches the rule to read working-tree sources.
 func (r *ruleRuntime) EnableWorkingTree() { r.workingTree = true }
+
+// ScopeToSandbox retargets the rule's source reads to dir and enables
+// working-tree reads. Used by the repair engine so sandbox verification
+// analyzes the sandbox copy rather than the real repository. Because it
+// mutates the rule, callers must invoke it on a copy.
+func (r *ruleRuntime) ScopeToSandbox(dir string) {
+	r.repositoryRoot = dir
+	r.workingTree = true
+}
 
 // WorkingTreeAware is implemented by rules that can switch to working-tree
 // source reads for audit mode.
@@ -76,9 +86,16 @@ type patternRule struct {
 func (r *patternRule) Name() string { return r.name }
 
 func (r *patternRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r *patternRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 	for _, block := range sourceBlocks(diff, r.repositoryRoot, r.workingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if r.filePattern != nil && !r.filePattern.MatchString(block.file) {
 			continue
 		}
@@ -188,8 +205,15 @@ type filenameRule struct {
 func (r *filenameRule) Name() string { return r.name }
 
 func (r *filenameRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r *filenameRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, fileDiff := range ParseDiff(diff) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		path := filepath.ToSlash(fileDiff.Path)
 		if !r.pattern.MatchString(path) {
 			continue

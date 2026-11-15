@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -228,10 +229,17 @@ func isCommonNonSecret(token string) bool {
 }
 
 func (r EntropyRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r EntropyRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if isGeneratedDataFile(block.file) || isTestSourceFile(block.file) {
 			continue
 		}

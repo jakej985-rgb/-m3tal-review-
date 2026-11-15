@@ -184,9 +184,15 @@ func (g *findingGroup) matches(f Finding, normPath, analyzer string) bool {
 		}
 	}
 
-	// 2. Check identical base key (identical substantive signature on same file)
-	if BaseFindingKey(f) == BaseFindingKey(g.primary) {
-		return true
+	// 2. Check identical base key against EVERY member, not just the
+	// primary: transitive matches (C matches member B but not primary
+	// A) must join the same group instead of splitting. Runs before
+	// the same-analyzer guard, matching prior semantics.
+	fKey := BaseFindingKey(f)
+	for _, member := range g.findings {
+		if fKey == BaseFindingKey(member) {
+			return true
+		}
 	}
 
 	// Findings from the same analyzer with different rules are distinct issues.
@@ -194,20 +200,25 @@ func (g *findingGroup) matches(f Finding, normPath, analyzer string) bool {
 		return false
 	}
 
-	// 3. Same line across different analyzers with matching domain or signature
-	if f.Line > 0 && f.Line == g.primary.Line {
-		dom1 := ruleSemanticDomain(g.primary.Rule, InferAnalyzer(g.primary))
-		dom2 := ruleSemanticDomain(f.Rule, analyzer)
-		if dom1 != "" && dom1 == dom2 {
-			return true
-		}
-		if SubstantiveFindingSignature(f) == SubstantiveFindingSignature(g.primary) {
-			return true
-		}
-		cleanRule1 := strings.TrimPrefix(strings.TrimPrefix(g.primary.Rule, "gosec-"), "gitleaks-")
-		cleanRule2 := strings.TrimPrefix(strings.TrimPrefix(f.Rule, "gosec-"), "gitleaks-")
-		if cleanRule1 == cleanRule2 {
-			return true
+	// 3. Same line across different analyzers with matching domain
+	// or signature — evaluated against every member so grouping is
+	// transitively closed.
+	fSig := SubstantiveFindingSignature(f)
+	cleanRule := strings.TrimPrefix(strings.TrimPrefix(f.Rule, "gosec-"), "gitleaks-")
+	for _, member := range g.findings {
+		if f.Line > 0 && f.Line == member.Line {
+			dom1 := ruleSemanticDomain(member.Rule, InferAnalyzer(member))
+			dom2 := ruleSemanticDomain(f.Rule, analyzer)
+			if dom1 != "" && dom1 == dom2 {
+				return true
+			}
+			if fSig == SubstantiveFindingSignature(member) {
+				return true
+			}
+			cleanMember := strings.TrimPrefix(strings.TrimPrefix(member.Rule, "gosec-"), "gitleaks-")
+			if cleanMember == cleanRule {
+				return true
+			}
 		}
 	}
 
@@ -293,6 +304,12 @@ func (g *findingGroup) toFinding() Finding {
 	if len(analyzers) > 1 {
 		maxConf = "high"
 	}
+	// Findings that reach grouping without a confidence (pattern-tier
+	// and custom rules emit heuristic matches with no corroborating
+	// evidence) are honestly "low" rather than blank.
+	if maxConf == "" {
+		maxConf = "low"
+	}
 	out.Severity = maxSev
 	out.Confidence = maxConf
 
@@ -305,6 +322,55 @@ func (g *findingGroup) toFinding() Finding {
 	out.AdvisoryIDs = advisories
 	if out.AdvisoryID == "" && len(advisories) > 0 {
 		out.AdvisoryID = advisories[0]
+	}
+
+	// Merge metadata across every grouped finding. When severity
+	// promotion swaps the primary, the previous primary's metadata
+	// (e.g. analysis_truncated, analysis_truncation_reasons) must not
+	// be silently dropped. First writer wins in group order; the
+	// current primary then overrides on conflicts.
+	merged := make(map[string]string)
+	for _, f := range g.findings {
+		for k, v := range f.Metadata {
+			if _, ok := merged[k]; !ok {
+				merged[k] = v
+			}
+		}
+	}
+	for k, v := range g.primary.Metadata {
+		merged[k] = v
+	}
+	if len(merged) > 0 {
+		out.Metadata = merged
+	} else {
+		out.Metadata = nil
+	}
+
+	// Fill display fields the promoted primary may lack from earlier
+	// members so promotion does not erase them.
+	if out.Snippet == "" {
+		for _, f := range g.findings {
+			if f.Snippet != "" {
+				out.Snippet = f.Snippet
+				break
+			}
+		}
+	}
+	if out.Reachability == "" {
+		for _, f := range g.findings {
+			if f.Reachability != "" {
+				out.Reachability = f.Reachability
+				break
+			}
+		}
+	}
+	if out.Signature == "" {
+		for _, f := range g.findings {
+			if f.Signature != "" {
+				out.Signature = f.Signature
+				break
+			}
+		}
 	}
 
 	out.Evidence = g.evidences

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,12 +34,19 @@ var (
 )
 
 func (r ActionsScriptInjectionRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r ActionsScriptInjectionRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 	const message = "Event data interpolated into workflow; risk of script injection"
 	const remediation = "Pass event data through environment variables instead of interpolating ${{ }} into run scripts."
 
 	for _, block := range sourceBlocks(diff, r.repositoryRoot, r.workingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !workflowFileRe.MatchString(block.file) {
 			continue
 		}

@@ -357,6 +357,54 @@ func TestRepairWorkflowDryRun(t *testing.T) {
 	}
 }
 
+// scopedFakeRule implements review.Rule plus the sandboxScoper interface
+// used for rules with unexported runtime state (e.g. patternRule).
+type scopedFakeRule struct {
+	name      string
+	scopedDir string
+}
+
+func (r *scopedFakeRule) Name() string                  { return r.name }
+func (r *scopedFakeRule) Check(string) []review.Finding { return nil }
+func (r *scopedFakeRule) ScopeToSandbox(dir string)     { r.scopedDir = dir }
+
+func TestScopeRulesToDirUsesScoperAndCopies(t *testing.T) {
+	orig := &scopedFakeRule{name: "fake"}
+	scoped := scopeRulesToDir([]review.Rule{orig}, "/sandbox/dir")
+	if len(scoped) != 1 {
+		t.Fatalf("expected 1 scoped rule, got %d", len(scoped))
+	}
+	got, ok := scoped[0].(*scopedFakeRule)
+	if !ok {
+		t.Fatalf("expected *scopedFakeRule, got %T", scoped[0])
+	}
+	if got.scopedDir != "/sandbox/dir" {
+		t.Errorf("expected ScopeToSandbox(/sandbox/dir), got %q", got.scopedDir)
+	}
+	if orig.scopedDir != "" {
+		t.Error("scoping mutated the original rule; caller's rule set must not change")
+	}
+	if got == orig {
+		t.Error("scoped rule aliases the original; mutations would leak")
+	}
+}
+
+// ExtraRules returns patternRule values whose repository root lives in
+// unexported embedded state; scoping must retarget them via ScopeToSandbox
+// rather than silently failing reflection (audit finding R11).
+func TestScopeRulesToDirExtraRules(t *testing.T) {
+	rules := review.ExtraRules("/real/repo")
+	if len(rules) == 0 {
+		t.Fatal("ExtraRules returned no rules")
+	}
+	scoped := scopeRulesToDir(rules, "/sandbox/dir")
+	for i, r := range scoped {
+		if r == rules[i] {
+			t.Errorf("rule %d (%T) was not copied/scoped", i, r)
+		}
+	}
+}
+
 func TestRepairWorkflowScopeRulesWorkingTree(t *testing.T) {
 	rules := []review.Rule{
 		review.PermissionsRule{RepositoryRoot: "/orig/repo", WorkingTree: false},

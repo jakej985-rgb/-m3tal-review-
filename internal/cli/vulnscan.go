@@ -85,11 +85,12 @@ var manifestNames = map[string]func(string, string) []depRef{
 }
 
 // collectDependencies parses supported manifests anywhere under root and
-// returns pinned dependency references. Multi-module repositories (a go.mod
-// per plugin, package.json per workspace package) are all covered. Missing
-// manifests are ignored; parse failures are non-fatal (that file simply
-// contributes no deps). Vendored and dependency directories are skipped.
-func collectDependencies(root string) []depRef {
+// returns pinned dependency references plus the number of deps dropped by
+// the maxVulnDeps cap. Multi-module repositories (a go.mod per plugin,
+// package.json per workspace package) are all covered. Missing manifests
+// are ignored; parse failures are non-fatal (that file simply contributes
+// no deps). Vendored and dependency directories are skipped.
+func collectDependencies(root string) ([]depRef, int) {
 	var deps []depRef
 	skipDirs := map[string]bool{
 		".git": true, "vendor": true, "node_modules": true,
@@ -161,10 +162,12 @@ func collectDependencies(root string) []depRef {
 		}
 		return deps[i].Version < deps[j].Version
 	})
+	var dropped int
 	if len(deps) > maxVulnDeps {
+		dropped = len(deps) - maxVulnDeps
 		deps = deps[:maxVulnDeps]
 	}
-	return deps
+	return deps, dropped
 }
 
 func containsString(list []string, s string) bool {
@@ -293,6 +296,13 @@ func queryOSV(ctx context.Context, deps []depRef) ([]review.Finding, error) {
 			rawSev := cvssRawScore(v.Severity)
 			for _, file := range files {
 				if len(findings) >= maxVulnFindings {
+					findings = append(findings, review.Finding{
+						Category:    "confidence",
+						Rule:        "vuln-scan-truncated",
+						Severity:    "low",
+						Message:     fmt.Sprintf("vulnerability scan stopped at the %d-finding cap; additional OSV results were not reported", maxVulnFindings),
+						Remediation: "Narrow the scan (e.g. --only/--skip or fewer manifests) to see remaining results.",
+					})
 					return findings, nil
 				}
 				findings = append(findings, review.Finding{
@@ -381,11 +391,21 @@ func ruleAllowed(only, skip []string, ruleName string) bool {
 // runVulnScan collects dependencies and queries OSV. Returns findings;
 // errors are returned so the caller can warn without aborting the audit.
 func runVulnScan(repositoryRoot string) ([]review.Finding, error) {
-	deps := collectDependencies(repositoryRoot)
+	deps, dropped := collectDependencies(repositoryRoot)
 	if len(deps) == 0 {
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	return queryOSV(ctx, deps)
+	findings, err := queryOSV(ctx, deps)
+	if dropped > 0 {
+		findings = append(findings, review.Finding{
+			Category:    "confidence",
+			Rule:        "vuln-scan-truncated",
+			Severity:    "low",
+			Message:     fmt.Sprintf("vulnerability scan covered only the first %d of %d dependencies; %d were not queried", maxVulnDeps, maxVulnDeps+dropped, dropped),
+			Remediation: "Reduce the dependency count or raise the scan limit; results are incomplete.",
+		})
+	}
+	return findings, err
 }

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"go/scanner"
 	"go/token"
 	"path"
@@ -18,8 +19,15 @@ func (TLSRule) Name() string {
 }
 
 func (r TLSRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r TLSRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, fileDiff := range ParseDiff(diff) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !strings.EqualFold(path.Ext(fileDiff.Path), ".go") {
 			continue
 		}

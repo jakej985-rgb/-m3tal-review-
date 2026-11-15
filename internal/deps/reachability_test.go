@@ -207,3 +207,45 @@ func TestEnrichFindingWithReachability(t *testing.T) {
 		t.Errorf("evidence analyzer = %q, want 'reachability-analyzer'", ev.Analyzer)
 	}
 }
+
+// D1 follow-up: imports inside a nested module must not make a root
+// dependency appear reachable — the nested module has its own manifest.
+func TestGoReachabilityNestedModuleDoesNotCount(t *testing.T) {
+	tempDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte(`module example.com/root
+
+go 1.22
+
+require github.com/only/nested v1.0.0
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	nestedDir := filepath.Join(tempDir, "sub", "mod")
+	if err := os.MkdirAll(nestedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nestedDir, "go.mod"), []byte("module example.com/nested\n\ngo 1.22\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nestedDir, "main.go"), []byte(`package main
+
+import (
+	"fmt"
+	"github.com/only/nested"
+)
+
+func main() { fmt.Println(nested.X) }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := AssessReachability(tempDir, "github.com/only/nested", "Go", true)
+	if res.Status != ReachabilityUnreachable {
+		t.Fatalf("expected Unreachable for root dep imported only inside nested module, got %s (%s)", res.Status, res.Rationale)
+	}
+}

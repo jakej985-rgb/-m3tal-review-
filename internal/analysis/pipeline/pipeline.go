@@ -108,6 +108,10 @@ type Options struct {
 	// MaxDiagnostics bounds recorded load diagnostics (frontend
 	// default 2048; negative unlimited).
 	MaxDiagnostics int
+	// BuildFlags are passed through to the go list driver (e.g.
+	// "-tags=integration"). They affect which files the frontend
+	// models, so they are part of the Loader cache key.
+	BuildFlags []string
 
 	// ContractDir is the directory scanned for statemachine/1,
 	// typestate/1, authproto/1, and protocol/1 documents. Empty

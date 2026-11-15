@@ -56,12 +56,14 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		value := ""
+		hasValue := false
 		if idx := strings.Index(arg, "="); idx >= 0 && strings.HasPrefix(arg, "--") {
 			arg, value = arg[:idx], arg[idx+1:]
+			hasValue = true
 		}
 		options.seen[arg] = true
 		next := func() (string, error) {
-			if value != "" {
+			if hasValue {
 				return value, nil
 			}
 			if i+1 >= len(args) {
@@ -122,11 +124,11 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 		case "--pr-comment":
 			options.PRComment = true
 		case "--check-run-sha":
-			if i+1 >= len(args) {
-				return options, fmt.Errorf("--check-run-sha requires a value")
+			v, err := next()
+			if err != nil {
+				return options, err
 			}
-			i++
-			options.CheckRunSHA = args[i]
+			options.CheckRunSHA = v
 		case "--write-baseline":
 			v, err := next()
 			if err != nil {
