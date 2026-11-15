@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -85,8 +86,15 @@ type namedFunc struct {
 }
 
 func (r CredentialFilePermRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r CredentialFilePermRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, block := range sourceBlocks(diff, r.repositoryRoot, r.workingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		// Test files legitimately write credential-shaped fixtures with
 		// permissive temp perms; production credential stores are the risk.
 		if isTestSourceFile(block.file) {

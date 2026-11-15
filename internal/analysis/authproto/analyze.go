@@ -67,11 +67,14 @@ type Result struct {
 // contracts. It is purely model-based: no program is consulted, so
 // source-bound fields contribute declared assumptions only. Pass the
 // result of Evaluate for source-verified generation claims.
-func Analyze(_ context.Context, contracts []*Contract, _ Options) (*Result, error) {
+func Analyze(ctx context.Context, contracts []*Contract, _ Options) (*Result, error) {
 	res := &Result{}
 	for _, c := range contracts {
 		if c == nil {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return res, err
 		}
 		res.Diagnostics = append(res.Diagnostics, c.Check()...)
 		res.Diagnostics = append(res.Diagnostics, checkContract(c, res)...)

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -25,8 +26,15 @@ var (
 )
 
 func (r CleartextTransportRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r CleartextTransportRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !strings.HasSuffix(block.file, ".go") || strings.HasSuffix(block.file, "_test.go") {
 			continue
 		}
@@ -171,8 +179,15 @@ func routeReceiver(match string) string {
 }
 
 func (r UnauthenticatedRouteRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r UnauthenticatedRouteRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !strings.HasSuffix(block.file, ".go") || strings.HasSuffix(block.file, "_test.go") {
 			continue
 		}

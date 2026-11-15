@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -29,23 +30,33 @@ func commandWatch(interval time.Duration) error {
 	if err != nil {
 		return err
 	}
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
+
+	// SIGINT/SIGTERM cancels the context, which also interrupts an
+	// in-flight review instead of only being noticed between iterations.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	var lastHash string
 	for {
 		diff, err := git.StagedDiff(repositoryRoot)
 		if err != nil {
-			return err
-		}
-		if diff != "" {
+			// Transient failures (e.g. index.lock during a concurrent
+			// git operation) must not kill the watch loop.
+			fmt.Fprintf(os.Stderr, "watch: staged diff failed: %v\n", err)
+		} else if diff == "" {
+			// Reset so re-staging identical content re-reports.
+			lastHash = ""
+		} else {
 			sum := sha256.Sum256([]byte(diff))
 			hash := hex.EncodeToString(sum[:])
 			if hash != lastHash {
 				lastHash = hash
 				fmt.Printf("=== %s — %d bytes staged ===\n", time.Now().Format("15:04:05"), len(diff))
-				findings := review.NewEngine(defaultRules(repositoryRoot)...).Run(diff)
+				findings := review.NewEngine(defaultRules(repositoryRoot)...).RunContext(ctx, diff)
+				if ctx.Err() != nil {
+					fmt.Println("\nWatch stopped.")
+					return nil
+				}
 				findings = review.ApplyFindingFilters(diff, findings, repositoryRoot, false)
 				if len(findings) == 0 {
 					fmt.Println("No findings.")
@@ -60,7 +71,7 @@ func commandWatch(interval time.Duration) error {
 			}
 		}
 		select {
-		case <-sigCh:
+		case <-ctx.Done():
 			fmt.Println("\nWatch stopped.")
 			return nil
 		case <-time.After(interval):

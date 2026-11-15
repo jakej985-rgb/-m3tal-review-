@@ -38,6 +38,7 @@ type RepairResult struct {
 	Outcome    RepairOutcome                        `json:"outcome"`
 	Applied    bool                                 `json:"applied"`
 	AuditPath  string                               `json:"audit_path"`
+	AuditError string                               `json:"audit_error,omitempty"`
 	Error      error                                `json:"error,omitempty"`
 }
 
@@ -65,6 +66,21 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 		AuditPath: auditPath,
 	}
 
+	var auditErr error
+
+	// recordAudit appends the durable audit entry and surfaces persistence
+	// failures: a repair whose audit record cannot be written is reported
+	// with AuditError/Error set even though the outcome itself stands.
+	recordAudit := func(entry RepairAuditEntry) {
+		if err := AppendRepairAudit(auditPath, entry); err != nil {
+			result.AuditError = fmt.Sprintf("repair audit persistence failed: %v", err)
+			auditErr = fmt.Errorf("%s", result.AuditError)
+			if result.Error == nil {
+				result.Error = auditErr
+			}
+		}
+	}
+
 	// 1. Check fixer eligibility
 	fixer := FindFixerForFinding(finding)
 	if fixer == nil {
@@ -77,8 +93,8 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 			Attempts:        0,
 			Error:           "no allowlisted deterministic fixer eligible for finding",
 		}
-		_ = AppendRepairAudit(auditPath, entry)
-		return result, nil
+		recordAudit(entry)
+		return result, auditErr
 	}
 
 	maxAttempts := e.MaxAttempts
@@ -109,8 +125,8 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 			Attempts:        1,
 			Error:           err.Error(),
 		}
-		_ = AppendRepairAudit(auditPath, entry)
-		return result, nil
+		recordAudit(entry)
+		return result, auditErr
 	}
 
 	targetPath := filepath.Join(e.RepoRoot, finding.File)
@@ -128,8 +144,8 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 			Attempts:        1,
 			Error:           err.Error(),
 		}
-		_ = AppendRepairAudit(auditPath, entry)
-		return result, nil
+		recordAudit(entry)
+		return result, auditErr
 	}
 
 	currentContent := string(baseContent)
@@ -186,16 +202,24 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 				}
 			}()
 
+			// Generate diffs representing original defect vs repaired snapshot
+			origDiff := FileToAddedDiff(prop.TargetFile, prop.OriginalContent)
+			repairedDiff := FileToAddedDiff(prop.TargetFile, prop.ProposedContent)
+
+			// Scope verification rules to sandbox directory so rule source reads the repaired sandbox files
+			sandboxRules := scopeRulesToDir(e.Rules, sb.TempDir)
+
+			// Capture the baseline BEFORE applying the proposal: rules read
+			// file contents from the sandbox, so once the repaired content is
+			// written the original diff can no longer be evaluated correctly.
+			baselineFindings := review.NewEngine(sandboxRules...).RunContext(ctx, origDiff)
+
 			// Apply proposal inside sandbox
 			if err := sb.ApplyProposal(prop); err != nil {
 				lastErr = err
 				validationLogs.WriteString(fmt.Sprintf("Attempt %d: apply proposal in sandbox: %v\n", attempt, err))
 				return
 			}
-
-			// Generate diffs representing original defect vs repaired snapshot
-			origDiff := FileToAddedDiff(prop.TargetFile, prop.OriginalContent)
-			repairedDiff := FileToAddedDiff(prop.TargetFile, prop.ProposedContent)
 
 			// Targeted test runner
 			var testRunner func() error
@@ -205,11 +229,8 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 				testRunner = defaultGoTestRunner(sb.TempDir)
 			}
 
-			// Scope verification rules to sandbox directory so rule source reads the repaired sandbox files
-			sandboxRules := scopeRulesToDir(e.Rules, sb.TempDir)
-
 			// Execute VerifyRemediation
-			vRes := review.VerifyRemediation(finding, origDiff, repairedDiff, sandboxRules, testRunner)
+			vRes := review.VerifyRemediationWithBaseline(ctx, finding, origDiff, repairedDiff, sandboxRules, testRunner, baselineFindings)
 			finalVerification = vRes
 			validationLogs.WriteString(fmt.Sprintf("Attempt %d: status=%s explanation=%s\n", attempt, vRes.Status, vRes.Explanation))
 
@@ -234,7 +255,9 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 	result.Proposal = finalProposal
 	result.Attempts = attempts
 	result.Validation = finalVerification
-	result.Error = lastErr
+	if !verifiedFixed {
+		result.Error = lastErr
+	}
 
 	// 3. Evaluate outcome
 	if !verifiedFixed {
@@ -260,8 +283,8 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 			Applied:         false,
 			Error:           errString(lastErr),
 		}
-		_ = AppendRepairAudit(auditPath, auditEntry)
-		return result, nil
+		recordAudit(auditEntry)
+		return result, auditErr
 	}
 
 	// 4. Verification succeeded: handle explicit approval
@@ -282,19 +305,31 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 			Approved:        false,
 			Applied:         false,
 		}
-		_ = AppendRepairAudit(auditPath, auditEntry)
-		return result, nil
+		recordAudit(auditEntry)
+		return result, auditErr
 	}
+
+	// Snapshot the verified proposal. The approval callback receives a copy
+	// so it cannot mutate the verified content; afterwards the proposal is
+	// re-checked to guarantee what gets applied is what was verified.
+	verifiedContent := finalProposal.ProposedContent
+	verifiedPatch := finalProposal.Patch
 
 	approved := false
 	if e.ApprovalHandler != nil {
-		appr, err := e.ApprovalHandler(finalProposal, finalVerification)
+		propCopy := *finalProposal
+		appr, err := e.ApprovalHandler(&propCopy, finalVerification)
 		if err != nil {
 			result.Error = err
 			result.Outcome = OutcomeRejected
 		} else {
 			approved = appr
 		}
+	}
+
+	if approved && (finalProposal.ProposedContent != verifiedContent || finalProposal.Patch != verifiedPatch) {
+		approved = false
+		result.Error = fmt.Errorf("proposal mutated after sandbox verification; refusing to apply unverified content")
 	}
 
 	if !approved {
@@ -316,8 +351,8 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 			Approved:        false,
 			Applied:         false,
 		}
-		_ = AppendRepairAudit(auditPath, auditEntry)
-		return result, nil
+		recordAudit(auditEntry)
+		return result, auditErr
 	}
 
 	// 5. Explicitly approved: apply to the real repository working tree
@@ -342,7 +377,10 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 			Applied:         false,
 			Error:           errString(result.Error),
 		}
-		_ = AppendRepairAudit(auditPath, auditEntry)
+		recordAudit(auditEntry)
+		if auditErr != nil {
+			return result, fmt.Errorf("%v; %w", result.Error, auditErr)
+		}
 		return result, result.Error
 	}
 
@@ -363,8 +401,8 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 		Approved:        true,
 		Applied:         true,
 	}
-	_ = AppendRepairAudit(auditPath, auditEntry)
-	return result, nil
+	recordAudit(auditEntry)
+	return result, auditErr
 }
 
 // RepairFindings repairs a collection of findings sequentially.
@@ -415,45 +453,82 @@ func errString(err error) string {
 	return err.Error()
 }
 
+// sandboxScoper is implemented by rules that can retarget their source
+// reads to a sandbox directory (e.g. ruleRuntime-based pattern rules).
+type sandboxScoper interface {
+	ScopeToSandbox(dir string)
+}
+
 func scopeRulesToDir(rules []review.Rule, dir string) []review.Rule {
 	if len(rules) == 0 {
 		return rules
 	}
 	scoped := make([]review.Rule, len(rules))
 	for i, r := range rules {
-		val := reflect.ValueOf(r)
-		if val.Kind() == reflect.Struct {
-			valCopy := reflect.New(val.Type()).Elem()
-			valCopy.Set(val)
-			field := valCopy.FieldByName("RepositoryRoot")
-			if field.IsValid() && field.CanSet() && field.Kind() == reflect.String {
-				field.SetString(dir)
-			}
-			fieldWT := valCopy.FieldByName("WorkingTree")
-			if fieldWT.IsValid() && fieldWT.CanSet() && fieldWT.Kind() == reflect.Bool {
-				fieldWT.SetBool(true)
-			}
-			if newRule, ok := valCopy.Interface().(review.Rule); ok {
-				scoped[i] = newRule
-				continue
-			}
-		} else if val.Kind() == reflect.Pointer && val.Elem().Kind() == reflect.Struct {
-			valCopy := reflect.New(val.Elem().Type())
-			valCopy.Elem().Set(val.Elem())
-			field := valCopy.Elem().FieldByName("RepositoryRoot")
-			if field.IsValid() && field.CanSet() && field.Kind() == reflect.String {
-				field.SetString(dir)
-			}
-			fieldWT := valCopy.Elem().FieldByName("WorkingTree")
-			if fieldWT.IsValid() && fieldWT.CanSet() && fieldWT.Kind() == reflect.Bool {
-				fieldWT.SetBool(true)
-			}
-			if newRule, ok := valCopy.Interface().(review.Rule); ok {
-				scoped[i] = newRule
-				continue
+		// Rules with unexported runtime state cannot be retargeted via
+		// reflection; copy them and use their scoping method instead.
+		if _, ok := r.(sandboxScoper); ok {
+			if c := copyRuleValue(r); c != nil {
+				if sc, ok := c.(sandboxScoper); ok {
+					sc.ScopeToSandbox(dir)
+					scoped[i] = c
+					continue
+				}
 			}
 		}
-		scoped[i] = r
+		scoped[i] = scopeRuleFields(r, dir)
 	}
 	return scoped
+}
+
+// copyRuleValue returns a shallow copy of a rule (pointer or value) so
+// scoping mutations never leak into the caller's rule set.
+func copyRuleValue(r review.Rule) review.Rule {
+	val := reflect.ValueOf(r)
+	switch {
+	case val.Kind() == reflect.Pointer && !val.IsNil():
+		cp := reflect.New(val.Elem().Type())
+		cp.Elem().Set(val.Elem())
+		if nr, ok := cp.Interface().(review.Rule); ok {
+			return nr
+		}
+	case val.Kind() == reflect.Struct:
+		cp := reflect.New(val.Type())
+		cp.Elem().Set(val)
+		if nr, ok := cp.Interface().(review.Rule); ok {
+			return nr
+		}
+	}
+	return nil
+}
+
+func scopeRuleFields(r review.Rule, dir string) review.Rule {
+	val := reflect.ValueOf(r)
+	if val.Kind() == reflect.Struct {
+		valCopy := reflect.New(val.Type()).Elem()
+		valCopy.Set(val)
+		setScopeFields(valCopy, dir)
+		if newRule, ok := valCopy.Interface().(review.Rule); ok {
+			return newRule
+		}
+	} else if val.Kind() == reflect.Pointer && val.Elem().Kind() == reflect.Struct {
+		valCopy := reflect.New(val.Elem().Type())
+		valCopy.Elem().Set(val.Elem())
+		setScopeFields(valCopy.Elem(), dir)
+		if newRule, ok := valCopy.Interface().(review.Rule); ok {
+			return newRule
+		}
+	}
+	return r
+}
+
+func setScopeFields(v reflect.Value, dir string) {
+	field := v.FieldByName("RepositoryRoot")
+	if field.IsValid() && field.CanSet() && field.Kind() == reflect.String {
+		field.SetString(dir)
+	}
+	fieldWT := v.FieldByName("WorkingTree")
+	if fieldWT.IsValid() && fieldWT.CanSet() && fieldWT.Kind() == reflect.Bool {
+		fieldWT.SetBool(true)
+	}
 }

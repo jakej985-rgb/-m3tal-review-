@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -110,7 +111,7 @@ func TestVerifyRemediation(t *testing.T) {
 	rules := ExtraRules("/tmp/nonexistent-root")
 
 	// 1. Unchanged diff -> unfixed
-	resUnchanged := VerifyRemediation(finding, vulnDiff, vulnDiff, rules, nil)
+	resUnchanged := VerifyRemediation(context.Background(), finding, vulnDiff, vulnDiff, rules, nil)
 	if resUnchanged.Status != "unfixed" {
 		t.Fatalf("expected status 'unfixed', got %q", resUnchanged.Status)
 	}
@@ -118,7 +119,7 @@ func TestVerifyRemediation(t *testing.T) {
 	// 2. Changed code but vulnerability remains -> unfixed
 	stillVulnCode := "package auth\n// changed comment\nfunc Verify(token, expected string) bool {\n\treturn token == expected\n}\n"
 	stillVulnDiff := extraDiff("auth.go", stillVulnCode)
-	resStillVuln := VerifyRemediation(finding, vulnDiff, stillVulnDiff, rules, nil)
+	resStillVuln := VerifyRemediation(context.Background(), finding, vulnDiff, stillVulnDiff, rules, nil)
 	if resStillVuln.Status != "unfixed" {
 		t.Fatalf("expected status 'unfixed', got %q", resStillVuln.Status)
 	}
@@ -126,7 +127,7 @@ func TestVerifyRemediation(t *testing.T) {
 	// 3. Repair introduces a new blocking defect (hardcoded secret) -> new_blocking_findings
 	newBugCode := "package auth\nimport \"crypto/subtle\"\nconst JWT_SECRET = \"supersecret1234567890\"\nfunc Verify(token, expected string) bool {\n\treturn subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1\n}\n"
 	newBugDiff := extraDiff("auth.go", newBugCode)
-	resNewBug := VerifyRemediation(finding, vulnDiff, newBugDiff, rules, nil)
+	resNewBug := VerifyRemediation(context.Background(), finding, vulnDiff, newBugDiff, rules, nil)
 	if resNewBug.Status != "new_blocking_findings" {
 		t.Fatalf("expected status 'new_blocking_findings', got %q (%s)", resNewBug.Status, resNewBug.Explanation)
 	}
@@ -134,7 +135,7 @@ func TestVerifyRemediation(t *testing.T) {
 	// 4. Failing regression tests -> regression_failure
 	cleanCode := "package auth\nimport \"crypto/subtle\"\nfunc Verify(token, expected string) bool {\n\treturn subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1\n}\n"
 	cleanDiff := extraDiff("auth.go", cleanCode)
-	resTestFail := VerifyRemediation(finding, vulnDiff, cleanDiff, rules, func() error {
+	resTestFail := VerifyRemediation(context.Background(), finding, vulnDiff, cleanDiff, rules, func() error {
 		return fmt.Errorf("unit test TestAuth failed: assertion failed")
 	})
 	if resTestFail.Status != "regression_failure" {
@@ -142,7 +143,7 @@ func TestVerifyRemediation(t *testing.T) {
 	}
 
 	// 5. Genuinely fixed and verified -> fixed
-	resFixed := VerifyRemediation(finding, vulnDiff, cleanDiff, rules, func() error {
+	resFixed := VerifyRemediation(context.Background(), finding, vulnDiff, cleanDiff, rules, func() error {
 		return nil
 	})
 	if resFixed.Status != "fixed" {

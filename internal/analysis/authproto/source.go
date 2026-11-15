@@ -47,7 +47,10 @@ func Evaluate(ctx context.Context, prog *semantic.Program, contracts []*Contract
 		if c == nil {
 			continue
 		}
-		checkSourceBindings(c, prog, opts, res)
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
+		checkSourceBindings(ctx, c, prog, opts, res)
 	}
 	res.finish()
 	return res, nil
@@ -64,9 +67,12 @@ const (
 
 // checkSourceBindings verifies every fresh nonce/challenge field that
 // declares a source function binding.
-func checkSourceBindings(c *Contract, prog *semantic.Program, opts Options, res *Result) {
+func checkSourceBindings(ctx context.Context, c *Contract, prog *semantic.Program, opts Options, res *Result) {
 	for i := range c.Transcript {
 		for j := range c.Transcript[i].Fields {
+			if err := ctx.Err(); err != nil {
+				return
+			}
 			f := &c.Transcript[i].Fields[j]
 			if f.Source == nil {
 				continue
@@ -86,14 +92,14 @@ func checkSourceBindings(c *Contract, prog *semantic.Program, opts Options, res 
 			if !f.Fresh {
 				continue // already flagged by the uniqueness check
 			}
-			checkNonceSource(c, prog, opts, res, f, i)
+			checkNonceSource(ctx, c, prog, opts, res, f, i)
 		}
 	}
 }
 
 // checkNonceSource resolves the bound function and classifies its
 // randomness usage.
-func checkNonceSource(c *Contract, prog *semantic.Program, opts Options, res *Result, f *FieldSpec, stepIdx int) {
+func checkNonceSource(ctx context.Context, c *Contract, prog *semantic.Program, opts Options, res *Result, f *FieldSpec, stepIdx int) {
 	spec := *f.Source
 	matches, problem := resolveFunctions(prog, spec)
 	switch {
@@ -116,7 +122,7 @@ func checkNonceSource(c *Contract, prog *semantic.Program, opts Options, res *Re
 	}
 
 	for _, fn := range matches {
-		kind, pos := scanRandUsage(fn, opts)
+		kind, pos := scanRandUsage(ctx, fn, opts)
 		switch kind {
 		case randMath:
 			res.Findings = append(res.Findings, c.finding(c, "authproto.weak-randomness",
@@ -162,7 +168,7 @@ func checkNonceSource(c *Contract, prog *semantic.Program, opts Options, res *Re
 // graph looking for calls into math/rand or crypto/rand. It returns
 // the strongest finding (math/rand wins — a may-analysis reports the
 // worst case) and the source position of the first offending call.
-func scanRandUsage(fn *semantic.Function, opts Options) (randKind, semantic.Position) {
+func scanRandUsage(ctx context.Context, fn *semantic.Function, opts Options) (randKind, semantic.Position) {
 	result := randNone
 	var pos semantic.Position
 	visited := map[string]bool{fn.ID: true}
@@ -173,6 +179,9 @@ func scanRandUsage(fn *semantic.Function, opts Options) (randKind, semantic.Posi
 	queue := []item{{fn, 0}}
 	visitedCount := 1
 	for len(queue) > 0 {
+		if err := ctx.Err(); err != nil {
+			return result, pos
+		}
 		it := queue[0]
 		queue = queue[1:]
 		for _, call := range it.fn.Calls {

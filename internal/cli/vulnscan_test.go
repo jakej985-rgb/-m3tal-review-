@@ -149,7 +149,7 @@ func TestCollectDependenciesMultiModule(t *testing.T) {
 	write("plugins/b/vendor/x/go.mod", "module example.com/vendored\n\nrequire github.com/should/not v9.9.9\n")
 	write("plugins/b/node_modules/y/package.json", `{"dependencies":{"left-pad":"1.0.0"}}`)
 
-	deps := collectDependencies(root)
+	deps, _ := collectDependencies(root)
 	files := map[string]int{}
 	for _, d := range deps {
 		files[d.File]++
@@ -185,7 +185,7 @@ func TestCollectDependenciesNestedOnly(t *testing.T) {
 	if err := os.WriteFile(p, []byte("module example.com/compose\n\ngo 1.21\n\nrequire github.com/moby/moby v24.0.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	deps := collectDependencies(root)
+	deps, _ := collectDependencies(root)
 	if len(deps) != 1 || deps[0].File != "m3tal-compose/go.mod" || deps[0].Name != "github.com/moby/moby" {
 		t.Fatalf("unexpected deps: %+v", deps)
 	}

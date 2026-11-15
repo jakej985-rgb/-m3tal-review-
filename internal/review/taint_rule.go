@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"regexp"
@@ -95,12 +96,19 @@ func validAssignLHS(lhs string) bool {
 }
 
 func (r TaintRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r TaintRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	// Group Go files by package directory so taint can propagate through
 	// intra-package helper calls (handler -> SaveStack -> atomicWriteFile).
 	blocksByDir := make(map[string][]diffSourceBlock)
 	var dirs []string
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if jsTaintFile(block.file) {
 			findings = append(findings, checkJSFile(block)...)
 			continue
@@ -835,8 +843,15 @@ var (
 )
 
 func (r ScopeDefaultRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r ScopeDefaultRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !strings.HasSuffix(block.file, ".go") {
 			continue
 		}
@@ -912,8 +927,15 @@ var (
 )
 
 func (r PluginTrustRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r PluginTrustRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !strings.HasSuffix(block.file, ".go") {
 			continue
 		}
@@ -998,8 +1020,15 @@ var (
 )
 
 func (r PrivilegedExecRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r PrivilegedExecRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !strings.HasSuffix(block.file, ".go") || strings.HasSuffix(block.file, "_test.go") {
 			continue
 		}
@@ -1056,8 +1085,15 @@ var (
 )
 
 func (r ProcessKillRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r ProcessKillRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !strings.HasSuffix(block.file, ".go") || strings.HasSuffix(block.file, "_test.go") {
 			continue
 		}
@@ -1121,8 +1157,15 @@ func (CredentialQueryRule) Name() string { return "credential-in-query" }
 var credentialQueryRe = regexp.MustCompile(`(?i)(?:URL\.Query\(\)\.Get|PostFormValue|FormValue)\s*\(\s*["'][^"']*(?:token|api_?key|secret|password|passwd|access_?key|auth)[^"']*["']|req\.query\.(?:token|api_?key|apiKey|secret|password|passwd|access_?key|auth\w*)|request\.args\.get\s*\(\s*["'][^"']*(?:token|secret|password|key)[^"']*["']`)
 
 func (r CredentialQueryRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r CredentialQueryRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		for _, m := range credentialQueryRe.FindAllStringIndex(block.text, -1) {
 			if offsetInComment(block.file, block.text, m[0]) {
 				continue
@@ -1162,8 +1205,15 @@ var (
 )
 
 func (r ResolvedPathRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r ResolvedPathRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !strings.HasSuffix(block.file, ".go") || strings.HasSuffix(block.file, "_test.go") {
 			continue
 		}

@@ -178,12 +178,30 @@ func ParseStagedFileStatuses(output []byte) (map[string]string, error) {
 
 // StagedFileStatuses returns a map of staged file paths to their git status (e.g. A, M, D, R).
 func StagedFileStatuses(path string) (map[string]string, error) {
-	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "diff", "--cached", "--name-status", "-z")
+	return fileStatuses(path, "--cached")
+}
+
+// UnstagedFileStatuses returns worktree-vs-index statuses for tracked files.
+func UnstagedFileStatuses(path string) (map[string]string, error) {
+	return fileStatuses(path, "")
+}
+
+// ChangedFileStatusesAgainst returns worktree-vs-ref statuses.
+func ChangedFileStatusesAgainst(path, ref string) (map[string]string, error) {
+	return fileStatuses(path, ref)
+}
+
+func fileStatuses(path, diffTarget string) (map[string]string, error) {
+	args := []string{"-c", "core.fsmonitor=false", "-C", path, "diff", "--name-status", "-z"}
+	if diffTarget != "" {
+		args = append(args, diffTarget)
+	}
+	command := exec.Command("git", args...)
 
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf(
-			"get staged file statuses: %s: %w",
+			"get file statuses: %s: %w",
 			strings.TrimSpace(string(output)),
 			err,
 		)
@@ -234,15 +252,16 @@ func StagedBinaryFiles(path string) ([]string, error) {
 	return ParseBinaryFilesFromNumstat(output)
 }
 
-// StagedSubmoduleFiles lists staged paths whose index mode is a Git submodule.
-func StagedSubmoduleFiles(path string) ([]string, error) {
-	staged, err := StagedFiles(path)
-	if err != nil {
-		return nil, err
+// submoduleFilesAmong lists the given paths whose index mode is a Git
+// submodule (gitlink 160000). Mode-agnostic: callers pass whichever
+// file set the review scope produced.
+func submoduleFilesAmong(path string, files []string) ([]string, error) {
+	fileSet := make(map[string]bool, len(files))
+	for _, file := range files {
+		fileSet[file] = true
 	}
-	stagedSet := make(map[string]bool, len(staged))
-	for _, file := range staged {
-		stagedSet[file] = true
+	if len(fileSet) == 0 {
+		return nil, nil
 	}
 	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "ls-files", "--stage", "-z")
 	output, err := command.CombinedOutput()
@@ -261,20 +280,55 @@ func StagedSubmoduleFiles(path string) ([]string, error) {
 		}
 		metadata := bytes.Fields(parts[0])
 		file := string(parts[1])
-		if len(metadata) >= 3 && string(metadata[0]) == "160000" && stagedSet[file] {
+		if len(metadata) >= 3 && string(metadata[0]) == "160000" && fileSet[file] {
 			submodules = append(submodules, file)
 		}
 	}
 	return submodules, nil
 }
 
+// StagedSubmoduleFiles lists staged paths whose index mode is a Git submodule.
+func StagedSubmoduleFiles(path string) ([]string, error) {
+	staged, err := StagedFiles(path)
+	if err != nil {
+		return nil, err
+	}
+	return submoduleFilesAmong(path, staged)
+}
+
+// SubmoduleFilesAmong lists the given paths whose index mode is a Git
+// submodule, for review scopes other than the staged diff.
+func SubmoduleFilesAmong(path string, files []string) ([]string, error) {
+	return submoduleFilesAmong(path, files)
+}
+
 // StagedModeChangedFiles lists staged paths whose Git mode changed without
 // treating ordinary additions and deletions as mode-only review gaps.
 func StagedModeChangedFiles(path string) ([]string, error) {
-	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "diff", "--cached", "--raw", "-z", "--no-abbrev")
+	return modeChangedFiles(path, "--cached")
+}
+
+// UnstagedModeChangedFiles lists worktree-vs-index paths whose Git mode
+// changed, excluding additions and deletions.
+func UnstagedModeChangedFiles(path string) ([]string, error) {
+	return modeChangedFiles(path, "")
+}
+
+// ModeChangedFilesAgainst lists worktree-vs-ref paths whose Git mode
+// changed, excluding additions and deletions.
+func ModeChangedFilesAgainst(path, ref string) ([]string, error) {
+	return modeChangedFiles(path, ref)
+}
+
+func modeChangedFiles(path, diffTarget string) ([]string, error) {
+	args := []string{"-c", "core.fsmonitor=false", "-C", path, "diff", "--raw", "-z", "--no-abbrev"}
+	if diffTarget != "" {
+		args = append(args, diffTarget)
+	}
+	command := exec.Command("git", args...)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("get staged mode changes: %s: %w", strings.TrimSpace(string(output)), err)
+		return nil, fmt.Errorf("get mode changes: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return ParseModeChangedFiles(output)
 }
@@ -377,6 +431,7 @@ func StagedDiff(path string) (string, error) {
 		"diff",
 		"--cached",
 		"--no-ext-diff",
+		"--no-textconv",
 		"--unified=0",
 	)
 
@@ -400,6 +455,7 @@ func UnstagedDiff(path string) (string, error) {
 		"-C", path,
 		"diff",
 		"--no-ext-diff",
+		"--no-textconv",
 		"--unified=0",
 	)
 	output, err := command.CombinedOutput()
@@ -407,6 +463,16 @@ func UnstagedDiff(path string) (string, error) {
 		return "", fmt.Errorf("get unstaged diff: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return string(output), nil
+}
+
+// UnstagedBinaryFiles lists worktree-vs-index paths represented as binary.
+func UnstagedBinaryFiles(path string) ([]string, error) {
+	command := exec.Command("git", "-c", "core.fsmonitor=false", "-C", path, "diff", "--diff-filter=ACMRTUXB", "--numstat", "-z")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("get unstaged binary files: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return ParseBinaryFilesFromNumstat(output)
 }
 
 // UnstagedFiles returns tracked files with unstaged modifications.
@@ -434,6 +500,7 @@ func WorkingTreeDiffAgainst(path, ref string) (string, error) {
 		"diff",
 		ref,
 		"--no-ext-diff",
+		"--no-textconv",
 		"--unified=0",
 	)
 
@@ -505,15 +572,12 @@ func BinaryFilesAgainst(path, ref string) ([]string, error) {
 		)
 	}
 
-	var files []string
-	for _, record := range strings.Split(string(output), "\x00") {
-		fields := strings.SplitN(record, "\t", 3)
-		if len(fields) != 3 {
-			continue
-		}
-		if fields[0] == "-" && fields[1] == "-" {
-			files = append(files, fields[2])
-		}
+	// Reuse the strict numstat parser: it handles -z rename records
+	// (reporting the new path) and rejects malformed output instead of
+	// silently skipping records.
+	files, err := ParseBinaryFilesFromNumstat(output)
+	if err != nil {
+		return nil, fmt.Errorf("parse binary files against %s: %w", ref, err)
 	}
 	sort.Strings(files)
 	return files, nil

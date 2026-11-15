@@ -29,6 +29,33 @@ type Manifest struct {
 	Capabilities     PluginCapabilities `json:"capabilities"`
 }
 
+// maxPluginOutput bounds captured plugin stdout/stderr. Reviewed
+// repositories are untrusted: a plugin flooding output must not exhaust
+// memory (mirrors the host runCommand cap in internal/cli/exec.go).
+const maxPluginOutput = 1 << 20 // 1 MiB
+
+// cappedBuffer discards bytes past the limit while still reporting the
+// full length to the writer contract, so the child never blocks on a
+// full pipe.
+type cappedBuffer struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if remaining := b.limit - b.buf.Len(); remaining > 0 {
+		if len(p) > remaining {
+			b.buf.Write(p[:remaining])
+		} else {
+			b.buf.Write(p)
+		}
+	}
+	return len(p), nil
+}
+
+func (b *cappedBuffer) Bytes() []byte  { return b.buf.Bytes() }
+func (b *cappedBuffer) String() string { return b.buf.String() }
+
 // ExecPlugin adapts an external binary into an AnalyzerPlugin.
 type ExecPlugin struct {
 	meta PluginMetadata
@@ -79,7 +106,9 @@ func (e *ExecPlugin) Analyze(ctx context.Context, in PluginInput) (PluginOutput,
 	}
 	cmd.Stdin = bytes.NewReader(inData)
 
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr cappedBuffer
+	stdout.limit = maxPluginOutput
+	stderr.limit = maxPluginOutput
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

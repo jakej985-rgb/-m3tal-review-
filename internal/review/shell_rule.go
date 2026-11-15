@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"regexp"
 	"sort"
 
@@ -50,8 +51,15 @@ var riskyShellPatterns = []struct {
 }
 
 func (r ShellRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r ShellRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, fileDiff := range ParseDiff(diff) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		// Performance optimization: Generate diff source blocks directly from fileDiff
 		// instead of re-parsing the entire diff and scanning for fileDiff.Path.
 		blocks := fileDiffSourceBlocks(fileDiff)

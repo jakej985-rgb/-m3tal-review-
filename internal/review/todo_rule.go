@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"path"
 	"regexp"
 	"strings"
@@ -21,8 +22,15 @@ func (TodoRule) Name() string {
 }
 
 func (r TodoRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r TodoRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, fileDiff := range ParseDiff(diff) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !isTodoFile(fileDiff.Path) {
 			continue
 		}

@@ -128,6 +128,13 @@ func assessGoReachability(repoRoot, pkgPath string, isDirect bool) ReachabilityC
 			if strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" || name == "node_modules" {
 				return filepath.SkipDir
 			}
+			// A nested module's imports belong to that module's own
+			// manifest, not this one (mirrors collectImportPaths).
+			if p != repoRoot {
+				if _, err := os.Stat(filepath.Join(p, "go.mod")); err == nil {
+					return filepath.SkipDir
+				}
+			}
 			return nil
 		}
 		if !strings.HasSuffix(d.Name(), ".go") {

@@ -76,9 +76,32 @@ func parseGitDiffHeaderPaths(line string) (string, string) {
 		}
 	}
 	if oldPart == "" && newPart == "" {
-		if idx := strings.Index(rest, " b/"); idx != -1 {
-			oldPart = rest[:idx]
-			newPart = rest[idx+len(" b/"):]
+		// Unquoted paths may contain spaces, so " b/" can appear inside a
+		// filename. The separator is the new path's "b/" prefix: keep it in
+		// newPart so downstream unquoting/stripping stays uniform (this also
+		// preserves filenames that themselves start with "b/").
+		searchFrom := 0
+		for {
+			idx := strings.Index(rest[searchFrom:], " b/")
+			if idx == -1 {
+				break
+			}
+			idx += searchFrom
+			candOld := rest[:idx]
+			candNew := rest[idx+1:] // includes the "b/" prefix
+			if strings.TrimPrefix(candOld, "a/") == strings.TrimPrefix(candNew, "b/") {
+				oldPart, newPart = candOld, candNew
+				break
+			}
+			searchFrom = idx + 1
+		}
+		if oldPart == "" {
+			// Renames (or unparseable headers): fall back to the first
+			// separator; rename from/to lines correct the paths later.
+			if idx := strings.Index(rest, " b/"); idx != -1 {
+				oldPart = rest[:idx]
+				newPart = rest[idx+1:]
+			}
 		}
 	}
 

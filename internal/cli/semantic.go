@@ -221,6 +221,11 @@ func semanticCheckResults(res *pipeline.Result) []review.CheckResult {
 		}
 		msg := a.Message
 		if a.Truncated {
+			// A truncated analyzer did not fully analyze its input;
+			// report it as a warning rather than a clean pass.
+			if status == "passed" {
+				status = "warning"
+			}
 			if msg != "" {
 				msg += "; "
 			}

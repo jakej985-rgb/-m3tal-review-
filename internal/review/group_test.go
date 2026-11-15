@@ -238,3 +238,110 @@ func TestGroupFindingsSingleFindingPopulatesMetadata(t *testing.T) {
 		t.Errorf("expected non-empty finding ID")
 	}
 }
+
+// P1 regression: when a higher-severity member becomes primary, metadata
+// and display fields contributed by the previous primary must survive.
+func TestGroupFindingsPreservesMetadataOnSeverityPromotion(t *testing.T) {
+	lowPrimary := Finding{
+		Category:  "security",
+		Rule:      "hardcoded-secret",
+		Severity:  "low",
+		File:      "internal/db/conn.go",
+		Line:      42,
+		Message:   "Possible credential material",
+		Snippet:   "password = ...",
+		Signature: "sig-low",
+		Metadata:  map[string]string{"analysis_truncated": "true", "source": "builtin"},
+		Evidence:  []FindingEvidence{{Analyzer: "m3tal-review", Rule: "hardcoded-secret", Line: 42, Message: "Possible credential material"}},
+	}
+	criticalPromoter := Finding{
+		Category:  "security",
+		Rule:      "gosec-g101",
+		Severity:  "critical",
+		File:      "internal/db/conn.go",
+		Line:      42,
+		Message:   "Use of hardcoded credentials",
+		Signature: "sig-low", // same-line signature match keeps them grouped
+	}
+
+	grouped := GroupFindings([]Finding{lowPrimary, criticalPromoter})
+	if len(grouped) != 1 {
+		t.Fatalf("expected 1 grouped finding, got %d", len(grouped))
+	}
+	g := grouped[0]
+	if g.Severity != "critical" {
+		t.Fatalf("expected promoted severity critical, got %s", g.Severity)
+	}
+	if g.Metadata["analysis_truncated"] != "true" || g.Metadata["source"] != "builtin" {
+		t.Errorf("metadata from demoted primary lost: %+v", g.Metadata)
+	}
+	if g.Snippet != "password = ..." {
+		t.Errorf("snippet from demoted primary lost: %q", g.Snippet)
+	}
+	if len(g.Evidence) != 2 {
+		t.Errorf("expected evidence from both members, got %d", len(g.Evidence))
+	}
+}
+
+// P2 regression: a finding matching a non-primary group member (but not the
+// primary) must join the same group — matching is transitive over members.
+func TestGroupFindingsTransitiveMemberMatch(t *testing.T) {
+	primary := Finding{
+		Category:  "security",
+		Rule:      "hardcoded-secret",
+		Severity:  "critical", // stays primary: higher than member
+		File:      "svc/handler.go",
+		Line:      10,
+		Message:   "hardcoded credential",
+		Signature: "sig-a",
+	}
+	member := Finding{
+		Category:  "security",
+		Rule:      "gosec-g101",
+		Severity:  "high",
+		File:      "svc/handler.go",
+		Line:      10, // same line + secret domain groups with primary
+		Message:   "hardcoded credentials",
+		Signature: "sig-b",
+	}
+	// Matches `member` by identical base key (same rule/path/signature) but
+	// shares no line or signature with `primary`. Previously compared only
+	// against the primary, so it split into a second group.
+	transitive := Finding{
+		Category:  "security",
+		Rule:      "gosec-g101",
+		Severity:  "medium",
+		File:      "svc/handler.go",
+		Line:      99,
+		Message:   "hardcoded credentials variant",
+		Signature: "sig-b",
+	}
+
+	grouped := GroupFindings([]Finding{primary, member, transitive})
+	if len(grouped) != 1 {
+		t.Fatalf("expected transitive match to join the group, got %d groups: %+v", len(grouped), grouped)
+	}
+	if len(grouped[0].Rules) != 2 {
+		t.Errorf("expected 2 distinct rules in group, got %v", grouped[0].Rules)
+	}
+}
+
+// P3 regression: grouped findings with no confidence get an honest "low"
+// rather than an empty string in reports.
+func TestGroupFindingsEmptyConfidenceDefaultsLow(t *testing.T) {
+	f := Finding{
+		Category: "security",
+		Rule:     "pattern-suspicious",
+		Severity: "medium",
+		File:     "x.go",
+		Line:     3,
+		Message:  "heuristic match",
+	}
+	grouped := GroupFindings([]Finding{f})
+	if len(grouped) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(grouped))
+	}
+	if grouped[0].Confidence != "low" {
+		t.Errorf("expected confidence low for unconfident heuristic finding, got %q", grouped[0].Confidence)
+	}
+}

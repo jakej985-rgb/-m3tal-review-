@@ -143,7 +143,7 @@ func TestCommandRepairNoEligibleFindings(t *testing.T) {
 }
 
 func TestCommandRepairInvalidRunID(t *testing.T) {
-	_, err := resolveFindingsForRepair("/tmp", "../../invalid-run-id")
+	_, _, err := resolveFindingsForRepair("/tmp", "../../invalid-run-id")
 	if err == nil {
 		t.Fatal("expected invalid runID to return error, got nil")
 	}

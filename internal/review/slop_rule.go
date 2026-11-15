@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"sort"
 	"strings"
 
@@ -19,6 +20,10 @@ func (SlopRule) Name() string {
 }
 
 func (r SlopRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r SlopRule) CheckContext(ctx context.Context, diff string) []Finding {
 	parsed := ParseDiff(diff)
 	files := make([]slop.FileDiff, 0, len(parsed))
 	for _, fd := range parsed {
@@ -39,7 +44,7 @@ func (r SlopRule) Check(diff string) []Finding {
 		RepositoryRoot: r.RepositoryRoot,
 		WorkingTree:    r.WorkingTree,
 		Degraded:       r.Degraded,
-	}.Analyze(files)
+	}.AnalyzeContext(ctx, files)
 }
 
 func completeAddedFile(fd FileDiff) string {

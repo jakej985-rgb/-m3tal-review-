@@ -304,6 +304,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		var diff string
 		var stagedFiles, unanalyzedFiles []string
 		var stagedStatuses map[string]string
+		var modeChangedFiles, submoduleCandidates func() ([]string, error)
 		if options.Base != "" {
 			diff, err = git.WorkingTreeDiffAgainst(repositoryRoot, options.Base)
 			if err != nil {
@@ -317,9 +318,15 @@ func executeWithArgs(command string, commandArgs []string) error {
 			if err != nil {
 				return err
 			}
-			stagedStatuses = map[string]string{}
-			for _, file := range stagedFiles {
-				stagedStatuses[file] = "M"
+			stagedStatuses, err = git.ChangedFileStatusesAgainst(repositoryRoot, options.Base)
+			if err != nil {
+				return err
+			}
+			modeChangedFiles = func() ([]string, error) {
+				return git.ModeChangedFilesAgainst(repositoryRoot, options.Base)
+			}
+			submoduleCandidates = func() ([]string, error) {
+				return git.SubmoduleFilesAmong(repositoryRoot, stagedFiles)
 			}
 		} else if options.Unstaged {
 			diff, err = git.UnstagedDiff(repositoryRoot)
@@ -330,9 +337,19 @@ func executeWithArgs(command string, commandArgs []string) error {
 			if err != nil {
 				return err
 			}
-			stagedStatuses = map[string]string{}
-			for _, file := range stagedFiles {
-				stagedStatuses[file] = "M"
+			stagedStatuses, err = git.UnstagedFileStatuses(repositoryRoot)
+			if err != nil {
+				return err
+			}
+			unanalyzedFiles, err = git.UnstagedBinaryFiles(repositoryRoot)
+			if err != nil {
+				return err
+			}
+			modeChangedFiles = func() ([]string, error) {
+				return git.UnstagedModeChangedFiles(repositoryRoot)
+			}
+			submoduleCandidates = func() ([]string, error) {
+				return git.SubmoduleFilesAmong(repositoryRoot, stagedFiles)
 			}
 		} else {
 			diff, err = git.StagedDiff(repositoryRoot)
@@ -351,6 +368,12 @@ func executeWithArgs(command string, commandArgs []string) error {
 			if err != nil {
 				return err
 			}
+			modeChangedFiles = func() ([]string, error) {
+				return git.StagedModeChangedFiles(repositoryRoot)
+			}
+			submoduleCandidates = func() ([]string, error) {
+				return git.StagedSubmoduleFiles(repositoryRoot)
+			}
 		}
 
 		if diff == "" {
@@ -361,30 +384,31 @@ func executeWithArgs(command string, commandArgs []string) error {
 			return fmt.Errorf("diff exceeds --max-diff-size (%d bytes); re-run with a larger limit or review a smaller change set", options.MaxDiffSize)
 		}
 
-		if options.Base == "" {
-			for file, status := range stagedStatuses {
-				if status != "D" && (language.CodeChecker{}).Language(file) == language.LanguageUnknown && language.IsLikelySourceFile(file) {
-					unanalyzedFiles = append(unanalyzedFiles, file)
-				}
+		// Unanalyzed-file enrichment applies to every review mode:
+		// unknown-language sources, submodules, and mode-only changes
+		// are review gaps regardless of which diff produced the file set.
+		for file, status := range stagedStatuses {
+			if status != "D" && (language.CodeChecker{}).Language(file) == language.LanguageUnknown && language.IsLikelySourceFile(file) {
+				unanalyzedFiles = append(unanalyzedFiles, file)
 			}
-			submoduleFiles, err := git.StagedSubmoduleFiles(repositoryRoot)
-			if err != nil {
-				return err
-			}
-			unanalyzedFiles = append(unanalyzedFiles, submoduleFiles...)
-			modeChangedFiles, err := git.StagedModeChangedFiles(repositoryRoot)
-			if err != nil {
-				return err
-			}
-			seenUnanalyzed := make(map[string]bool, len(unanalyzedFiles))
-			for _, file := range unanalyzedFiles {
+		}
+		submoduleFiles, err := submoduleCandidates()
+		if err != nil {
+			return err
+		}
+		unanalyzedFiles = append(unanalyzedFiles, submoduleFiles...)
+		modeChanged, err := modeChangedFiles()
+		if err != nil {
+			return err
+		}
+		seenUnanalyzed := make(map[string]bool, len(unanalyzedFiles))
+		for _, file := range unanalyzedFiles {
+			seenUnanalyzed[file] = true
+		}
+		for _, file := range modeChanged {
+			if !seenUnanalyzed[file] {
+				unanalyzedFiles = append(unanalyzedFiles, file)
 				seenUnanalyzed[file] = true
-			}
-			for _, file := range modeChangedFiles {
-				if !seenUnanalyzed[file] {
-					unanalyzedFiles = append(unanalyzedFiles, file)
-					seenUnanalyzed[file] = true
-				}
 			}
 		}
 
@@ -1305,7 +1329,10 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 	for _, dir := range goDirs {
 		combined := strings.Join(goGroups[dir], "")
 		for _, tr := range taintRules {
-			taintFindings := tr.Check(combined)
+			// Route through the safe runner: TaintRule.Check alone has
+			// no timeout or panic recovery (previously a hung or
+			// panicking taint rule could stall/crash the audit).
+			taintFindings := review.RunRuleSafely(tr, combined)
 			findings = append(findings, review.ApplyFindingFilters(combined, taintFindings, repositoryRoot, true)...)
 		}
 	}

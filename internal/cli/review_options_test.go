@@ -120,3 +120,26 @@ func TestWorkingTreeRulesCoverAllRuleTypes(t *testing.T) {
 		}
 	}
 }
+
+// P5 regression: "--flag=" supplies an explicit empty value and must not
+// consume the following argument; "--check-run-sha=<sha>" equals form works.
+func TestParseReviewOptionsEqualsForm(t *testing.T) {
+	opts, err := parseReviewOptions([]string{"--baseline=", "--check-run-sha=abc123", "--format", "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Baseline != "" {
+		t.Fatalf("expected empty baseline from --baseline=, got %q", opts.Baseline)
+	}
+	if opts.CheckRunSHA != "abc123" {
+		t.Fatalf("expected check-run sha abc123, got %q", opts.CheckRunSHA)
+	}
+	if opts.Format != "json" {
+		t.Fatalf("--baseline= consumed the next arg; format = %q", opts.Format)
+	}
+
+	// Missing value still errors; equals form with empty value does not.
+	if _, err := parseReviewOptions([]string{"--baseline"}); err == nil {
+		t.Fatal("expected error for --baseline with no value")
+	}
+}

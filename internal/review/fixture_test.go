@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -263,7 +264,7 @@ func TestFixtureSuite(t *testing.T) {
 			// checkRuleSafely converts panics/timeouts into findings, so a
 			// crashing analyzer fails the fixture with a clear "-error" rule
 			// finding instead of taking down the test binary.
-			findings := checkRuleSafely(rule, tc.diff)
+			findings := checkRuleSafely(context.Background(), rule, tc.diff)
 			sortFindings(findings)
 
 			if *fixtureUpdate {

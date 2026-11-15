@@ -87,19 +87,6 @@ type nestedRequire struct {
 	file string
 }
 
-// underCountedModule reports whether dir lies inside any of the given module
-// directories (whose source scans therefore already include dir's files).
-// analyzeNestedGoMods and collectImportPaths skip the same directories via
-// skipSourceDir, so any nested module found is covered by its ancestor.
-func underCountedModule(dir string, counted []string) bool {
-	for _, c := range counted {
-		if strings.HasPrefix(dir, c+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
-}
-
 func appendUnique(list []string, s string) []string {
 	for _, v := range list {
 		if v == s {
@@ -120,13 +107,11 @@ func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []ne
 	rootMod := filepath.Join(root, "go.mod")
 	var findings []review.Finding
 	var requires []nestedRequire
-	var countedDirs []string
 	var modPaths []string
 
 	// Pass 1: collect nested go.mod paths. WalkDir visits entries in lexical
-	// order, so a child module's go.mod can be seen before its parent's;
-	// analysis must run shallowest-first for countedDirs to suppress
-	// double-counted source files.
+	// order; sort shallowest-first so parent modules are analyzed before
+	// their children for deterministic output ordering.
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -158,8 +143,7 @@ func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []ne
 	})
 	_ = err // walk errors are non-fatal; partial results are returned
 
-	// Shallowest modules first so a parent's source scan (which includes
-	// nested module dirs) marks descendants as already counted.
+	// Shallowest modules first for deterministic finding order.
 	sort.Slice(modPaths, func(i, j int) bool {
 		ci, cj := strings.Count(modPaths[i], string(filepath.Separator)), strings.Count(modPaths[j], string(filepath.Separator))
 		if ci != cj {
@@ -182,14 +166,10 @@ func analyzeNestedGoMods(root string, report *DepReport) ([]review.Finding, []ne
 		report.NestedModules++
 		report.DirectDeps += modReport.DirectDeps
 		report.IndirectDeps += modReport.IndirectDeps
-		// A module's source scan already walks nested directories, including
-		// child modules. Only count files for top-most modules: skip when
-		// there is a root module, or when an ancestor nested module was
-		// already counted (modules are processed shallowest-first).
-		if !report.IsGoModule && !underCountedModule(modDir, countedDirs) {
-			report.TotalGoFiles += modReport.TotalGoFiles
-			countedDirs = append(countedDirs, modDir)
-		}
+		// collectImportPaths stops at nested module boundaries, so each
+		// module's TotalGoFiles covers only its own sources — summing
+		// across modules counts every file exactly once.
+		report.TotalGoFiles += modReport.TotalGoFiles
 		for i := range modFindings {
 			file := modFindings[i].File
 			if file == "" {

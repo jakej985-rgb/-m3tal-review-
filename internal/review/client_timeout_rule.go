@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"regexp"
 	"strings"
 )
@@ -23,8 +24,15 @@ var httpClientLiteralRe = regexp.MustCompile(`(?:=|:=|return\b|\(|,|\[|:)\s*&?\*
 var timeoutFieldRe = regexp.MustCompile(`\bTimeout\s*:`)
 
 func (r ClientTimeoutRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r ClientTimeoutRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if !strings.HasSuffix(block.file, ".go") || strings.HasSuffix(block.file, "_test.go") {
 			continue
 		}

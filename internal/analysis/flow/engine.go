@@ -290,7 +290,7 @@ func (w *fnWork) ret(ins *semantic.Instruction) {
 			set = newOriginSet()
 			w.returns[i] = set
 		}
-		set.union(w.depsOfValue(op))
+		w.unionCapped(set, w.depsOfValue(op), "return origins")
 	}
 }
 
@@ -339,10 +339,12 @@ func (w *fnWork) addPlaceWrite(p Place, sources originSet) {
 	w.unionCapped(set, sources, "place write set")
 }
 
-// unionCapped unions srcs into dst, enforcing MaxOrigins.
+// unionCapped unions srcs into dst, enforcing MaxOrigins. Origins are
+// visited in canonical sorted order so which origins survive truncation
+// is deterministic regardless of map iteration order.
 func (w *fnWork) unionCapped(dst, srcs originSet, what string) {
 	max := w.opts().MaxOrigins
-	for o := range srcs {
+	for _, o := range sortedOrigins(srcs) {
 		if _, ok := dst[o]; ok {
 			continue
 		}
@@ -352,6 +354,25 @@ func (w *fnWork) unionCapped(dst, srcs originSet, what string) {
 		}
 		dst.add(o)
 	}
+}
+
+// sortedOrigins returns the set's origins in canonical order
+// (Kind, Index, ID) so capped unions are deterministic.
+func sortedOrigins(set originSet) []Origin {
+	out := make([]Origin, 0, len(set))
+	for o := range set {
+		out = append(out, o)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		if out[i].Index != out[j].Index {
+			return out[i].Index < out[j].Index
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
 }
 
 func (w *fnWork) opts() Options { return w.a.opts }

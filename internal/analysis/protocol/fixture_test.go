@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -205,7 +206,10 @@ func runMatrixFixture(t *testing.T, caseDir string, expect *fixtureExpect) {
 	if err != nil {
 		t.Fatalf("LoadSnapshotSet: %v", err)
 	}
-	res := EvaluateMatrix(set, expect.MatrixVersions)
+	res, err := EvaluateMatrix(context.Background(), set, expect.MatrixVersions)
+	if err != nil {
+		t.Fatalf("EvaluateMatrix: %v", err)
+	}
 	checkDiagnostics(t, res.Diagnostics, expect.Diagnostics)
 
 	cell := func(pair string) (MatrixCell, bool) {

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -58,12 +59,19 @@ type RiskRule struct {
 func (RiskRule) Name() string { return "review-risk" }
 
 func (r RiskRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r RiskRule) CheckContext(ctx context.Context, diff string) []Finding {
 	policy, err := readReviewPolicy(r.RepositoryRoot, r.WorkingTree)
 	if err != nil {
 		return nil // PolicyRule reports the configuration failure once.
 	}
 	var findings []Finding
 	for _, file := range ParseDiff(diff) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		for _, pattern := range policy.RiskPaths {
 			if matchesRepoPath(pattern, file.Path) {
 				findings = append(findings, Finding{
@@ -86,6 +94,10 @@ type PolicyRule struct {
 func (PolicyRule) Name() string { return "review-policy" }
 
 func (r PolicyRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r PolicyRule) CheckContext(ctx context.Context, diff string) []Finding {
 	policy, err := readReviewPolicy(r.RepositoryRoot, r.WorkingTree)
 	if err != nil {
 		return policyErrorFinding(err)
@@ -93,6 +105,9 @@ func (r PolicyRule) Check(diff string) []Finding {
 	files := ParseDiff(diff)
 	changed := make([]string, 0, len(files))
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return nil
+		}
 		changed = append(changed, file.Path)
 	}
 	sort.Strings(changed)

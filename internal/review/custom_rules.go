@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,14 +18,19 @@ import (
 // Schema limits and constraints
 const (
 	MaxCustomRulesFileSize = 1 << 20 // 1 MiB
-	MaxRuleIDLen           = 64
-	MaxRuleNameLen         = 128
-	MaxRuleMessageLen      = 500
-	MaxPatternLen          = 1000
-	MaxFilePatternLen      = 500
-	DefaultRuleTimeout     = 2 * time.Second
-	MinRuleTimeout         = 1 * time.Millisecond
-	MaxRuleTimeout         = 30 * time.Second
+	// MaxCustomRules bounds the number of rules one config may declare.
+	// The engine runs every rule concurrently per review, so an
+	// untrusted repository could otherwise amplify CPU/goroutines with
+	// a small file declaring thousands of rules.
+	MaxCustomRules     = 256
+	MaxRuleIDLen       = 64
+	MaxRuleNameLen     = 128
+	MaxRuleMessageLen  = 500
+	MaxPatternLen      = 1000
+	MaxFilePatternLen  = 500
+	DefaultRuleTimeout = 2 * time.Second
+	MinRuleTimeout     = 1 * time.Millisecond
+	MaxRuleTimeout     = 30 * time.Second
 )
 
 var ruleIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -133,6 +139,9 @@ func ValidateCustomRulesConfig(cfg *CustomRulesConfig) (CustomRuleValidationErro
 
 	if len(cfg.Rules) == 0 {
 		return append(errs, CustomRuleValidationError{Field: "rules", Reason: "at least one rule must be defined"}), nil
+	}
+	if len(cfg.Rules) > MaxCustomRules {
+		return append(errs, CustomRuleValidationError{Field: "rules", Reason: fmt.Sprintf("too many rules: %d exceeds maximum of %d", len(cfg.Rules), MaxCustomRules)}), nil
 	}
 
 	seenIDs := make(map[string]int)
@@ -438,6 +447,16 @@ func (r *customRule) Name() string {
 }
 
 func (r *customRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+// CheckContext runs the custom rule under the per-rule timeout AND the
+// caller's context, so an outer cancellation (engine timeout, watch
+// shutdown) interrupts in-flight regex work instead of leaking the
+// worker goroutine.
+func (r *customRule) CheckContext(parent context.Context, diff string) []Finding {
+	ctx, cancel := context.WithTimeout(parent, r.timeout)
+	defer cancel()
 	resultCh := make(chan []Finding, 1)
 
 	go func() {
@@ -452,13 +471,16 @@ func (r *customRule) Check(diff string) []Finding {
 				}}
 			}
 		}()
-		resultCh <- r.checkSync(diff)
+		resultCh <- r.checkSync(ctx, diff)
 	}()
 
 	select {
 	case findings := <-resultCh:
 		return findings
-	case <-time.After(r.timeout):
+	case <-ctx.Done():
+		if parent.Err() != nil {
+			return nil
+		}
 		return []Finding{{
 			Rule:        r.def.ID + "-timeout",
 			Severity:    "medium",
@@ -469,11 +491,14 @@ func (r *customRule) Check(diff string) []Finding {
 	}
 }
 
-func (r *customRule) checkSync(diff string) []Finding {
+func (r *customRule) checkSync(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 
 	for _, block := range sourceBlocks(diff, r.repositoryRoot, r.workingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if r.filePattern != nil && !r.filePattern.MatchString(block.file) {
 			continue
 		}

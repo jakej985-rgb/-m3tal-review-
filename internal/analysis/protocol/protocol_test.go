@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -575,7 +576,10 @@ func TestMatrixUnit(t *testing.T) {
 		},
 	}
 	// Expect version 9.9.9 which has no snapshot -> missing diagnostic.
-	res := EvaluateMatrix(set, []string{"1.0.0", "2.0.0", "3.0.0", "9.9.9"})
+	res, err := EvaluateMatrix(context.Background(), set, []string{"1.0.0", "2.0.0", "3.0.0", "9.9.9"})
+	if err != nil {
+		t.Fatalf("EvaluateMatrix: %v", err)
+	}
 	if !hasDiag(res.Diagnostics, "9.9.9") {
 		t.Fatalf("missing snapshot not reported: %v", res.Diagnostics)
 	}
@@ -614,7 +618,10 @@ func TestMatrixUnit(t *testing.T) {
 
 func TestMatrixMissingSnapshotCellsSkipped(t *testing.T) {
 	set := &SnapshotSet{ByVersion: map[string]*Snapshot{}}
-	res := EvaluateMatrix(set, []string{"1.0.0", "2.0.0"})
+	res, err := EvaluateMatrix(context.Background(), set, []string{"1.0.0", "2.0.0"})
+	if err != nil {
+		t.Fatalf("EvaluateMatrix: %v", err)
+	}
 	if len(res.Diagnostics) != 2 {
 		t.Fatalf("expected 2 missing diagnostics, got %v", res.Diagnostics)
 	}

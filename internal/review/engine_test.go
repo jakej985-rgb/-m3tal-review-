@@ -1,6 +1,10 @@
 package review
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+)
 
 func TestEngineRunsRules(t *testing.T) {
 	engine := NewEngine(TodoRule{})
@@ -46,3 +50,58 @@ type panicRule struct{}
 
 func (panicRule) Name() string           { return "panic-rule" }
 func (panicRule) Check(string) []Finding { panic("boom") }
+
+// blockingContextualRule blocks until its context is cancelled, proving
+// that checkRuleSafely's timeout reaches ContextualRule implementations
+// instead of only abandoning the goroutine.
+type blockingContextualRule struct {
+	cancelled chan struct{}
+}
+
+func (blockingContextualRule) Name() string { return "blocking-test" }
+func (r blockingContextualRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+func (r blockingContextualRule) CheckContext(ctx context.Context, diff string) []Finding {
+	<-ctx.Done()
+	close(r.cancelled)
+	return nil
+}
+
+func TestCheckRuleSafelyTimeoutCancelsContextualRule(t *testing.T) {
+	old := ruleTimeout
+	ruleTimeout = 50 * time.Millisecond
+	defer func() { ruleTimeout = old }()
+
+	rule := blockingContextualRule{cancelled: make(chan struct{})}
+	findings := checkRuleSafely(context.Background(), rule, "diff")
+
+	if len(findings) != 1 || findings[0].Rule != "blocking-test-timeout" {
+		t.Fatalf("expected timeout finding, got %+v", findings)
+	}
+	select {
+	case <-rule.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("contextual rule was not cancelled by the rule timeout")
+	}
+}
+
+func TestCheckRuleSafelyParentCancelReturnsNil(t *testing.T) {
+	old := ruleTimeout
+	ruleTimeout = time.Minute
+	defer func() { ruleTimeout = old }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	rule := blockingContextualRule{cancelled: make(chan struct{})}
+	done := make(chan []Finding, 1)
+	go func() { done <- checkRuleSafely(ctx, rule, "diff") }()
+	cancel()
+	select {
+	case findings := <-done:
+		if findings != nil {
+			t.Fatalf("expected nil findings on parent cancel, got %+v", findings)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("checkRuleSafely did not return after parent cancellation")
+	}
+}

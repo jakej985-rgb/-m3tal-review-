@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -124,9 +125,16 @@ func isTestSourceFile(file string) bool {
 }
 
 func (r SecurityRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r SecurityRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 	for _, fileDiff := range ParseDiff(diff) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		if len(fileDiff.AddedLines) == 0 || isGeneratedDependencyFile(fileDiff.Path) || isTestSourceFile(fileDiff.Path) {
 			continue
 		}

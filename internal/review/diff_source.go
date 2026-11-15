@@ -1,8 +1,11 @@
 package review
 
 import (
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -241,8 +244,40 @@ func maskNonCodeUncached(file, source string) []byte {
 // sourceBlocks returns the diff hunks for every file in diff, preferring the
 // full repository source when it can be read so rules see complete context.
 // sourceBlockCache memoizes sourceBlocks per (diff, root, workingTree);
-// rules share identical inputs within a run.
-var sourceBlockCache sync.Map // string -> []diffSourceBlock
+// rules share identical inputs within a run. Entries carry per-file
+// content stamps so cached blocks self-invalidate when a reviewed file
+// or the index changes (watch mode, repair sandboxes).
+var sourceBlockCache sync.Map // string -> sourceBlockEntry
+
+type sourceBlockEntry struct {
+	blocks []diffSourceBlock
+	stamps map[string]string // file -> content stamp at compute time
+}
+
+// sourceContentStamp fingerprints the on-disk/staged content a rule
+// would read for file. Working-tree reads use file mtime+size; staged
+// reads use the index stamp (any staging operation invalidates).
+func sourceContentStamp(repositoryRoot, file string, workingTree bool) string {
+	if repositoryRoot == "" {
+		return ""
+	}
+	if workingTree {
+		if info, err := os.Stat(filepath.Join(repositoryRoot, file)); err == nil {
+			return "wt:" + info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z") + ":" + strconv.FormatInt(info.Size(), 10)
+		}
+		return "wt:missing"
+	}
+	return "idx:" + indexStamp(repositoryRoot)
+}
+
+func (e sourceBlockEntry) stampsValid(repositoryRoot string, workingTree bool) bool {
+	for file, stamp := range e.stamps {
+		if sourceContentStamp(repositoryRoot, file, workingTree) != stamp {
+			return false
+		}
+	}
+	return true
+}
 
 func sourceBlocks(diff, repositoryRoot string, workingTree bool) []diffSourceBlock {
 	wt := "0"
@@ -251,10 +286,19 @@ func sourceBlocks(diff, repositoryRoot string, workingTree bool) []diffSourceBlo
 	}
 	key := diff + "\x00" + repositoryRoot + "\x00" + wt
 	if cached, ok := sourceBlockCache.Load(key); ok {
-		return cached.([]diffSourceBlock)
+		entry := cached.(sourceBlockEntry)
+		if entry.stampsValid(repositoryRoot, workingTree) {
+			return entry.blocks
+		}
 	}
 	blocks := sourceBlocksUncached(diff, repositoryRoot, workingTree)
-	sourceBlockCache.Store(key, blocks)
+	stamps := make(map[string]string)
+	for _, b := range blocks {
+		if _, ok := stamps[b.file]; !ok {
+			stamps[b.file] = sourceContentStamp(repositoryRoot, b.file, workingTree)
+		}
+	}
+	sourceBlockCache.Store(key, sourceBlockEntry{blocks: blocks, stamps: stamps})
 	return blocks
 }
 

@@ -57,7 +57,15 @@ func ApplyFindingFilters(diff string, findings []Finding, repositoryRoot string,
 				if override.Enabled != nil && !*override.Enabled {
 					continue
 				}
-				if validSeverity(override.Severity) {
+				if validSeverity(override.Severity) && override.Severity != f.Severity {
+					// Record the pre-override severity so reports can
+					// show the policy adjustment instead of silently
+					// diverging from the analyzer/group-computed value
+					// and the per-analyzer evidence entries.
+					if f.Metadata == nil {
+						f.Metadata = make(map[string]string)
+					}
+					f.Metadata["severity_before_policy"] = f.Severity
 					f.Severity = override.Severity
 				}
 			}

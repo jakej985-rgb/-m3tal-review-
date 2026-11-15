@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 	"strings"
@@ -53,9 +54,16 @@ func looksLikePlaceholderToken(token string) bool {
 }
 
 func (r SecretRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r SecretRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		for _, match := range privateKeyPattern.FindAllStringIndex(block.text, -1) {
 			if !matchTouchesAdded(block, block.text, match[0], match[1]) {
 				continue

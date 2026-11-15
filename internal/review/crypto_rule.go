@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 
@@ -77,9 +78,16 @@ var weakPrimitivePatterns = []struct {
 }
 
 func (r CryptoRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+func (r CryptoRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
 		fileLanguage := (language.CodeChecker{}).Language(block.file)
 		code := string(maskNonCode(block.file, block.text))
 		for _, weakPattern := range weakPrimitivePatterns {
