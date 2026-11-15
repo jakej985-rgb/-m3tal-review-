@@ -316,7 +316,10 @@ func (e *RepairEngine) RepairFinding(ctx context.Context, finding review.Finding
 	verifiedPatch := finalProposal.Patch
 
 	approved := false
-	if e.ApprovalHandler != nil {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// Never request approval or apply after cancellation.
+		result.Error = fmt.Errorf("repair cancelled before approval: %w", ctxErr)
+	} else if e.ApprovalHandler != nil {
 		propCopy := *finalProposal
 		appr, err := e.ApprovalHandler(&propCopy, finalVerification)
 		if err != nil {

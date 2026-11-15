@@ -270,6 +270,13 @@ func verifyRemediation(ctx context.Context, originalFinding Finding, originalDif
 	}
 
 	newFindings := NewEngine(rules...).RunContext(ctx, repairedDiff)
+	// Cancelled rules return empty findings, which must not be read as a
+	// clean verification.
+	if err := ctx.Err(); err != nil {
+		res.Status = "unresolved"
+		res.Explanation = fmt.Sprintf("verification cancelled before completion: %v", err)
+		return res
+	}
 	for _, nf := range newFindings {
 		if !originalSet[FindingID(nf)] && (nf.Severity == "high" || nf.Severity == "critical" || nf.Severity == "medium") {
 			res.Status = "new_blocking_findings"
@@ -286,6 +293,11 @@ func verifyRemediation(ctx context.Context, originalFinding Finding, originalDif
 			res.Explanation = fmt.Sprintf("project test runner failed on repaired code: %v", err)
 			return res
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		res.Status = "unresolved"
+		res.Explanation = fmt.Sprintf("verification cancelled before completion: %v", err)
+		return res
 	}
 
 	res.Status = "fixed"

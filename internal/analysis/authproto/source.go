@@ -51,6 +51,9 @@ func Evaluate(ctx context.Context, prog *semantic.Program, contracts []*Contract
 			return res, err
 		}
 		checkSourceBindings(ctx, c, prog, opts, res)
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 	}
 	res.finish()
 	return res, nil

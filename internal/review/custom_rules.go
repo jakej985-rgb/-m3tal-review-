@@ -476,19 +476,30 @@ func (r *customRule) CheckContext(parent context.Context, diff string) []Finding
 
 	select {
 	case findings := <-resultCh:
-		return findings
+		if ctx.Err() == nil {
+			return findings
+		}
+		// Result raced with the deadline: treat as timed out.
+		if parent.Err() != nil {
+			return nil
+		}
+		return r.timeoutFinding()
 	case <-ctx.Done():
 		if parent.Err() != nil {
 			return nil
 		}
-		return []Finding{{
-			Rule:        r.def.ID + "-timeout",
-			Severity:    "medium",
-			Category:    "confidence",
-			Message:     fmt.Sprintf("Custom rule %s exceeded execution timeout of %s", r.def.ID, r.timeout),
-			Remediation: "Optimize regex pattern to prevent catastrophic backtracking or increase rule timeout.",
-		}}
+		return r.timeoutFinding()
 	}
+}
+
+func (r *customRule) timeoutFinding() []Finding {
+	return []Finding{{
+		Rule:        r.def.ID + "-timeout",
+		Severity:    "medium",
+		Category:    "confidence",
+		Message:     fmt.Sprintf("Custom rule %s exceeded execution timeout of %s", r.def.ID, r.timeout),
+		Remediation: "Optimize regex pattern to prevent catastrophic backtracking or increase rule timeout.",
+	}}
 }
 
 func (r *customRule) checkSync(ctx context.Context, diff string) []Finding {

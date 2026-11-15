@@ -122,6 +122,19 @@ func checkRuleSafely(parent context.Context, rule Rule, diff string) (findings [
 	start := time.Now()
 	select {
 	case findings = <-result:
+		// A cooperative rule may return partial results right after its
+		// deadline; both select cases can be ready, so recheck here.
+		if ctx.Err() != nil {
+			if parent.Err() != nil {
+				return nil
+			}
+			return []Finding{{
+				Rule:        rule.Name() + "-timeout",
+				Severity:    "medium",
+				Message:     "Rule " + rule.Name() + " exceeded the analysis time limit",
+				Remediation: "Report this as a bug; the rule may be stuck on pathological input.",
+			}}
+		}
 		if debugRules {
 			fmt.Fprintf(os.Stderr, "rule %-28s %s %d findings\n", rule.Name(), time.Since(start).Round(time.Millisecond), len(findings))
 		}

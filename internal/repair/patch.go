@@ -17,6 +17,23 @@ func ApplyProposalToFile(root string, p *Proposal) error {
 	}
 
 	targetPath := filepath.Join(root, p.TargetFile)
+	// The atomic rename replaces the directory entry, so resolve a
+	// contained symlink to its real target first; otherwise the link
+	// would be replaced by a regular file and its target left unfixed.
+	if li, lerr := os.Lstat(targetPath); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
+		resolved, rerr := filepath.EvalSymlinks(targetPath)
+		if rerr != nil {
+			return fmt.Errorf("resolve symlink %q: %w", targetPath, rerr)
+		}
+		rootReal, rerr := filepath.EvalSymlinks(root)
+		if rerr != nil {
+			return fmt.Errorf("resolve root %q: %w", root, rerr)
+		}
+		if rel, rerr := filepath.Rel(rootReal, resolved); rerr != nil || !filepath.IsLocal(rel) {
+			return fmt.Errorf("symlink %q resolves outside repository", targetPath)
+		}
+		targetPath = resolved
+	}
 	data, err := os.ReadFile(targetPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read target file %q: %w", targetPath, err)
@@ -107,6 +124,17 @@ func writeFileAtomic(path string, content []byte, perm os.FileMode) error {
 // always an error rather than silently divergent output.
 func ApplyProposalToContent(originalContent string, p *Proposal) (string, error) {
 	if p.ProposedContent != "" && p.OriginalContent == originalContent {
+		// Fast path still enforces patch/content consistency so the
+		// audited Patch always describes the bytes written.
+		if p.Patch != "" {
+			patched, err := ApplyPatchToContent(originalContent, p.Patch)
+			if err != nil {
+				return "", fmt.Errorf("proposal patch does not apply to original content: %w", err)
+			}
+			if patched != p.ProposedContent {
+				return "", fmt.Errorf("patch result does not match proposal proposed_content")
+			}
+		}
 		return p.ProposedContent, nil
 	}
 	patched, err := ApplyPatchToContent(originalContent, p.Patch)

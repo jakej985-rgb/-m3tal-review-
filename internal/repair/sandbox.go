@@ -47,6 +47,12 @@ func NewSandbox(repoRoot string, preferWorktree bool) (*Sandbox, error) {
 		cmd := exec.Command("git", "-c", "core.fsmonitor=false", "-C", absRoot, "worktree", "add", "--detach", tempDir, "HEAD")
 		if _, err := cmd.CombinedOutput(); err == nil {
 			sb.IsWorktree = true
+			// Sweep committed escaping symlinks BEFORE the overlay: otherwise
+			// overlay writes could follow a materialized link out of the
+			// sandbox and land on host files.
+			if err := removeEscapingSymlinks(tempDir); err != nil {
+				return nil, fmt.Errorf("sandbox symlink sweep: %w", err)
+			}
 			// Overlay uncommitted tracked changes into the worktree
 			if err := overlayWorkingTreeChanges(absRoot, tempDir); err != nil {
 				return nil, fmt.Errorf("overlay working tree changes: %w", err)
@@ -305,11 +311,22 @@ func overlayPath(srcRepo, worktreeDir, rel string) error {
 		return fmt.Errorf("lstat %q: %w", srcPath, err)
 	}
 
+	// Every ancestor of the destination must be a real directory inside
+	// the sandbox; a symlinked ancestor would redirect writes elsewhere.
+	if err := ensureContainedParent(worktreeDir, dstPath); err != nil {
+		return err
+	}
+
 	if info.IsDir() {
-		// Directories carry no content; only ensure the destination exists
-		// when the source side is a real directory (e.g. untracked dirs are
-		// covered file-by-file, so this is mostly a no-op).
-		return nil
+		// Directories carry no content, but a destination of another type
+		// (e.g. a committed symlink replaced locally by a directory) must be
+		// replaced so children are not written through it.
+		if dstInfo, statErr := os.Lstat(dstPath); statErr == nil && !dstInfo.IsDir() {
+			if err := os.RemoveAll(dstPath); err != nil {
+				return fmt.Errorf("replace %q: %w", dstPath, err)
+			}
+		}
+		return os.MkdirAll(dstPath, info.Mode().Perm()|0700)
 	}
 
 	// Remove any existing destination of a different type before writing.
@@ -345,6 +362,37 @@ func overlayPath(srcRepo, worktreeDir, rel string) error {
 		return os.RemoveAll(dstPath)
 	}
 	return copyFile(srcPath, dstPath, info.Mode().Perm())
+}
+
+// ensureContainedParent walks each ancestor of dstPath below root. Any
+// ancestor that is a symlink or non-directory is removed so subsequent
+// MkdirAll/copy operations cannot follow it outside the sandbox.
+func ensureContainedParent(root, dstPath string) error {
+	rel, err := filepath.Rel(root, filepath.Dir(dstPath))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("overlay path %q escapes sandbox", dstPath)
+	}
+	if rel == "." {
+		return nil
+	}
+	cur := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if os.IsNotExist(err) {
+			return nil // MkdirAll will create real directories from here
+		}
+		if err != nil {
+			return fmt.Errorf("lstat %q: %w", cur, err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+			if err := os.RemoveAll(cur); err != nil {
+				return fmt.Errorf("replace %q: %w", cur, err)
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 func initIsolatedGitRepo(dir string) error {

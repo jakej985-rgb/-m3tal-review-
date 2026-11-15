@@ -192,32 +192,37 @@ var redundantBoolRules = []struct {
 // applyRedundantBoolFix rewrites redundant boolean comparisons, but only
 // within code segments — matches inside string literals or comments are
 // never touched.
+//
+// Matching runs on the offset-preserving masked line so whole expressions
+// (including calls with string arguments) are seen; replacements copy the
+// captured operand from the ORIGINAL line so literals survive unchanged.
 func applyRedundantBoolFix(line string) string {
-	_, segs := maskLine(line)
-	if len(segs) == 0 {
-		return line
-	}
-	var b strings.Builder
-	prev := 0
-	changed := false
-	for _, s := range segs {
-		b.WriteString(line[prev:s[0]])
-		seg := line[s[0]:s[1]]
-		fixed := seg
-		for _, r := range redundantBoolRules {
-			fixed = r.pattern.ReplaceAllString(fixed, r.replacement)
+	orig := line
+	for _, r := range redundantBoolRules {
+		masked, segs := maskLine(line)
+		if len(segs) == 0 {
+			break
 		}
-		if fixed != seg {
-			changed = true
+		matches := r.pattern.FindAllStringSubmatchIndex(masked, -1)
+		for i := len(matches) - 1; i >= 0; i-- {
+			m := matches[i]
+			// Match must start and end in code, not inside a literal or
+			// comment that happened to mask to spaces.
+			if !inCodeSpan(segs, m[0]) || !inCodeSpan(segs, m[1]-1) {
+				continue
+			}
+			operand := line[m[2]:m[3]]
+			repl := operand
+			if strings.HasPrefix(r.replacement, "!") {
+				repl = "!" + operand
+			}
+			line = line[:m[0]] + repl + line[m[1]:]
 		}
-		b.WriteString(fixed)
-		prev = s[1]
 	}
-	b.WriteString(line[prev:])
-	if !changed {
-		return line
+	if line == orig {
+		return orig
 	}
-	return b.String()
+	return line
 }
 
 func (RedundantBoolFixer) GenerateProposal(ctx context.Context, repoRoot string, f review.Finding, content []byte) (*Proposal, error) {
@@ -371,6 +376,22 @@ func permCallSpans(masked string) [][2]int {
 
 func fixWorldWritableModeInLine(line string) string {
 	masked, _ := maskLine(line)
+	return fixWorldWritableModes(line, masked, nil)
+}
+
+// fixWorldWritableModeInText handles permission calls spanning multiple
+// lines: each line is masked independently (offsets preserved) and joined,
+// so call/argument spans are found across newlines. allow restricts which
+// byte offsets may be rewritten (nil = any).
+func fixWorldWritableModeInText(text string, allow func(pos int) bool) string {
+	lines := strings.Split(text, "\n")
+	for i, l := range lines {
+		lines[i], _ = maskLine(l)
+	}
+	return fixWorldWritableModes(text, strings.Join(lines, "\n"), allow)
+}
+
+func fixWorldWritableModes(line, masked string, allow func(pos int) bool) string {
 	spans := permCallSpans(masked)
 	if len(spans) == 0 {
 		return line
@@ -386,7 +407,7 @@ func fixWorldWritableModeInLine(line string) string {
 		name := callNameBefore(masked, span[0])
 		for _, m := range modeCandidatePattern.FindAllStringIndex(masked[span[0]:span[1]], -1) {
 			abs := [2]int{span[0] + m[0], span[0] + m[1]}
-			if seen[abs[0]] {
+			if seen[abs[0]] || (allow != nil && !allow(abs[0])) {
 				continue
 			}
 			match := line[abs[0]:abs[1]]
@@ -471,11 +492,35 @@ func (WorldWritableFileModeFixer) GenerateProposal(ctx context.Context, repoRoot
 		}
 	}
 
+	proposed := strings.Join(lines, "\n")
+
+	// Multiline calls: the mode argument and the call name live on
+	// different lines, so per-line passes miss them. Retry over the whole
+	// file, preferring a rewrite on the finding's own line.
+	if !hasChanges {
+		lineStart, lineEnd := -1, -1
+		if f.Line > 0 && f.Line <= len(lines) {
+			lineStart = 0
+			for i := 0; i < f.Line-1; i++ {
+				lineStart += len(lines[i]) + 1
+			}
+			lineEnd = lineStart + len(lines[f.Line-1])
+		}
+		if lineStart >= 0 {
+			proposed = fixWorldWritableModeInText(text, func(pos int) bool {
+				return pos >= lineStart && pos < lineEnd
+			})
+		}
+		if proposed == text {
+			proposed = fixWorldWritableModeInText(text, nil)
+		}
+		hasChanges = proposed != text
+	}
+
 	if !hasChanges {
 		return nil, nil
 	}
 
-	proposed := strings.Join(lines, "\n")
 	prop := NewProposal(
 		"",
 		f,
