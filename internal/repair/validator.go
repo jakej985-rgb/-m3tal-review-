@@ -86,7 +86,12 @@ func ValidateTargetFilePath(repoRoot, targetFile string) error {
 				if err != nil {
 					return fmt.Errorf("resolve symlink %q: %w", current, err)
 				}
-				resolvedRel, err := filepath.Rel(absRoot, targetResolved)
+				// Canonicalize both sides: EvalSymlinks expands platform
+				// aliases (/var->/private/var on macOS, 8.3 short names on
+				// Windows) that filepath.Abs leaves unresolved.
+				canonRoot := resolveExistingPath(absRoot)
+				canonTarget := resolveExistingPath(targetResolved)
+				resolvedRel, err := filepath.Rel(canonRoot, canonTarget)
 				if err != nil || !filepath.IsLocal(resolvedRel) || strings.HasPrefix(resolvedRel, "..") {
 					return fmt.Errorf("symlink %q escapes repository root (points to %q)", current, targetResolved)
 				}

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -133,7 +134,12 @@ func TestAuditSandboxWorktreeVsCopy(t *testing.T) {
 		}
 	}
 
-	// Executable bit must survive in both modes.
+	// Executable bit must survive in both modes. Windows has no POSIX
+	// exec bit — the filesystem cannot store it, so the check is
+	// POSIX-only.
+	if runtime.GOOS == "windows" {
+		return
+	}
 	for _, sb := range []*Sandbox{copySB, wtSB} {
 		info, err := os.Stat(filepath.Join(sb.TempDir, "script.sh"))
 		if err != nil {
