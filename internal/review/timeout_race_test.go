@@ -10,7 +10,7 @@ import (
 // is cancelled — the case where result and ctx.Done() race in select.
 type cooperativeRule struct{}
 
-func (cooperativeRule) Name() string              { return "coop-test" }
+func (cooperativeRule) Name() string               { return "coop-test" }
 func (r cooperativeRule) Check(d string) []Finding { return r.CheckContext(context.Background(), d) }
 func (cooperativeRule) CheckContext(ctx context.Context, _ string) []Finding {
 	<-ctx.Done()
