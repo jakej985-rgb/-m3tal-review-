@@ -299,7 +299,22 @@ func overlayWorkingTreeChanges(srcRepo, worktreeDir string) error {
 	if err != nil {
 		return err
 	}
+	// Union with HEAD paths: staged deletions/renames drop the old path from
+	// the index, but the HEAD-based worktree still contains it.
+	seen := make(map[string]bool, len(tracked))
 	for _, f := range tracked {
+		seen[f] = true
+	}
+	for p := range head {
+		if !seen[p] {
+			tracked = append(tracked, p)
+			seen[p] = true
+		}
+	}
+	for _, f := range tracked {
+		if f == "" {
+			continue
+		}
 		changed, err := trackedFileDiffers(srcRepo, f, head[f])
 		if err != nil {
 			return err
@@ -384,7 +399,9 @@ func trackedFileDiffers(srcRepo, rel string, head headEntry) (bool, error) {
 		return true, nil // missing or unreadable: let overlayPath decide
 	}
 	if info.IsDir() {
-		return false, nil // gitlink/submodule: no file content to overlay
+		// Only a real gitlink (160000) is a submodule with no content to
+		// overlay; a file/symlink replaced by a directory must be overlaid.
+		return head.mode != "160000", nil
 	}
 
 	var workMode, workSHA string
