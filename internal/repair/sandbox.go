@@ -306,10 +306,18 @@ func overlayWorkingTreeChanges(srcRepo, worktreeDir string) error {
 		seen[f] = true
 	}
 	for p := range head {
-		if !seen[p] {
-			tracked = append(tracked, p)
-			seen[p] = true
+		if seen[p] {
+			continue
 		}
+		seen[p] = true
+		// A HEAD-only child whose source ancestor is now a file or symlink
+		// is obsolete: the ancestor's own overlay replaces the committed
+		// directory. Inspecting it would traverse that replacement (an
+		// escaping symlink would leak external files; a file yields ENOTDIR).
+		if hasNonDirAncestor(srcRepo, p) {
+			continue
+		}
+		tracked = append(tracked, p)
 	}
 	for _, f := range tracked {
 		if f == "" {
@@ -376,6 +384,26 @@ func headTreeEntries(repo string) (map[string]headEntry, error) {
 		entries[path] = headEntry{mode: fields[0], sha: fields[2], size: size}
 	}
 	return entries, nil
+}
+
+// hasNonDirAncestor reports whether any existing ancestor of rel inside
+// srcRepo is not a real directory (regular file, symlink, or other type).
+// Missing ancestors are fine: the whole subtree was deleted and overlayPath
+// propagates the deletion without reading through anything.
+func hasNonDirAncestor(srcRepo, rel string) bool {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	cur := srcRepo
+	for _, part := range parts[:len(parts)-1] {
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if err != nil {
+			return false
+		}
+		if !info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // listIndexPaths returns every path recorded in the index (stage-agnostic).
