@@ -1,11 +1,14 @@
 package repair
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -154,21 +157,43 @@ func symlinkEscapesRoot(linkPath, root string) bool {
 	}
 	resolved = filepath.Clean(resolved)
 
+	// Canonicalize both sides through the same resolver: platforms like
+	// macOS alias /var -> /private/var, so comparing an evaluated target
+	// against a merely-absolute root produces false escapes.
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return true
 	}
-	rootAbs = filepath.Clean(rootAbs)
+	rootAbs = resolveExistingPath(rootAbs)
 
-	// Best-effort full resolution (follows intermediate symlinks).
-	if eval, err := filepath.EvalSymlinks(resolved); err == nil {
-		resolved = eval
-	}
-	resolved, err = filepath.Abs(resolved)
-	if err != nil {
-		return true
-	}
+	resolved = resolveExistingPath(resolved)
 	return resolved != rootAbs && !strings.HasPrefix(resolved, rootAbs+string(filepath.Separator))
+}
+
+// resolveExistingPath returns p with symlinks resolved in its longest
+// existing prefix and the nonexistent tail rejoined lexically. Unlike
+// filepath.EvalSymlinks it still produces a canonical path for dangling
+// symlink targets, keeping the escape check consistent on platforms where
+// ancestor directories themselves are symlinks (e.g. macOS /var).
+func resolveExistingPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	var suffix []string
+	cur := abs
+	for {
+		if eval, err := filepath.EvalSymlinks(cur); err == nil {
+			parts := append([]string{eval}, suffix...)
+			return filepath.Join(parts...)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return filepath.Clean(abs)
+		}
+		suffix = append([]string{filepath.Base(cur)}, suffix...)
+		cur = parent
+	}
 }
 
 // removeEscapingSymlinks deletes symlinks under root whose targets resolve
@@ -262,19 +287,27 @@ func copyFile(src, dst string, perm os.FileMode) error {
 // mirrors copyDirectory's coverage so verification sees the same tree in
 // both sandbox modes.
 func overlayWorkingTreeChanges(srcRepo, worktreeDir string) error {
-	// Tracked changes vs HEAD (modified, deleted, typechange, mode).
-	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "-C", srcRepo, "diff", "-z", "HEAD", "--name-only")
-	out, err := cmd.CombinedOutput()
+	// Tracked changes vs HEAD. `git diff HEAD` trusts the index stat cache,
+	// which can hide modifications (racy-clean entries, platform timestamp
+	// quirks — observed on Windows runners), so instead hash each tracked
+	// file's working bytes and compare against the HEAD tree directly.
+	head, err := headTreeEntries(srcRepo)
 	if err != nil {
-		return fmt.Errorf("git diff --name-only: %s", strings.TrimSpace(string(out)))
+		return err
 	}
-	files := strings.Split(strings.TrimRight(string(out), "\x00"), "\x00")
-	for _, f := range files {
-		if f == "" {
-			continue
-		}
-		if err := overlayPath(srcRepo, worktreeDir, f); err != nil {
+	tracked, err := listIndexPaths(srcRepo)
+	if err != nil {
+		return err
+	}
+	for _, f := range tracked {
+		changed, err := trackedFileDiffers(srcRepo, f, head[f])
+		if err != nil {
 			return err
+		}
+		if changed {
+			if err := overlayPath(srcRepo, worktreeDir, f); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -295,6 +328,119 @@ func overlayWorkingTreeChanges(srcRepo, worktreeDir string) error {
 		}
 	}
 	return nil
+}
+
+// headEntry identifies a path in the HEAD tree: git mode and blob hash.
+type headEntry struct {
+	mode string
+	sha  string
+	size int64
+}
+
+// headTreeEntries returns the HEAD tree's blob entries keyed by path.
+func headTreeEntries(repo string) (map[string]headEntry, error) {
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "-C", repo, "ls-tree", "-r", "-l", "-z", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-tree HEAD: %w", err)
+	}
+	entries := make(map[string]headEntry)
+	for _, rec := range strings.Split(strings.TrimRight(string(out), "\x00"), "\x00") {
+		if rec == "" {
+			continue
+		}
+		meta, path, ok := strings.Cut(rec, "\t")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(meta)
+		if len(fields) < 4 {
+			continue
+		}
+		size, _ := strconv.ParseInt(fields[3], 10, 64)
+		entries[path] = headEntry{mode: fields[0], sha: fields[2], size: size}
+	}
+	return entries, nil
+}
+
+// listIndexPaths returns every path recorded in the index (stage-agnostic).
+func listIndexPaths(repo string) ([]string, error) {
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "-C", repo, "ls-files", "-z")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files: %w", err)
+	}
+	return strings.Split(strings.TrimRight(string(out), "\x00"), "\x00"), nil
+}
+
+// trackedFileDiffers reports whether the working-tree file at rel differs
+// from its HEAD entry (or is absent from HEAD). It hashes raw working bytes
+// as a git blob, so it is immune to index stat-cache staleness. A missing
+// file counts as differing so overlayPath can propagate the deletion.
+func trackedFileDiffers(srcRepo, rel string, head headEntry) (bool, error) {
+	srcPath := filepath.Join(srcRepo, rel)
+	info, err := os.Lstat(srcPath)
+	if err != nil {
+		return true, nil // missing or unreadable: let overlayPath decide
+	}
+	if info.IsDir() {
+		return false, nil // gitlink/submodule: no file content to overlay
+	}
+
+	var workMode, workSHA string
+	var workSize int64
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		target, err := os.Readlink(srcPath)
+		if err != nil {
+			return true, nil
+		}
+		workMode = "120000"
+		workSize = int64(len(target))
+		workSHA, err = gitBlobHash(strings.NewReader(target), workSize)
+		if err != nil {
+			return true, err
+		}
+	case info.Mode().IsRegular():
+		workMode = "100644"
+		if info.Mode().Perm()&0o111 != 0 {
+			workMode = "100755"
+		}
+		workSize = info.Size()
+		if head.sha != "" && head.mode == workMode && head.size >= 0 && head.size != workSize {
+			return true, nil // size differs: content cannot match
+		}
+		f, err := os.Open(srcPath)
+		if err != nil {
+			return true, nil
+		}
+		workSHA, err = gitBlobHash(f, workSize)
+		f.Close()
+		if err != nil {
+			return true, err
+		}
+	default:
+		// FIFO/socket/device: copy mode skips these; overlay removes dst.
+		return true, nil
+	}
+
+	if head.sha == "" {
+		return true, nil // not in HEAD (staged addition): must appear
+	}
+	return head.mode != workMode || head.sha != workSHA, nil
+}
+
+// gitBlobHash computes the git object id ("blob <size>\x00" + content)
+// without spawning git hash-object per file.
+func gitBlobHash(r io.Reader, size int64) (string, error) {
+	h := sha1.New()
+	if _, err := fmt.Fprintf(h, "blob %d\x00", size); err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(h, r); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // overlayPath copies one working-tree path into the worktree sandbox,
