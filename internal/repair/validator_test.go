@@ -71,6 +71,30 @@ func TestValidateTargetFilePathSymlinkEscape(t *testing.T) {
 	}
 }
 
+// Regression: a contained symlink under an aliased repo root (e.g. macOS
+// /var -> /private/var, Windows 8.3 short names) must not be rejected.
+func TestValidateTargetFilePathContainedSymlinkAliasedRoot(t *testing.T) {
+	base := t.TempDir()
+	realRoot := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(realRoot, "inner"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realRoot, "inner", "file.txt"), []byte("ok"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	aliasRoot := filepath.Join(base, "alias")
+	if err := os.Symlink(realRoot, aliasRoot); err != nil {
+		t.Skip("symlinks not supported on this platform")
+	}
+	if err := os.Symlink(filepath.Join(realRoot, "inner"), filepath.Join(realRoot, "link")); err != nil {
+		t.Skip("symlinks not supported on this platform")
+	}
+
+	if err := ValidateTargetFilePath(aliasRoot, "link/file.txt"); err != nil {
+		t.Fatalf("expected contained symlink under aliased root to pass, got: %v", err)
+	}
+}
+
 func TestValidatePatch(t *testing.T) {
 	validPatch := `--- a/main.go
 +++ b/main.go
