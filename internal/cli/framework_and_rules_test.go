@@ -213,6 +213,7 @@ rules:
     languages: ["go"]
     pattern: 'db\.Query\s*\([^)]*\+'
     remediation: "Use parameterized queries"
+    timeout: 10s
 `
 	rulesPath := filepath.Join(repoDir, ".m3tal-review-rules.yaml")
 	if err := os.WriteFile(rulesPath, []byte(customRules), 0644); err != nil {
