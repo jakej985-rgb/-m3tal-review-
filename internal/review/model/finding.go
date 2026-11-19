@@ -69,4 +69,3 @@ type FindingEvidence struct {
 	Message     string `json:"message,omitempty"`
 	Line        int    `json:"line,omitempty"`
 }
-

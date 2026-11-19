@@ -10,11 +10,11 @@ import (
 type TaskKind string
 
 const (
-	TaskExplainFinding       TaskKind = "explain_finding"
-	TaskSummarizeReview      TaskKind = "summarize_review"
-	TaskHypothesizeCoverage  TaskKind = "hypothesize_coverage"
-	TaskSuggestTriage        TaskKind = "suggest_triage"
-	TaskProposeRemediation   TaskKind = "propose_remediation"
+	TaskExplainFinding      TaskKind = "explain_finding"
+	TaskSummarizeReview     TaskKind = "summarize_review"
+	TaskHypothesizeCoverage TaskKind = "hypothesize_coverage"
+	TaskSuggestTriage       TaskKind = "suggest_triage"
+	TaskProposeRemediation  TaskKind = "propose_remediation"
 )
 
 // Config configures the AI assistant execution boundaries.
@@ -39,13 +39,13 @@ func DefaultConfig() Config {
 
 // FindingSummary describes a deterministic finding for AI assistance.
 type FindingSummary struct {
-	ID          string   `json:"id"`
-	RuleID      string   `json:"rule_id"`
-	Severity    string   `json:"severity"`
-	File        string   `json:"file"`
-	Line        int      `json:"line"`
-	Message     string   `json:"message"`
-	Evidence    []string `json:"evidence,omitempty"`
+	ID       string   `json:"id"`
+	RuleID   string   `json:"rule_id"`
+	Severity string   `json:"severity"`
+	File     string   `json:"file"`
+	Line     int      `json:"line"`
+	Message  string   `json:"message"`
+	Evidence []string `json:"evidence,omitempty"`
 }
 
 // AssistanceRequest bundles input data and resource budgets for the assistant.
@@ -72,9 +72,9 @@ type FindingAdvice struct {
 
 // CoverageHypothesis suggests new rule ideas based on patterns in diffs.
 type CoverageHypothesis struct {
-	Pattern               string `json:"pattern"`
-	ProposedRule          string `json:"proposed_rule"`
-	Rationale             string `json:"rationale"`
+	Pattern                string `json:"pattern"`
+	ProposedRule           string `json:"proposed_rule"`
+	Rationale              string `json:"rationale"`
 	SuspectedVulnerability string `json:"suspected_vulnerability"`
 }
 

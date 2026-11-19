@@ -21,11 +21,11 @@ var (
 var ruleRationales = map[string]string{
 	"code-slop": "Flags code quality defects, maintainability smells, and unused or " +
 		"redundant logic.",
-	"todo-marker": "Unresolved task marker left in production source.",
+	"todo-marker":    "Unresolved task marker left in production source.",
 	"debug-leftover": "Debug print or breakpoint left in production source.",
 	"hardcoded-credential": "Credential assignment detected; secrets in code risk " +
 		"credential leakage.",
-	"exposed-secret": "Known secret token or private key committed to repository.",
+	"exposed-secret":      "Known secret token or private key committed to repository.",
 	"high-entropy-secret": "High-entropy string matching secret credential heuristics.",
 	"path-traversal": "Filesystem path constructed from untrusted input without " +
 		"containment checks.",
@@ -39,13 +39,13 @@ var ruleRationales = map[string]string{
 	"weak-cryptography": "Broken or non-cryptographic algorithm used for security " +
 		"operations.",
 	"cross-site-scripting": "User input rendered in unescaped HTML or browser context.",
-	"sql-injection": "SQL query concatenated or formatted with external inputs.",
-	"command-injection": "Operating system command constructed from external inputs.",
+	"sql-injection":        "SQL query concatenated or formatted with external inputs.",
+	"command-injection":    "Operating system command constructed from external inputs.",
 	"insecure-tls-verification": "TLS verification explicitly disabled in transport " +
 		"configuration.",
-	"deadlock": "Potential lock-order inversion or circular wait condition detected.",
+	"deadlock":       "Potential lock-order inversion or circular wait condition detected.",
 	"race-condition": "Concurrent access to shared memory without mutual exclusion.",
-	"typestate": "Resource state machine transition violated or resource leaked.",
+	"typestate":      "Resource state machine transition violated or resource leaked.",
 }
 
 // RedactExcerpt removes sensitive credential patterns and bounds excerpt size

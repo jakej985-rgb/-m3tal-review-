@@ -71,14 +71,14 @@ func (n *GenericNormalizer) Normalize(res ExternalToolResult) ([]model.Finding, 
 		findingID := fmt.Sprintf("%s:%s:%d", res.ToolName, rf.File, rf.Line)
 		ruleName := fmt.Sprintf("%s/%s", res.ToolName, rf.RuleID)
 		findings = append(findings, model.Finding{
-			ID:          findingID,
-			Rule:        ruleName,
-			Severity:    sev,
-			Category:    "external",
-			File:        rf.File,
-			Line:        rf.Line,
-			Message:     rf.Message,
-			Confidence:  "high",
+			ID:         findingID,
+			Rule:       ruleName,
+			Severity:   sev,
+			Category:   "external",
+			File:       rf.File,
+			Line:       rf.Line,
+			Message:    rf.Message,
+			Confidence: "high",
 		})
 	}
 

@@ -113,4 +113,3 @@ func FindingRuleID(f review.Finding) string {
 	}
 	return rule
 }
-
