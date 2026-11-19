@@ -50,6 +50,9 @@ type AnalysisSection struct {
 	Truncated   bool                  `json:"truncated,omitempty"`
 }
 
+// CurrentReportSchemaVersion specifies the active schema version produced by m3tal-review.
+const CurrentReportSchemaVersion = "1.0.0"
+
 type Report struct {
 	SchemaVersion   string             `json:"schema_version,omitempty"`
 	Scope           string             `json:"scope,omitempty"`
@@ -109,7 +112,7 @@ func NewReport(
 	}
 
 	return Report{
-		SchemaVersion: "1.0.0",
+		SchemaVersion: CurrentReportSchemaVersion,
 		Scope:         "staged",
 		RunID:         runID,
 		Timestamp:     time.Now().UTC(),

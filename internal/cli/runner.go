@@ -250,6 +250,23 @@ func RunPipeline(cfg RunnerConfig) error {
 		}
 	}
 
+	if analysisSection != nil {
+		if analysisSection.Status == "failed" {
+			report.Passed = false
+			if cfg.Scope == "working-tree" {
+				report.Summary = "Audit failed: semantic analysis encountered fatal load or execution errors."
+			} else {
+				report.Summary = "Review failed: semantic analysis encountered fatal load or execution errors."
+			}
+		} else if analysisSection.Status == "degraded" && report.Passed {
+			if cfg.Scope == "working-tree" {
+				report.Summary = "Audit completed with degraded/truncated semantic analysis."
+			} else {
+				report.Summary = "Review completed with degraded/truncated semantic analysis."
+			}
+		}
+	}
+
 	if review.ValidateCommitSHA(currentSHA) == nil {
 		hashVal := ""
 		if cfg.Scope == "working-tree" {
@@ -418,12 +435,18 @@ func RunPipeline(cfg RunnerConfig) error {
 			if len(report.UnanalyzedFiles) > 0 {
 				return fmt.Errorf("review found %d issue(s) and could not analyze %d staged file(s)", len(report.Findings), len(report.UnanalyzedFiles))
 			}
-			return fmt.Errorf("review found %d issue(s)", len(report.Findings))
+			if len(report.Findings) > 0 {
+				return fmt.Errorf("review found %d issue(s)", len(report.Findings))
+			}
+			return fmt.Errorf("review failed: %s", report.Summary)
 		} else {
 			if len(report.UnanalyzedFiles) > 0 {
 				return fmt.Errorf("audit incomplete: %d file(s) could not be analyzed", len(report.UnanalyzedFiles))
 			}
-			return fmt.Errorf("audit found %d issue(s)", len(report.Findings))
+			if len(report.Findings) > 0 {
+				return fmt.Errorf("audit found %d issue(s)", len(report.Findings))
+			}
+			return fmt.Errorf("audit failed: %s", report.Summary)
 		}
 	}
 

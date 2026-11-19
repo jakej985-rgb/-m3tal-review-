@@ -206,6 +206,9 @@ type Result struct {
 // per-analyzer "skipped" statuses — Run only returns a non-nil error
 // for invalid options.
 func Run(ctx context.Context, opts Options) (*Result, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if strings.TrimSpace(opts.Dir) == "" {
 		return nil, fmt.Errorf("pipeline: Dir is required")
 	}

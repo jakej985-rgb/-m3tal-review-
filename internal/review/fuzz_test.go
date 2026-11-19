@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,31 @@ func FuzzFixtureRules(f *testing.F) {
 		}
 		for _, name := range names {
 			_ = checkRuleSafely(context.Background(), constructors[name](), diff)
+		}
+	})
+}
+
+func FuzzReportValidation(f *testing.F) {
+	seed := []byte(`{"run_id":"0123456789abcdef",` +
+		`"timestamp":"2026-11-19T12:00:00Z",` +
+		`"repository":"test","summary":"ok",` +
+		`"tool_version":"1.0.0","findings":[]}`)
+	f.Add(seed)
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`{"invalid-json`))
+	f.Add([]byte(`{"run_id":"bad","findings":[{"id":"bad"}]}`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 1<<18 {
+			return
+		}
+		var r Report
+		if err := json.Unmarshal(data, &r); err != nil {
+			return
+		}
+		res := ValidateReport(r, "")
+		if !res.Valid && len(res.Errors) == 0 {
+			t.Errorf("invalid report without errors")
 		}
 	})
 }

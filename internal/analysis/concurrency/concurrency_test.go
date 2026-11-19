@@ -711,3 +711,75 @@ func TestFindingContract(t *testing.T) {
 		}
 	}
 }
+
+func TestAdversarial_ClosureLoopCapture(t *testing.T) {
+	prog := loadProgram(t, map[string]string{
+		"go.mod": goMod,
+		"main.go": `package main
+
+import "sync"
+
+type Item struct {
+	mu  sync.Mutex
+	val int
+}
+
+func main() {
+	items := []*Item{{val: 1}, {val: 2}}
+	for _, it := range items {
+		go func(item *Item) {
+			item.mu.Lock()
+			item.val++
+			item.mu.Unlock()
+		}(it)
+	}
+}
+`,
+	})
+	res := analyze(t, prog)
+	fs := findingsOf(res, RuleCheckThenAct)
+	if len(fs) > 0 {
+		t.Fatalf("unexpected check-then-act on independently locked items: %+v", fs)
+	}
+}
+
+func assertAnalyzesWithoutPanic(t *testing.T, prog *semantic.Program) *Result {
+	t.Helper()
+	res := analyze(t, prog)
+	if res == nil {
+		t.Fatal("expected non-nil result from analysis")
+	}
+	return res
+}
+
+func TestAdversarial_UnmodeledDynamicCall(t *testing.T) {
+	files := make(map[string]string)
+	files["go.mod"] = goMod
+	files["main.go"] = `package main
+
+type Handler interface {
+	Handle()
+}
+
+func process(h Handler) {
+	h.Handle()
+}
+
+func main() {
+	var h Handler
+	process(h)
+}
+`
+	prog := loadProgram(t, files)
+	assertAnalyzesWithoutPanic(t, prog)
+}
+
+func TestAdversarial_BuildTagIgnored(t *testing.T) {
+	tagFiles := map[string]string{
+		"go.mod":     goMod,
+		"main.go":    "package main\n\nfunc main() {}\n",
+		"ignored.go": "//go:build ignore\n\npackage main\n\nimport \"sync\"\n\nvar mu sync.Mutex\nfunc f() { mu.Unlock() }\n",
+	}
+	prog := loadProgram(t, tagFiles)
+	assertAnalyzesWithoutPanic(t, prog)
+}

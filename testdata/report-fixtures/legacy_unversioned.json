@@ -1,0 +1,16 @@
+{
+  "run_id": "fedcba9876543210",
+  "timestamp": "2026-01-01T00:00:00Z",
+  "repository": "github.com/jakej985-rgb/m3tal-review",
+  "branch": "main",
+  "commit_sha": "fedcba9876543210fedcba9876543210fedcba98",
+  "base_commit_sha": "0123456789abcdef0123456789abcdef01234567",
+  "diff_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "tool_version": "0.1.0",
+  "reviewed_files": [
+    "cmd/main.go"
+  ],
+  "passed": true,
+  "summary": "Review passed. No findings.",
+  "findings": []
+}

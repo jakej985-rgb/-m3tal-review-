@@ -99,6 +99,8 @@ func (e *ExecPlugin) Analyze(ctx context.Context, in PluginInput) (PluginOutput,
 	args := append([]string{}, e.args...)
 	cmd := exec.CommandContext(ctx, e.path, args...)
 	cmd.Dir = in.RepositoryRoot
+	preparePluginCmd(cmd)
+	cmd.Env = sanitizePluginEnv(os.Environ())
 
 	inData, err := json.Marshal(in)
 	if err != nil {
@@ -304,4 +306,35 @@ func probePluginExecutable(execPath string) (PluginMetadata, PluginCapabilities,
 		License:          m.License,
 		MinRunnerVersion: m.MinRunnerVersion,
 	}, m.Capabilities, nil
+}
+
+// sanitizePluginEnv filters the environment variables passed to plugin subprocesses
+// to prevent credential or secret leakage into third-party plugins.
+func sanitizePluginEnv(environ []string) []string {
+	safe := make([]string, 0, len(environ))
+	for _, env := range environ {
+		idx := strings.IndexByte(env, '=')
+		if idx <= 0 {
+			continue
+		}
+		key := strings.ToUpper(env[:idx])
+		if strings.Contains(key, "TOKEN") ||
+			strings.Contains(key, "SECRET") ||
+			strings.Contains(key, "PASSWORD") ||
+			strings.Contains(key, "AUTH") ||
+			strings.Contains(key, "KEY") ||
+			strings.HasPrefix(key, "M3TAL_") {
+			continue
+		}
+		safe = append(safe, env)
+	}
+	return safe
+}
+
+// killProcess terminates a command's process safely if non-nil.
+func killProcess(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	return cmd.Process.Kill()
 }

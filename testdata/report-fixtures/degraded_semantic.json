@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0.0",
+  "scope": "staged",
+  "run_id": "0f1e2d3c4b5a6978",
+  "timestamp": "2026-11-19T14:00:00Z",
+  "repository": "github.com/jakej985-rgb/m3tal-review",
+  "branch": "feat/edge",
+  "commit_sha": "aaaa1111bbbb2222cccc3333dddd4444eeee5555",
+  "base_commit_sha": "bbbb2222cccc3333dddd4444eeee5555aaaa1111",
+  "diff_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "tool_version": "0.4.0",
+  "reviewed_files": [
+    "pkg/complex/service.go"
+  ],
+  "passed": false,
+  "summary": "Review degraded. Semantic analysis failed: build broken.",
+  "findings": [],
+  "checks": [
+    {
+      "name": "semantic",
+      "category": "analysis",
+      "status": "failed",
+      "message": "semantic load failed"
+    }
+  ],
+  "analysis": {
+    "status": "degraded",
+    "load_error": "could not load package: syntax error",
+    "program": {
+      "packages": 0,
+      "functions": 0,
+      "values": 0,
+      "root_dir": "/home/user/project"
+    },
+    "analyzers": [
+      {
+        "name": "concurrency",
+        "category": "semantic",
+        "status": "skipped"
+      }
+    ],
+    "diagnostics": [
+      {
+        "severity": "error",
+        "category": "build",
+        "message": "syntax error on line 4"
+      }
+    ],
+    "truncated": true
+  }
+}
