@@ -23,6 +23,12 @@ type Program struct {
 	// RootDir is the absolute directory the program was loaded from.
 	RootDir string
 
+	// Language identifies the primary language frontend (e.g. "go").
+	Language string
+
+	// LanguageExtensions holds frontend-specific metadata extensions.
+	LanguageExtensions map[string]any
+
 	// Packages contains every modeled package, sorted by Path, with
 	// test variants sharing a Path ordered by Key(). This
 	// includes analyzed (root) packages and stub packages materialized
@@ -168,6 +174,11 @@ type Package struct {
 	// Name is the package clause name (e.g. "sub").
 	Name string
 
+	// Language identifies the package language (e.g. "go").
+	Language string
+	// LanguageExtensions holds language-specific package metadata.
+	LanguageExtensions map[string]any
+
 	// Files are the source files that comprise the package.
 	Files []*File
 	// Functions are the modeled functions, sorted by ID.
@@ -260,6 +271,8 @@ type Function struct {
 	// Position is the function's declaration site. The zero value
 	// means no source position is available.
 	Position Position
+	// LanguageExtensions holds frontend-specific function attributes.
+	LanguageExtensions map[string]any
 }
 
 // FuncKind classifies a Function.

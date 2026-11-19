@@ -102,6 +102,7 @@ func Load(ctx context.Context, opts Options) (*semantic.Program, error) {
 
 	prog := &semantic.Program{
 		RootDir:     dir,
+		Language:    "go",
 		Diagnostics: diags,
 	}
 
@@ -110,7 +111,10 @@ func Load(ctx context.Context, opts Options) (*semantic.Program, error) {
 		prog.Diagnostics = append(prog.Diagnostics, semantic.Diagnostic{
 			Severity: semantic.SeverityWarning,
 			Category: semantic.DiagLimit,
-			Message:  fmt.Sprintf("package count exceeds MaxPackages=%d; remaining packages were not analyzed", maxPkgs),
+			Message: fmt.Sprintf(
+				"package count exceeds MaxPackages=%d; remaining packages were not analyzed",
+				maxPkgs,
+			),
 		})
 	}
 
@@ -154,6 +158,9 @@ func truncateDiagnostics(diags []semantic.Diagnostic, max int) []semantic.Diagno
 	return append(truncated, semantic.Diagnostic{
 		Severity: semantic.SeverityWarning,
 		Category: semantic.DiagLimit,
-		Message:  fmt.Sprintf("diagnostic count exceeds MaxDiagnostics=%d; %d diagnostics were dropped", max, len(diags)-max),
+		Message: fmt.Sprintf(
+			"diagnostic count exceeds MaxDiagnostics=%d; %d diagnostics were dropped",
+			max, len(diags)-max,
+		),
 	})
 }

@@ -91,7 +91,7 @@ func NewReport(
 	reviewedFiles []string,
 	findings []Finding,
 ) Report {
-	findings = AssignFindingIDs(findings)
+	findings = PrioritizeFindings(AssignFindingIDs(findings))
 	passed := true
 	for i := range findings {
 		if findings[i].Category == "" {
