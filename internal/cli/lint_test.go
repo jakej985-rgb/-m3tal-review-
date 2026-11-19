@@ -82,18 +82,9 @@ func main(){println("unformatted")}
 `)
 
 	// Run lint with --exclude main.go
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	origStdout := os.Stdout
-	os.Stdout = writer
-
-	runErr := executeWithArgs("lint", []string{"--exclude=main.go"})
-
-	os.Stdout = origStdout
-	_ = writer.Close()
-	_ = reader.Close()
+	_, runErr := captureOutput(func() error {
+		return executeWithArgs("lint", []string{"--exclude=main.go"})
+	})
 
 	if runErr != nil {
 		t.Fatalf("expected --exclude flag to pass, got err: %v", runErr)

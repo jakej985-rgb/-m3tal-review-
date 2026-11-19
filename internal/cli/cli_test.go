@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,40 +64,12 @@ func TestCheckDisplaysChangedAndUntrackedFiles(t *testing.T) {
 		}
 	})
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create output pipe: %v", err)
-	}
-
-	originalStdout := os.Stdout
-	os.Stdout = writer
-
-	executeErr := execute("check")
-
-	os.Stdout = originalStdout
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close output writer: %v", err)
-	}
-
-	var captured strings.Builder
-	buffer := make([]byte, 1024)
-	for {
-		n, readErr := reader.Read(buffer)
-		captured.Write(buffer[:n])
-
-		if readErr != nil {
-			break
-		}
-	}
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close output reader: %v", err)
-	}
-
+	outputText, executeErr := captureOutput(func() error {
+		return execute("check")
+	})
 	if executeErr != nil {
 		t.Fatalf("execute(check) error: %v", executeErr)
 	}
-
-	outputText := captured.String()
 
 	if !strings.Contains(outputText, "tracked.txt") {
 		t.Errorf("check output does not contain tracked file:\n%s", outputText)
@@ -194,43 +167,12 @@ func TestRunShowDisplaysReport(t *testing.T) {
 		}
 	})
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create output pipe: %v", err)
-	}
-
-	originalStdout := os.Stdout
-	os.Stdout = writer
-
-	runErr := Run([]string{"show", runID})
-
-	os.Stdout = originalStdout
-
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close output writer: %v", err)
-	}
-
-	var captured strings.Builder
-	buffer := make([]byte, 1024)
-
-	for {
-		n, readErr := reader.Read(buffer)
-		captured.Write(buffer[:n])
-
-		if readErr != nil {
-			break
-		}
-	}
-
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close output reader: %v", err)
-	}
-
+	outputText, runErr := captureOutput(func() error {
+		return Run([]string{"show", runID})
+	})
 	if runErr != nil {
 		t.Fatalf("Run(show) error: %v", runErr)
 	}
-
-	outputText := captured.String()
 
 	if !strings.Contains(outputText, "M3TAL Review Report") {
 		t.Errorf("output missing report heading:\n%s", outputText)
@@ -303,43 +245,12 @@ func TestRunShowDisplaysRemediation(t *testing.T) {
 		}
 	})
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create output pipe: %v", err)
-	}
-
-	originalStdout := os.Stdout
-	os.Stdout = writer
-
-	runErr := Run([]string{"show", runID})
-
-	os.Stdout = originalStdout
-
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close output writer: %v", err)
-	}
-
-	var captured strings.Builder
-	buffer := make([]byte, 1024)
-
-	for {
-		n, readErr := reader.Read(buffer)
-		captured.Write(buffer[:n])
-
-		if readErr != nil {
-			break
-		}
-	}
-
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close output reader: %v", err)
-	}
-
+	outputText, runErr := captureOutput(func() error {
+		return Run([]string{"show", runID})
+	})
 	if runErr != nil {
 		t.Fatalf("Run(show) error: %v", runErr)
 	}
-
-	outputText := captured.String()
 
 	if !strings.Contains(outputText, "[high] config.go:15: Possible hardcoded credential assigned to password (hardcoded-credential)") {
 		t.Errorf("output missing finding line:\n%s", outputText)
@@ -455,40 +366,9 @@ func setupLintRepo(t *testing.T, source string) string {
 
 func captureLintOutput(t *testing.T) (string, error) {
 	t.Helper()
-
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create output pipe: %v", err)
-	}
-
-	originalStdout := os.Stdout
-	os.Stdout = writer
-
-	runErr := execute("lint")
-
-	os.Stdout = originalStdout
-
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close output writer: %v", err)
-	}
-
-	var captured strings.Builder
-	buffer := make([]byte, 1024)
-
-	for {
-		n, readErr := reader.Read(buffer)
-		captured.Write(buffer[:n])
-
-		if readErr != nil {
-			break
-		}
-	}
-
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close output reader: %v", err)
-	}
-
-	return captured.String(), runErr
+	return captureOutput(func() error {
+		return execute("lint")
+	})
 }
 
 func TestLintPassesCleanGoProject(t *testing.T) {
@@ -542,35 +422,9 @@ func main() {
 		t.Fatalf("stage test files: %v\n%s", err, output)
 	}
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create output pipe: %v", err)
-	}
-
-	originalStdout := os.Stdout
-	os.Stdout = writer
-	reviewErr := execute("review")
-	os.Stdout = originalStdout
-
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close output writer: %v", err)
-	}
-
-	var captured strings.Builder
-	buffer := make([]byte, 1024)
-	for {
-		n, readErr := reader.Read(buffer)
-		captured.Write(buffer[:n])
-		if readErr != nil {
-			break
-		}
-	}
-
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close output reader: %v", err)
-	}
-
-	outputText := captured.String()
+	outputText, reviewErr := captureOutput(func() error {
+		return execute("review")
+	})
 	if reviewErr == nil {
 		t.Fatalf("execute(review) expected security finding, got nil\n%s", outputText)
 	}
@@ -630,35 +484,9 @@ func main() {
 		t.Fatalf("stage test files: %v\n%s", err, output)
 	}
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create output pipe: %v", err)
-	}
-
-	originalStdout := os.Stdout
-	os.Stdout = writer
-	reviewErr := execute("review")
-	os.Stdout = originalStdout
-
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close output writer: %v", err)
-	}
-
-	var captured strings.Builder
-	buffer := make([]byte, 1024)
-	for {
-		n, readErr := reader.Read(buffer)
-		captured.Write(buffer[:n])
-		if readErr != nil {
-			break
-		}
-	}
-
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close output reader: %v", err)
-	}
-
-	outputText := captured.String()
+	outputText, reviewErr := captureOutput(func() error {
+		return execute("review")
+	})
 	if reviewErr == nil {
 		t.Fatalf("execute(review) expected slop finding, got nil\n%s", outputText)
 	}
@@ -795,58 +623,18 @@ func TestReviewHandlesMissingCommitMetadataUnbornBranch(t *testing.T) {
 		_ = os.Chdir(originalDir)
 	})
 
-	// Capture stdout
-	stdoutR, stdoutW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	origStdout := os.Stdout
-	os.Stdout = stdoutW
-
-	// Capture stderr
-	stderrR, stderrW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	origStderr := os.Stderr
-	os.Stderr = stderrW
-
-	reviewErr := execute("review")
-
-	os.Stdout = origStdout
-	os.Stderr = origStderr
-	stdoutW.Close()
-	stderrW.Close()
-
-	var stdoutBuf, stderrBuf strings.Builder
-	buf := make([]byte, 1024)
-	for {
-		n, rerr := stdoutR.Read(buf)
-		stdoutBuf.Write(buf[:n])
-		if rerr != nil {
-			break
-		}
-	}
-	for {
-		n, rerr := stderrR.Read(buf)
-		stderrBuf.Write(buf[:n])
-		if rerr != nil {
-			break
-		}
-	}
-	stdoutR.Close()
-	stderrR.Close()
+	stdoutOut, stderrOut, reviewErr := captureOutputAndStderr(func() error {
+		return execute("review")
+	})
 
 	if reviewErr != nil {
 		t.Fatalf("review on unborn branch returned unexpected error: %v", reviewErr)
 	}
 
-	stderrOut := stderrBuf.String()
 	if !strings.Contains(stderrOut, "Warning: unable to determine current commit SHA") {
 		t.Errorf("expected warning in stderr about commit SHA, got:\n%s", stderrOut)
 	}
 
-	stdoutOut := stdoutBuf.String()
 	var runID string
 	for _, line := range strings.Split(stdoutOut, "\n") {
 		if strings.HasPrefix(line, "Run ID:") {
@@ -876,22 +664,71 @@ func captureOutput(f func() error) (string, error) {
 	origStdout := os.Stdout
 	os.Stdout = w
 
+	outCh := make(chan string, 1)
+	go func() {
+		var buf strings.Builder
+		if _, copyErr := io.Copy(&buf, r); copyErr != nil && copyErr != io.EOF {
+			// ignore copy error on pipe close
+		}
+		r.Close()
+		outCh <- buf.String()
+	}()
+
 	execErr := f()
 
 	os.Stdout = origStdout
-	_ = w.Close()
+	w.Close()
+	out := <-outCh
+	return out, execErr
+}
 
-	var buf strings.Builder
-	b := make([]byte, 1024)
-	for {
-		n, rerr := r.Read(b)
-		buf.Write(b[:n])
-		if rerr != nil {
-			break
-		}
+func captureOutputAndStderr(f func() error) (string, string, error) {
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		return "", "", err
 	}
-	_ = r.Close()
-	return buf.String(), execErr
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		stdoutR.Close()
+		stdoutW.Close()
+		return "", "", err
+	}
+
+	origStdout := os.Stdout
+	origStderr := os.Stderr
+	os.Stdout = stdoutW
+	os.Stderr = stderrW
+
+	stdoutCh := make(chan string, 1)
+	go func() {
+		var buf strings.Builder
+		if _, copyErr := io.Copy(&buf, stdoutR); copyErr != nil && copyErr != io.EOF {
+			// ignore copy error on pipe close
+		}
+		stdoutR.Close()
+		stdoutCh <- buf.String()
+	}()
+
+	stderrCh := make(chan string, 1)
+	go func() {
+		var buf strings.Builder
+		if _, copyErr := io.Copy(&buf, stderrR); copyErr != nil && copyErr != io.EOF {
+			// ignore copy error on pipe close
+		}
+		stderrR.Close()
+		stderrCh <- buf.String()
+	}()
+
+	execErr := f()
+
+	os.Stdout = origStdout
+	os.Stderr = origStderr
+	stdoutW.Close()
+	stderrW.Close()
+
+	out := <-stdoutCh
+	errOut := <-stderrCh
+	return out, errOut, execErr
 }
 
 func TestCLIHelpCommand(t *testing.T) {
