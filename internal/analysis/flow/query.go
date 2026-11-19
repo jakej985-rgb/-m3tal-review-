@@ -175,8 +175,46 @@ func (w *flowWork) emit(to *semantic.Value, instr *semantic.Instruction, via, fr
 	w.queue = append(w.queue, to)
 }
 
+// emitWithDetail records a newly reached value with explicit detail text.
+func (w *flowWork) emitWithDetail(
+	to *semantic.Value,
+	instr *semantic.Instruction,
+	via, fromID, detail string,
+) {
+	if to == nil || w.visited[to] {
+		return
+	}
+	w.visited[to] = true
+	op := semantic.OpInvalid
+	var pos semantic.Position
+	if instr != nil {
+		op = instr.Op
+		if detail == "" {
+			detail = instr.Detail
+		}
+		pos = instr.Position
+	}
+	fnID := ""
+	if to.Owner != nil {
+		fnID = to.Owner.ID
+	}
+	w.res.Events = append(w.res.Events, FlowEvent{
+		ValueID:     to.ID,
+		FunctionID:  fnID,
+		Op:          op,
+		Detail:      detail,
+		Position:    pos,
+		Via:         via,
+		FromValueID: fromID,
+	})
+	ev := &w.res.Events[len(w.res.Events)-1]
+	w.res.parents[to.ID] = fromID
+	w.res.byValue[to.ID] = ev
+	w.queue = append(w.queue, to)
+}
+
 // throughCall propagates a value used at a call site into each
-// resolved callee's corresponding parameter.
+// resolved callee's corresponding parameter, or to call results for bodiless calls.
 func (w *flowWork) throughCall(v *semantic.Value, site *semantic.Instruction, call *semantic.Call) {
 	callees := call.Callees
 	if len(callees) == 0 && len(site.Operands) > 0 {
@@ -184,10 +222,12 @@ func (w *flowWork) throughCall(v *semantic.Value, site *semantic.Instruction, ca
 			callees = []*semantic.Function{fv.Func}
 		}
 	}
+	hasBody := false
 	for _, callee := range callees {
-		if callee == nil {
+		if callee == nil || len(callee.Blocks) == 0 {
 			continue
 		}
+		hasBody = true
 		params := w.a.paramValues(callee)
 		if len(params) == 0 {
 			continue
@@ -197,6 +237,12 @@ func (w *flowWork) throughCall(v *semantic.Value, site *semantic.Instruction, ca
 			if actual == v && i < len(params) {
 				w.emit(params[i], site, "call-arg", v.ID)
 			}
+		}
+	}
+	if !hasBody && len(site.Outputs) > 0 {
+		detail := call.Target
+		for _, out := range site.Outputs {
+			w.emitWithDetail(out, site, "call-result", v.ID, detail)
 		}
 	}
 }
@@ -235,8 +281,25 @@ func (w *flowWork) throughReturn(v *semantic.Value, ret *semantic.Instruction) {
 	}
 }
 
-// ensureIndexes builds the caller and instruction-owner indices used
-// by Flow.
+func (a *Analyzer) indexFunction(fn *semantic.Function) {
+	for _, b := range fn.Blocks {
+		for _, ins := range b.Instructions {
+			a.instrOwner[ins] = fn
+		}
+	}
+	for _, c := range fn.Calls {
+		for _, callee := range c.Callees {
+			if callee != nil {
+				a.callers[callee.ID] = append(
+					a.callers[callee.ID],
+					&callRef{caller: fn, site: c.Site, call: c},
+				)
+			}
+		}
+	}
+}
+
+// ensureIndexes builds the caller and instruction-owner indices used by Flow.
 func (a *Analyzer) ensureIndexes() {
 	if a.ownerIndex {
 		return
@@ -245,18 +308,7 @@ func (a *Analyzer) ensureIndexes() {
 	a.instrOwner = make(map[*semantic.Instruction]*semantic.Function)
 	for _, pkg := range a.prog.Packages {
 		for _, fn := range pkg.Functions {
-			for _, b := range fn.Blocks {
-				for _, ins := range b.Instructions {
-					a.instrOwner[ins] = fn
-				}
-			}
-			for _, c := range fn.Calls {
-				for _, callee := range c.Callees {
-					if callee != nil {
-						a.callers[callee.ID] = append(a.callers[callee.ID], &callRef{caller: fn, site: c.Site, call: c})
-					}
-				}
-			}
+			a.indexFunction(fn)
 		}
 	}
 }

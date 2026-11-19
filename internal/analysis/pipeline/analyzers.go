@@ -50,10 +50,15 @@ func analyzerDefs() []analyzerDef {
 // --- flow -----------------------------------------------------------
 
 func runFlow(ctx context.Context, env *Env) analyzerOutcome {
-	res := flow.NewAnalyzer(env.Prog, env.Opts.flowOptions()).Analyze(ctx)
+	analyzer := flow.NewAnalyzer(env.Prog, env.Opts.flowOptions())
+	res := analyzer.Analyze(ctx)
 	out := analyzerOutcome{Truncated: res.Truncated}
 	for _, d := range res.Diagnostics {
 		out.Diagnostics = append(out.Diagnostics, diagnosticFromSemantic(d))
+	}
+	_, findings, err := flow.FindAttackPaths(ctx, analyzer, flow.AttackPathOptions{})
+	if err == nil {
+		out.Findings = append(out.Findings, findings...)
 	}
 	return out
 }
