@@ -6,12 +6,42 @@ It provides actionable findings, records review trails (history), and provides a
 
 ## Documentation
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — package layout, command pipeline, rule engines, and `.m3tal-review/` storage.
-- [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — using m3tal-review across the M3tal ecosystem repos, hooks, and CI; disambiguates the `.m3tal-review/` directory from M3tal Core's separate internal review workflow.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — package layout, command pipeline, rule engines, and storage.
+- [`docs/semantic-pipeline.md`](docs/semantic-pipeline.md) — Go semantic analysis tier: SSA frontend,
+  typed callgraphs, and deterministic engines.
+- [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — using m3tal-review across the M3tal ecosystem repos, hooks, and CI;
+  disambiguates the `.m3tal-review/` directory from M3tal Core's separate internal review workflow.
 - [`docs/RELEASE.md`](docs/RELEASE.md) — versioning, CI gates, and tagging a release.
 - [`docs/threat-model.md`](docs/threat-model.md) — what the tool guarantees and what it explicitly does not.
 - [`docs/fp-tuning.md`](docs/fp-tuning.md) — false-positive tuning and policy configuration.
 - `completion_report.md` — historical release-gate report (superseded; kept for audit history).
+
+## Dual-Tier Architecture
+
+`m3tal-review` operates with two distinct analysis tiers:
+
+1. **Pattern & Inventory Tier (Default)**:
+   - Evaluates fast, deterministic pattern/AST heuristics, structural slop detectors, package-scoped taint rules
+     (Go, intra-file JS/TS), and supply-chain policy checks.
+   - Evaluates staged changes (`review`), working trees (`audit`), or custom patches (`diff`/`stdin`).
+   - Multi-language support (Go, JS/TS, Python, Java, Kotlin, C/C++, C#, Rust, Swift, PHP). Does not construct
+     interprocedural callgraphs or SSA models.
+
+2. **Go Semantic Analysis Tier (Opt-In via `--semantic`)**:
+   - Explicitly enabled via `--semantic` or user configuration (`"semantic": {"enabled": true}`).
+   - Loads a whole-program, typed SSA program model for Go via `go/packages` and class-hierarchy analysis.
+   - Evaluates six deterministic semantic engines:
+     - `flow`: Interprocedural data-flow summaries, origin-trace propagation, and diagnostics.
+     - `statemachine`: State machine transition validation driven by declarative `statemachine/1` YAML contracts.
+     - `typestate`: Single-use / linear resource lifecycle specs driven by `typestate/1` YAML contracts.
+     - `concurrency`: Cross-function check-then-act race conditions, mutex lock-order inversion / deadlock cycles,
+       and unprotected shared field access.
+     - `authproto`: Modeled authentication and cryptographic state, freshness nonces, and session-binding checks
+       (`authproto/1` contracts).
+     - `protocol`: Multi-version protocol compatibility matrix verification (`protocol/1` contracts).
+   - Features deterministic parallel execution, bounded budgets, per-analyzer timeouts (`--semantic-timeout`),
+     explicit `warning` status for budget-truncated analyses, and unified evidence reporting. See
+     [`docs/semantic-pipeline.md`](docs/semantic-pipeline.md).
 
 ## Features
 
@@ -21,7 +51,21 @@ It provides actionable findings, records review trails (history), and provides a
 - **Staged-Only Semantics**: `review` accurately inspects staged content from the Git index (`git show :<file>`). Working-tree modifications that have not been staged are ignored. Deleted files are classified and handled without invoking AST analysis or generating false errors.
 - **Working-Tree Audit**: `audit` checks tracked files present in the working tree, including unchanged files, plus non-ignored untracked files. Use `audit --include-ignored` to include ignored files such as `.env`. The scan defaults to 10,000 files and 128 MiB; files beyond either limit are reported as unanalyzed and make the run incomplete. Binary files, submodules, unreadable files, external symlinks, and common source languages without an analyzer are also reported as unanalyzed. The audit skips Git metadata and generated `.m3tal-review` data, and does not stage files or change the Git index.
 - **Analysis Error Reporting**: Syntax errors in staged Go code or git index retrieval errors produce distinct high-severity findings (`code-slop-analysis-error`), ensuring that analysis failures cannot result in a passing review.
-- **Security Checks**: Heuristic checks detect likely hardcoded credentials and exposed secrets (private key blocks, cloud/SCM/API tokens), committed secret files (.env, keys, credentials), world-writable file permissions, disabled TLS verification, risky shell APIs, request-controlled file paths and URLs (SSRF, command injection, open redirect), template injection, prototype pollution, unsafe archive extraction, XXE-prone XML parsing, weak cryptography and non-cryptographic randomness, ECB/static-IV cipher use, timing-unsafe secret comparisons, JWT `alg:none` and hardcoded session secrets, cookies without flags, credentials in web storage, missing postMessage origin checks, additional XSS sinks, CORS wildcard origins, unsafe deserialization, dynamic code evaluation, DOM-based XSS sinks, and string-built SQL/LDAP/XPath queries. Supply-chain checks flag unpinned GitHub Actions, `pull_request_target`, `${{ }}` script injection, curl|sh pipelines, unpinned images, CI secret exposure, privileged containers, and remote `ADD`/`git clone` in Dockerfiles. These checks are not a general security review: they do not perform data-flow analysis, framework-specific analysis, or complete parsing of every supported language. A passing run means only that the configured checks found no findings; it does not establish that the code is secure.
+- **Security Checks**: Heuristic checks detect likely hardcoded credentials and exposed secrets (private key
+  blocks, cloud/SCM/API tokens), committed secret files (.env, keys, credentials), world-writable file
+  permissions, disabled TLS verification, risky shell APIs, request-controlled file paths and URLs (SSRF,
+  command injection, open redirect), template injection, prototype pollution, unsafe archive extraction,
+  XXE-prone XML parsing, weak cryptography and non-cryptographic randomness, ECB/static-IV cipher use,
+  timing-unsafe secret comparisons, JWT `alg:none` and hardcoded session secrets, cookies without flags,
+  credentials in web storage, missing postMessage origin checks, additional XSS sinks, CORS wildcard origins,
+  unsafe deserialization, dynamic code evaluation, DOM-based XSS sinks, and string-built SQL/LDAP/XPath
+  queries. Supply-chain checks flag unpinned GitHub Actions, `pull_request_target`, `${{ }}` script injection,
+  curl|sh pipelines, unpinned images, CI secret exposure, privileged containers, and remote `ADD`/`git clone` in
+  Dockerfiles. In the default pattern tier, these checks are heuristic and do not perform whole-program
+  data-flow analysis. When opt-in semantic analysis (`--semantic`) is enabled for Go repositories, deep
+  interprocedural data-flow, concurrency, typestate, and contract modeling are executed within bounded resource
+  budgets. A passing run establishes that configured checks found no violations; it does not prove arbitrary
+  security or total absence of vulnerabilities.
 - **Confidence Profile**: `review --profile full` and `audit --profile full` also run `gofmt`, `go vet`, and `go test ./...`, with a five-minute timeout per command. This runs the repository's tests, so use it when you want code execution as part of review. `fast` remains the default.
 - **Optional Local Scanners**: `--with-tools` runs installed `gitleaks`, `gosec`, and `osv-scanner` binaries using fixed command arguments and five-minute timeouts. Missing tools and execution failures are reported as incomplete checks. Gitleaks report output is redacted and only finding metadata is saved. OSV Scanner may need its local vulnerability database or network access, depending on its configuration. No scanner is invoked unless requested.
 - **External Analyzer Plugins**: `review` and `audit` can run external analyzer plugins discovered from `--plugin-dir <path>`, the `plugin_dir` key in `~/.config/m3tal-review/config.json`, or `~/.config/m3tal-review/plugins` by default. Plugins inside the reviewed repository (`.m3tal-review/plugins`) are treated as untrusted: they are never loaded unless you pass `--allow-repo-plugins` **and** list each executable's SHA-256 hash in `plugin_allow_sha256` in the user config. Unlisted repository binaries are never executed — not even for `--manifest` probing.
@@ -322,6 +366,12 @@ m3tal-review audit --vuln-scan   # query OSV for known CVEs in go.mod/package.js
 # Post results back to GitHub
 m3tal-review review --check-run          # Check Run with annotations (needs GITHUB_TOKEN + GITHUB_REPOSITORY)
 m3tal-review review --pr-comment         # comment on the current PR via the gh CLI
+
+# Opt-in Go semantic analysis (whole-program SSA & contract verification)
+m3tal-review review --semantic
+m3tal-review audit --semantic --semantic-analyzers flow,statemachine,typestate,concurrency,authproto,protocol
+m3tal-review audit --semantic --semantic-depth deep --semantic-timeout 5m
+m3tal-review audit --semantic --semantic-contracts .m3tal/contracts --semantic-tests
 ```
 
 `audit` also accepts `--only`, `--skip`, `--fail-on`, `--format`, and `--snippets` like `review`. Policy files support per-path rule overrides via `"paths": {"<glob>": {"<rule>": {"enabled": false, "severity": "info"}}}`.
