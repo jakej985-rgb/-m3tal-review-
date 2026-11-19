@@ -207,6 +207,12 @@ func PrioritizeFindings(findings []Finding) []Finding {
 		return correlated[i].ID < correlated[j].ID
 	})
 
+	for i := range correlated {
+		if correlated[i].Explanation == nil {
+			correlated[i].Explanation = ExplainFinding(correlated[i])
+		}
+	}
+
 	return correlated
 }
 
