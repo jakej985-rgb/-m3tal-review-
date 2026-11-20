@@ -639,5 +639,50 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageUnknown, regexp.MustCompile(`>\s*/tmp/[a-zA-Z0-9_\-\.]+\b|/tmp/\$\$`), "Predictable /tmp file path vulnerable to symlink attacks; use mktemp instead"},
 				{language.LanguageUnknown, regexp.MustCompile(`\beval\s+["']?\$(?:[A-Za-z0-9_]+|\{[A-Za-z0-9_]+\})`), "Dynamic eval on unquoted variable risks arbitrary shell command injection"},
 			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "hardcoded-ip-address", severity: "low",
+			raw:            true,
+			anyLanguage:    true,
+			remediation:    "Avoid hardcoding literal IP addresses; use configurable hostnames, DNS, or environment variables.",
+			excludePattern: hardcodedIPExcludePattern,
+			skipLine:       hardcodedIPSkipLine,
+			patterns: []langPattern{
+				{language.LanguageUnknown, hardcodedIPPattern, "Hardcoded IP address in source or endpoint URL"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}, raw: true,
+			name: "missing-error-wrap", severity: "low",
+			remediation:    "Use %w with fmt.Errorf to preserve error wrapping and causality chain with errors.Is/As.",
+			excludePattern: missingErrorWrapExcludePattern,
+			patterns: []langPattern{
+				{language.LanguageGo, missingErrorWrapPattern, "fmt.Errorf with %s/%v loses error wrapping; use %w"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "goroutine-leak-candidate", severity: "medium",
+			remediation:    "Ensure goroutines have termination signaling (context.Context or sync.WaitGroup) to prevent leaks.",
+			excludePattern: goroutineLeakExcludePattern,
+			matchAbsent:    goroutineLeakMatchAbsent,
+			patterns: []langPattern{
+				{language.LanguageGo, goroutineLeakPattern, "Unbounded goroutine spawned without termination signaling"},
+			}},
 	}
 }
+
+var (
+	hardcodedIPExcludePattern = regexp.MustCompile(`(?:_test\.[a-z]+|(?:^|/)testdata/|(?:^|/)tests?/fixtures?/)`)
+	hardcodedIPSkipLine       = regexp.MustCompile(
+		`(?i)(?:127\.0\.0\.1|0\.0\.0\.0|255\.255\.255\.255|localhost|example\.com|::1)`,
+	)
+	hardcodedIPPattern = regexp.MustCompile(
+		`(?i)["'\x60](?:https?://)?(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-5])\.(?:\d{1,3}\.){2}` +
+			`(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-5])(?::\d+)?(?:/|[^\w.]|["'\x60]|$)`,
+	)
+
+	missingErrorWrapExcludePattern = regexp.MustCompile(`(?:_test\.go$|(?:^|/)testdata/)`)
+	missingErrorWrapPattern        = regexp.MustCompile(`\bfmt\.Errorf\s*\(\s*"[^"]*%[sv][^"]*"\s*,[^)]*\b(?:err|error)\b`)
+
+	goroutineLeakExcludePattern = regexp.MustCompile(`(?:_test\.go$|(?:^|/)testdata/)`)
+	goroutineLeakMatchAbsent    = regexp.MustCompile(
+		`(?i)(?:Context|\.Done\(\)|time\.After|<-|select\s*\{|WaitGroup|ticker|break|return)`,
+	)
+	goroutineLeakPattern = regexp.MustCompile(`\bgo\s+func\s*\(\s*\)\s*\{[\s\S]{0,300}?\}\s*\(\s*\)`)
+)

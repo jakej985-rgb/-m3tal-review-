@@ -78,6 +78,9 @@ type Report struct {
 	// separates semantic-engine diagnostics and per-analyzer status
 	// from the pattern-tier findings.
 	Analysis *AnalysisSection `json:"analysis,omitempty"`
+	// Grade holds the deterministic quality score (0–100) and letter
+	// grade (A–F) computed from findings. Always present.
+	Grade *GradeResult `json:"grade,omitempty"`
 }
 
 func NewReport(
@@ -111,6 +114,7 @@ func NewReport(
 		summary = "Review passed with informational risk signals."
 	}
 
+	grade := ComputeGrade(findings)
 	return Report{
 		SchemaVersion: CurrentReportSchemaVersion,
 		Scope:         "staged",
@@ -126,6 +130,7 @@ func NewReport(
 		Passed:        passed,
 		Summary:       summary,
 		Findings:      findings,
+		Grade:         &grade,
 	}
 }
 

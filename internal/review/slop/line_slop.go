@@ -1,6 +1,8 @@
 package slop
 
 import (
+	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -12,7 +14,7 @@ var slopDebugLeftoverPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^import\s+.*\bipdb\b|^import\s+pdb\b|set_trace\s*\(`),
 	regexp.MustCompile(`\bdbg!\s*\(`),
 	regexp.MustCompile(`\bruntime\.Breakpoint\s*\(`),
-	regexp.MustCompile(`\b(?:binding\.pry|debugger\b)`),
+	regexp.MustCompile(`\b(?:binding\.pry|debugger(?:\s*;|\s*$))`),
 	regexp.MustCompile(`\bvar_dump\s*\(|\bdd\s*\(\s*\$`),
 	regexp.MustCompile(`System\.out\.println|printStackTrace\s*\(`),
 }
@@ -70,9 +72,14 @@ func checkSlopLineExtras(fd FileDiff) []Finding {
 		} else {
 			blankRun = 0
 		}
+		if isTestOrToolingFile(fd.Path) {
+			continue
+		}
 		for _, pattern := range slopDebugLeftoverPatterns {
 			if pattern.MatchString(strings.TrimSpace(raw)) {
-				appendSlopFinding(&findings, seen, fd.Path, line, "Debug leftover statement", "Remove debugger/breakpoint statements before committing.")
+				msg := "Debug leftover statement"
+				remed := "Remove debugger/breakpoint statements before committing."
+				appendSlopFinding(&findings, seen, fd.Path, line, msg, remed)
 				break
 			}
 		}
@@ -285,4 +292,29 @@ func crossFileDuplicateFindings(fileDiffs []FileDiff) []Finding {
 		}
 	}
 	return findings
+}
+
+func isTestOrToolingFile(file string) bool {
+	base := strings.ToLower(path.Base(file))
+	lower := strings.ToLower(file)
+	slashPath := "/" + strings.TrimPrefix(filepath.ToSlash(file), "/")
+	testDirs := []string{
+		"/testdata/", "/tests/", "/test/", "/fixtures/", "/fixture/",
+		"/.github/", "/scripts/", "/tools/", "/examples/", "/benchmarks/",
+	}
+	for _, seg := range testDirs {
+		if strings.Contains(slashPath, seg) || strings.Contains(lower, seg) {
+			return true
+		}
+	}
+	for _, suffix := range []string{
+		"_test.go", "_test.py", "_test.rb", "_test.java", "_test.kt",
+		".test.js", ".test.ts", ".test.jsx", ".test.tsx",
+		".spec.js", ".spec.ts", ".spec.jsx", ".spec.tsx",
+	} {
+		if strings.HasSuffix(base, suffix) {
+			return true
+		}
+	}
+	return false
 }

@@ -1,0 +1,26 @@
+{
+  "paths": {
+    "**/*_test.go": {
+      "code-slop": { "enabled": false },
+      "high-entropy-secret": { "enabled": false },
+      "insecure-permissions": { "enabled": false }
+    },
+    "testdata/**": {
+      "code-slop": { "enabled": false },
+      "high-entropy-secret": { "enabled": false },
+      "secret-material": { "enabled": false }
+    },
+    "internal/cli/rules_doc.go": {
+      "pipe-to-shell": { "enabled": false },
+      "websocket-origin": { "enabled": false },
+      "jwt-misuse": { "enabled": false },
+      "server-timeouts": { "enabled": false },
+      "cors-misconfig": { "enabled": false },
+      "insecure-permissions": { "enabled": false },
+      "sensitive-data-logging": { "enabled": false },
+      "insecure-protocol": { "enabled": false },
+      "query-token-exposure": { "enabled": false },
+      "hardcoded-ip-address": { "enabled": false }
+    }
+  }
+}

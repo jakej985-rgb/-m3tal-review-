@@ -132,6 +132,9 @@ var ruleCatalog = []ruleDoc{
 	{"http-missing-timeouts", "HTTP server started without ReadTimeout/WriteTimeout.", "http.ListenAndServe(\":8080\", nil)"},
 	{"http-unsafe-param-reflection", "HTTP request parameter reflected directly in response writer.", "w.Write([]byte(r.PathValue(\"id\")))"},
 	{"rpc-stdin-scanner", "stdin scanner uses the default 64KB buffer; oversized RPC frames can kill the process.", "bufio.NewScanner(os.Stdin)"},
+	{"hardcoded-ip-address", "Hardcoded literal IP address in source or endpoint URL.", "http://198.51.100.42:8080"},
+	{"missing-error-wrap", "fmt.Errorf using %s/%v instead of %w, losing causality.", "fmt.Errorf(\"failed: %v\", err)"},
+	{"goroutine-leak-candidate", "Unbounded goroutine spawned without cancellation signaling.", "go func() { ... }()"},
 }
 
 func listRules() error {

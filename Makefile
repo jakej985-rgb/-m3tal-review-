@@ -1,9 +1,9 @@
-.PHONY: build test vet fmt bench lint check release checksums sbom verify-reproducible clean
+.PHONY: build test vet fmt bench lint check release checksums sbom verify-reproducible clean audit audit-sec audit-slop
 
 BUILD_FLAGS = -trimpath -ldflags="-s -w -buildid="
 
 build:
-	CGO_ENABLED=0 go build $(BUILD_FLAGS) ./...
+	CGO_ENABLED=0 go build $(BUILD_FLAGS) -o m3tal-review ./cmd/m3tal-review
 
 test:
 	go test -race ./...
@@ -18,6 +18,15 @@ bench:
 	go test ./internal/review/ -run XXX -bench . -benchtime 1s
 
 check: fmt vet build test
+
+audit:
+	go run ./cmd/m3tal-review audit
+
+audit-sec:
+	go run ./cmd/m3tal-review audit --profile fast
+
+audit-slop:
+	go run ./cmd/m3tal-review audit --with-slop
 
 clean:
 	rm -rf dist/

@@ -24,7 +24,7 @@ import (
 
 var (
 	appName = "M3TAL Review"
-	version = "1.0.0"
+	version = "1.1.0"
 )
 
 func Run(args []string) error {
@@ -106,6 +106,9 @@ func showReport(runID string) error {
 	fmt.Println("Run ID:", displayText(report.RunID))
 	fmt.Println("Repository:", displayText(report.Repository))
 	fmt.Println("Branch:", displayText(report.Branch))
+	if report.Grade != nil {
+		fmt.Printf("Grade: %s (%d/100)\n", report.Grade.Grade, report.Grade.Score)
+	}
 	fmt.Println("Summary:", displayText(report.Summary))
 	fmt.Println("Report:", displayText(reportPath))
 	printFindingChanges(report.FindingChanges)

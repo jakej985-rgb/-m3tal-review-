@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
+
+## [1.1.0] - 2026-11-20
+
+### Added
+- Quality grading and scoring system (`Report.Grade` / `ComputeGrade`): deterministic
+  0–100 score and A–F letter grades based on severity-weighted finding penalties
+  and confidence multipliers, integrated across JSON, text, and interactive HTML
+  report cards.
+- New detection rules:
+  - `hardcoded-ip-address`: flags literal IP addresses in endpoints, ignoring localhost
+    and 0.0.0.0.
+  - `missing-error-wrap`: flags `fmt.Errorf` losing error causality with `%s`/`%v` instead
+    of `%w`.
+  - `goroutine-leak-candidate`: detects unbounded fire-and-forget goroutines spawned
+    without cancellation, context, or WaitGroup lifecycle signaling.
+
+### Fixed
+- `WorldWritableFileModeFixer`: extended `maskLine` to handle `/* ... */` block
+  comments, preventing unwanted octal literal replacement inside comments.
 
 ### Changed
 - `request-taint` findings roll up per function: multiple sinks in one

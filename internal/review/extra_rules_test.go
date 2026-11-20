@@ -508,3 +508,41 @@ func TestUnpinnedActionDistinctSignatures(t *testing.T) {
 		t.Fatalf("expected 3 distinct signatures, got %v", sigs)
 	}
 }
+
+func TestNewRulesDetections(t *testing.T) {
+	t.Run("hardcoded-ip-address", func(t *testing.T) {
+		r := rulesByName(t, "hardcoded-ip-address")[0]
+		pos := "package main\nconst API = \"http://198.51.100.42:8080/v1\"\n"
+		if !hasFinding(r.Check(extraDiff("main.go", pos)), "hardcoded-ip-address") {
+			t.Errorf("expected hardcoded-ip-address to flag public IP")
+		}
+		neg := "package main\nconst Local = \"http://127.0.0.1:8080/v1\"\nconst Zero = \"0.0.0.0:8080\"\n"
+		if hasFinding(r.Check(extraDiff("main.go", neg)), "hardcoded-ip-address") {
+			t.Errorf("expected hardcoded-ip-address to ignore localhost / 0.0.0.0")
+		}
+	})
+
+	t.Run("missing-error-wrap", func(t *testing.T) {
+		r := rulesByName(t, "missing-error-wrap")[0]
+		pos := "package main\nimport \"fmt\"\nfunc f(err error) error {\n\treturn fmt.Errorf(\"failed: %v\", err)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", pos)), "missing-error-wrap") {
+			t.Errorf("expected missing-error-wrap to flag fmt.Errorf with %%v")
+		}
+		neg := "package main\nimport \"fmt\"\nfunc f(err error) error {\n\treturn fmt.Errorf(\"failed: %w\", err)\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", neg)), "missing-error-wrap") {
+			t.Errorf("expected missing-error-wrap to accept %%w")
+		}
+	})
+
+	t.Run("goroutine-leak-candidate", func(t *testing.T) {
+		r := rulesByName(t, "goroutine-leak-candidate")[0]
+		pos := "package main\nfunc f() {\n\tgo func() {\n\t\tdoWork()\n\t}()\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", pos)), "goroutine-leak-candidate") {
+			t.Errorf("expected goroutine-leak-candidate to flag uncoordinated goroutine")
+		}
+		neg := "package main\nfunc f(ctx context.Context) {\n\tgo func() {\n\t\tselect {\n\t\tcase <-ctx.Done():\n\t\t\treturn\n\t\t}\n\t}()\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", neg)), "goroutine-leak-candidate") {
+			t.Errorf("expected goroutine-leak-candidate to ignore goroutine with context Done")
+		}
+	})
+}

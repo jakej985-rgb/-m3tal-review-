@@ -309,10 +309,12 @@ func xmlEscape(s string) string {
 
 // formatFindingsHTML generates an interactive HTML report from a list of findings.
 func formatFindingsHTML(findings []review.Finding) (string, error) {
+	grade := review.ComputeGrade(findings)
 	report := review.Report{
 		Scope:     "staged",
 		Timestamp: time.Now().UTC(),
 		Findings:  findings,
+		Grade:     &grade,
 	}
 	passed := true
 	for _, f := range findings {
@@ -433,6 +435,18 @@ body {
 }
 .status-badge.passed { background: var(--pass-bg); color: #3fb950; border: 1px solid var(--pass); }
 .status-badge.failed { background: var(--fail-bg); color: #f85149; border: 1px solid var(--fail); }
+.grade-badge {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.grade-badge.grade-A { background: var(--pass-bg); color: #3fb950; border: 1px solid var(--pass); }
+.grade-badge.grade-B { background: #15293d; color: #58a6ff; border: 1px solid #388bfd; }
+.grade-badge.grade-C { background: #3b2e16; color: #d29922; border: 1px solid #9e6a03; }
+.grade-badge.grade-D { background: #3c1e1e; color: #ff7b72; border: 1px solid #f85149; }
+.grade-badge.grade-F { background: var(--fail-bg); color: #f85149; border: 1px solid var(--fail); }
 .report-summary-text { font-size: 15px; color: var(--text-bright); margin-bottom: 16px; }
 .metadata-grid {
   display: grid;
@@ -615,6 +629,12 @@ body {
 <div class="container">
 `)
 
+	grade := report.Grade
+	if grade == nil {
+		g := review.ComputeGrade(report.Findings)
+		grade = &g
+	}
+
 	// Report Header
 	b.WriteString(`  <header class="report-header">` + "\n")
 	b.WriteString(`    <div class="header-top">` + "\n")
@@ -627,6 +647,8 @@ body {
 		statusText = "FAILED"
 	}
 	fmt.Fprintf(&b, `        <span class="status-badge %s">%s</span>`+"\n", statusClass, statusText)
+	fmt.Fprintf(&b, `        <span class="grade-badge grade-%s">Grade %s (%d/100)</span>`+"\n",
+		grade.Grade, grade.Grade, grade.Score)
 	b.WriteString(`      </div>` + "\n")
 	if report.ToolVersion != "" {
 		fmt.Fprintf(&b, `      <div class="tool-version">Version %s</div>`+"\n", html.EscapeString(report.ToolVersion))
@@ -641,8 +663,11 @@ body {
 	if report.RunID != "" {
 		fmt.Fprintf(&b, `      <div class="metadata-item"><strong>Run ID</strong><code>%s</code></div>`+"\n", html.EscapeString(report.RunID))
 	}
+	fmt.Fprintf(&b, `      <div class="metadata-item"><strong>Grade</strong><span>%s (%d/100)</span></div>`+"\n",
+		grade.Grade, grade.Score)
 	if !report.Timestamp.IsZero() {
-		fmt.Fprintf(&b, `      <div class="metadata-item"><strong>Timestamp</strong><span>%s</span></div>`+"\n", report.Timestamp.UTC().Format("2006-01-02 15:04:05 UTC"))
+		ts := report.Timestamp.UTC().Format("2006-01-02 15:04:05 UTC")
+		fmt.Fprintf(&b, `      <div class="metadata-item"><strong>Timestamp</strong><span>%s</span></div>`+"\n", ts)
 	}
 	if report.Repository != "" {
 		fmt.Fprintf(&b, `      <div class="metadata-item"><strong>Repository</strong><span>%s</span></div>`+"\n", html.EscapeString(report.Repository))

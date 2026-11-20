@@ -127,6 +127,14 @@ func maskLine(line string) (string, [][2]int) {
 			}
 			break
 		}
+		// Block comment: /* ... */ — blank everything between delimiters.
+		if c == '/' && i+1 < len(b) && b[i+1] == '*' {
+			flush(i)
+			b[i] = 0
+			b[i+1] = 0
+			i = blankBlockComment(b, i+2)
+			continue
+		}
 		if c == '"' || c == '\'' || c == '`' {
 			flush(i)
 			q := c
@@ -163,6 +171,18 @@ func maskLine(line string) (string, [][2]int) {
 		}
 	}
 	return string(b), segs
+}
+
+func blankBlockComment(b []byte, start int) int {
+	for j := start; j < len(b); j++ {
+		if b[j] == '*' && j+1 < len(b) && b[j+1] == '/' {
+			b[j] = 0
+			b[j+1] = 0
+			return j + 1
+		}
+		b[j] = 0
+	}
+	return len(b)
 }
 
 // inCodeSpan reports whether pos falls inside one of the code segments.

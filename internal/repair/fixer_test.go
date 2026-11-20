@@ -267,3 +267,81 @@ func TestWorldWritableFileModeFixer0666(t *testing.T) {
 		t.Errorf("expected 0o666 to be replaced with 0o644, got %+v", propOctal)
 	}
 }
+
+// TestMaskLineBlockComment verifies that maskLine blanks /* ... */ block comments,
+// preventing WorldWritableFileModeFixer from rewriting literals inside them.
+func TestMaskLineBlockComment(t *testing.T) {
+	cases := []struct {
+		line     string
+		wantMask bool // whether the 0777 literal should be masked (unreachable by pattern)
+	}{
+		// Literal inside block comment — must NOT be rewritten.
+		{"/* use mode 0777 */", true},
+		{"x := 1; /* legacy 0777 */ os.Chmod(path, 0644)", true},
+		// Literal in real code adjacent to a block comment — must still be rewritten.
+		{"os.WriteFile(p, d, 0777) /* ok */", false},
+	}
+
+	fixer := WorldWritableFileModeFixer{}
+	finding := review.Finding{
+		Rule:    "world-writable-file-mode",
+		File:    "perms.go",
+		Message: "File operation grants world-write permission",
+	}
+
+	for _, tc := range cases {
+		content := tc.line + "\n"
+		prop, err := fixer.GenerateProposal(context.Background(), "", finding, []byte(content))
+		if err != nil {
+			t.Fatalf("line %q: unexpected error: %v", tc.line, err)
+		}
+		if tc.wantMask {
+			// Expect no rewrite — the 0777 is inside a comment.
+			if prop != nil && prop.ProposedContent != content {
+				t.Errorf("line %q: fixer rewrote block-comment literal; got %q", tc.line, prop.ProposedContent)
+			}
+		} else {
+			// Expect the real code 0777 to be rewritten.
+			if prop == nil || !strings.Contains(prop.ProposedContent, "0644") {
+				t.Errorf("line %q: expected 0777 in code to be rewritten to 0644, got %v", tc.line, prop)
+			}
+		}
+	}
+}
+
+// TestMaskLineFunction exercises maskLine directly for comment and string masking.
+func TestMaskLineFunction(t *testing.T) {
+	cases := []struct {
+		input string
+		// verify these byte offsets are blanked (space) in the mask
+		blankedSubstr string
+		// verify these substrings are preserved in the mask
+		codeSubstr string
+	}{
+		{
+			input:         `os.WriteFile(p, d, 0777) // mode: 0777`,
+			blankedSubstr: "mode: 0777",
+			codeSubstr:    "0777)",
+		},
+		{
+			input:         `os.WriteFile(p, d, 0777) /* mode: 0777 */`,
+			blankedSubstr: "mode: 0777",
+			codeSubstr:    "0777)",
+		},
+		{
+			input:         `s := "0777"; os.WriteFile(p, d, 0777)`,
+			blankedSubstr: "\"0777\"",
+			codeSubstr:    "0777)",
+		},
+	}
+
+	for _, tc := range cases {
+		masked, _ := maskLine(tc.input)
+		if strings.Contains(masked, tc.blankedSubstr) {
+			t.Errorf("input %q: expected %q to be masked, got masked=%q", tc.input, tc.blankedSubstr, masked)
+		}
+		if !strings.Contains(masked, tc.codeSubstr) {
+			t.Errorf("input %q: expected code %q to survive masking, got masked=%q", tc.input, tc.codeSubstr, masked)
+		}
+	}
+}

@@ -324,6 +324,9 @@ func RunPipeline(cfg RunnerConfig) error {
 	fmt.Println(displayText(report.Summary))
 	fmt.Println("Scope:", cfg.Scope)
 	fmt.Println("Profile:", cfg.Profile)
+	if report.Grade != nil {
+		fmt.Printf("Grade: %s (%d/100)\n", report.Grade.Grade, report.Grade.Score)
+	}
 	printFindingChanges(report.FindingChanges)
 	printCheckResults(report.Checks)
 	if cfg.Scope == "working-tree" {
