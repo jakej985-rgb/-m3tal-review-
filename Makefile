@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt bench lint check release checksums sbom verify-reproducible clean
+.PHONY: build test vet fmt bench bench-audit bench-jobs lint check release checksums sbom verify-reproducible clean
 
 BUILD_FLAGS = -trimpath -ldflags="-s -w -buildid="
 
@@ -16,6 +16,17 @@ fmt:
 
 bench:
 	go test ./internal/review/ -run XXX -bench . -benchtime 1s
+
+bench-audit:
+	go test ./internal/benchmark/ -run XXX -bench BenchmarkAudit -benchmem
+
+# Sweep audit --jobs settings (default, 1, 2, 4, half the cores) on a real repo and
+# report wall time and peak CPU. Override with JOBS_SWEEP_REPS=5 JOBS_SWEEP_REPO=/path.
+JOBS_SWEEP_REPS ?= 3
+JOBS_SWEEP_REPO ?= .
+
+bench-jobs:
+	@./scripts/bench-jobs.sh "$(JOBS_SWEEP_REPO)" "$(JOBS_SWEEP_REPS)"
 
 check: fmt vet build test
 

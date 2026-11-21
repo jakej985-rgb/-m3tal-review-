@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -43,6 +44,60 @@ func TestEngineRulePanicBecomesFinding(t *testing.T) {
 	findings := engine.Run("diff --git a/x b/x\n")
 	if len(findings) != 1 || findings[0].Rule != "panic-rule-error" {
 		t.Fatalf("findings = %+v", findings)
+	}
+}
+
+// gatedRule blocks inside Check until the test releases it, so a bounded
+// Engine can be observed while rules are in flight.
+type gatedRule struct {
+	name    string
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (r gatedRule) Name() string { return r.name }
+func (r gatedRule) Check(string) []Finding {
+	r.started <- struct{}{}
+	<-r.release
+	return []Finding{{Rule: r.name}}
+}
+
+func TestEngineBoundsRuleConcurrency(t *testing.T) {
+	const ruleCount = 6
+	started := make(chan struct{}, ruleCount)
+	release := make(chan struct{})
+	rules := make([]Rule, 0, ruleCount)
+	for i := 0; i < ruleCount; i++ {
+		rules = append(rules, gatedRule{name: "rule-" + strconv.Itoa(i), started: started, release: release})
+	}
+	engine := NewEngine(rules...)
+	engine.SetMaxParallel(2)
+
+	done := make(chan []Finding, 1)
+	go func() { done <- engine.Run("diff --git a/x b/x\n") }()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("rules did not start")
+		}
+	}
+	select {
+	case <-started:
+		t.Fatal("more rules ran at once than the parallelism limit allows")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	findings := <-done
+	if len(findings) != ruleCount {
+		t.Fatalf("got %d findings; want %d", len(findings), ruleCount)
+	}
+	for i, finding := range findings {
+		if want := "rule-" + strconv.Itoa(i); finding.Rule != want {
+			t.Fatalf("finding %d has rule %q; want %q (results must stay in registration order)", i, finding.Rule, want)
+		}
 	}
 }
 

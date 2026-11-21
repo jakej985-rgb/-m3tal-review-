@@ -489,6 +489,10 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if err := applyUserConfigAudit(&options, cfg); err != nil {
 			return err
 		}
+		// A --jobs cap has to cover the subprocesses the audit shells out to
+		// (git, go vet/test under --profile full, --with-tools scanners), not
+		// just rule goroutines, or the machine still pins while a child runs.
+		capAuditCPU(options.Jobs)
 		// Audit defaults to security signal: code-slop volume drowns real
 		// findings, so it is skipped unless --with-slop or an explicit
 		// --only/--skip selection is given.
@@ -918,6 +922,7 @@ type auditOptions struct {
 	Degraded         bool
 	MaxFiles         int
 	MaxBytes         int64
+	Jobs             int
 	Profile          string
 	Only             []string
 	Skip             []string
@@ -1067,6 +1072,23 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 			} else {
 				options.MaxBytes = value
 			}
+		case arg == "--jobs":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("--jobs requires a non-negative integer")
+			}
+			i++
+			value, err := strconv.Atoi(args[i])
+			if err != nil || value < 0 {
+				return auditOptions{}, fmt.Errorf("--jobs requires a non-negative integer")
+			}
+			options.Jobs = value
+		case strings.HasPrefix(arg, "--jobs="):
+			_, raw, _ := strings.Cut(arg, "=")
+			value, err := strconv.Atoi(raw)
+			if err != nil || value < 0 {
+				return auditOptions{}, fmt.Errorf("--jobs requires a non-negative integer")
+			}
+			options.Jobs = value
 		case arg == "--degraded" || arg == "--allow-degraded":
 			options.Degraded = true
 		case arg == "--tool-path":
@@ -1159,7 +1181,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				options.ToolPaths["osv-scanner"] = strings.TrimPrefix(arg, "--osv-scanner-path=")
 				break
 			}
-			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--with-slop] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets] [--baseline file] [--write-baseline file]", arg)
+			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--jobs N] [--profile fast|full] [--with-tools] [--with-slop] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets] [--baseline file] [--write-baseline file]", arg)
 		}
 	}
 	return options, nil
@@ -1301,6 +1323,7 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 		}
 	}
 	engine := review.NewEngine(fileRules...)
+	engine.SetMaxParallel(options.Jobs)
 	cache := newAuditCache(repositoryRoot, fileRules, true)
 	defer cache.flush()
 	hash := sha256.New()
@@ -1483,6 +1506,7 @@ func printHelp() {
 	fmt.Println("    --include-ignored  Include ignored untracked files (bounded by scan limits)")
 	fmt.Println("    --max-files N      Set the maximum files to read (default 10000)")
 	fmt.Println("    --max-bytes N      Set the maximum total bytes to read (default 134217728)")
+	fmt.Println("    --jobs N           Cap rules analysed at once (default: all CPU cores; 0 = auto)")
 	fmt.Println("  history [--last N] [--status S] [--scope S] [--grep text] [--format json]")
 	fmt.Println("  history show <run-id> [--format json|jsonl|html]")
 	fmt.Println("  history prune [--older-than <duration>] [--keep <count>] [--max-size <bytes/mb>] [--dry-run]")
