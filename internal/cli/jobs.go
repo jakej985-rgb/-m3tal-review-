@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"runtime"
 	"strconv"
@@ -36,24 +35,12 @@ func capAuditCPU(jobs int) {
 	// Children inherit the same ceiling; every Go tool the audit invokes reads it.
 	_ = os.Setenv("GOMAXPROCS", n)
 	// go build/vet/test parallelism is -p, not GOMAXPROCS, so bound that too.
-	_ = os.Setenv("GOFLAGS", buildParallelism(os.Getenv("GOFLAGS"), limit))
-}
-
-// buildParallelism rewrites a GOFLAGS value so `go` subprocesses build at most
-// n packages at once. An existing -p setting (either form) is replaced rather
-// than duplicated, and unrelated flags are preserved.
-func buildParallelism(goflags string, n int) string {
-	fields := strings.Fields(goflags)
-	kept := make([]string, 0, len(fields)+1)
-	for i := 0; i < len(fields); i++ {
-		switch {
-		case fields[i] == "-p":
-			i++ // drop the flag and its separate value
-		case strings.HasPrefix(fields[i], "-p="):
-		default:
-			kept = append(kept, fields[i])
-		}
+	// Append rather than parse and rebuild the value: the audit has no business
+	// rewriting a user's GOFLAGS, and re-splitting silently collapses their
+	// spacing. Duplicate flags are accepted, and go applies the later -p.
+	goflags := strings.TrimSpace(os.Getenv("GOFLAGS"))
+	if goflags != "" {
+		goflags += " "
 	}
-	kept = append(kept, fmt.Sprintf("-p=%d", n))
-	return strings.Join(kept, " ")
+	_ = os.Setenv("GOFLAGS", goflags+"-p="+n)
 }

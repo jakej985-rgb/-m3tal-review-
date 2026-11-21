@@ -7,30 +7,11 @@ import (
 	"testing"
 )
 
-func TestBuildParallelism(t *testing.T) {
-	tests := []struct {
-		goflags string
-		jobs    int
-		want    string
-	}{
-		{"", 2, "-p=2"},
-		{"-mod=mod", 4, "-mod=mod -p=4"},
-		{"-p=8 -mod=mod", 2, "-mod=mod -p=2"},
-		{"-p 8 -mod=mod", 3, "-mod=mod -p=3"},
-		{"-mod=mod -p", 1, "-mod=mod -p=1"},
-	}
-	for _, tc := range tests {
-		if got := buildParallelism(tc.goflags, tc.jobs); got != tc.want {
-			t.Errorf("buildParallelism(%q, %d) = %q, want %q", tc.goflags, tc.jobs, got, tc.want)
-		}
-	}
-}
-
 func TestCapAuditCPUAppliesJobsToProcessAndChildren(t *testing.T) {
 	original := runtime.GOMAXPROCS(0)
 	t.Cleanup(func() { runtime.GOMAXPROCS(original) })
 	t.Setenv("GOMAXPROCS", "")
-	t.Setenv("GOFLAGS", "-mod=mod -p=8")
+	t.Setenv("GOFLAGS", "-mod=mod")
 
 	// One job never exceeds the core count, so this holds on any machine.
 	capAuditCPU(1)
@@ -43,6 +24,38 @@ func TestCapAuditCPUAppliesJobsToProcessAndChildren(t *testing.T) {
 	}
 	if got := os.Getenv("GOFLAGS"); got != "-mod=mod -p=1" {
 		t.Fatalf("child GOFLAGS = %q, want %q", got, "-mod=mod -p=1")
+	}
+}
+
+// An existing -p is left alone and overridden by the appended one: go parses
+// GOFLAGS with a flag set, where the last occurrence wins.
+func TestCapAuditCPUAppendsAfterExistingParallelism(t *testing.T) {
+	original := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() { runtime.GOMAXPROCS(original) })
+	t.Setenv("GOMAXPROCS", "")
+	t.Setenv("GOFLAGS", "-p=8")
+
+	capAuditCPU(2)
+
+	want := "-p=8 -p=2"
+	if got := os.Getenv("GOFLAGS"); got != want {
+		t.Fatalf("child GOFLAGS = %q, want %q", got, want)
+	}
+}
+
+// The user's GOFLAGS must reach the child byte-for-byte, with the cap merely
+// appended: re-splitting the value would collapse spacing and re-join tokens.
+func TestCapAuditCPUPreservesExistingGoflags(t *testing.T) {
+	original := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() { runtime.GOMAXPROCS(original) })
+	t.Setenv("GOMAXPROCS", "")
+	t.Setenv("GOFLAGS", "-mod=mod  -trimpath")
+
+	capAuditCPU(1)
+
+	want := "-mod=mod  -trimpath -p=1"
+	if got := os.Getenv("GOFLAGS"); got != want {
+		t.Fatalf("child GOFLAGS = %q, want %q", got, want)
 	}
 }
 
