@@ -20,6 +20,15 @@ var (
 )
 
 func commandLint(args []string) error {
+	jobs, args, err := stripJobsFlag(args)
+	if err != nil {
+		return err
+	}
+	// lint shells out to go vet, staticcheck and golangci-lint, each of which
+	// defaults to one worker per core; a bare `lint` would otherwise pin the
+	// machine just like an uncapped review.
+	capProcessCPU(jobs)
+
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)

@@ -324,7 +324,7 @@ m3tal-review audit --include-ignored --max-files 20000 --max-bytes 536870912
 
 Keep the machine responsive with `--jobs N`, which caps how many analysis rules
 run at once (default: all CPU cores; `0` means auto). `review`, `audit`, `watch`,
-`repair`, `diff`, `stdin`, and `check-deps` all accept it:
+`repair`, `lint`, `diff`, `stdin`, and `check-deps` all accept it:
 
 ```bash
 m3tal-review audit --jobs 2

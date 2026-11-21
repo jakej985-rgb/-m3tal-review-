@@ -12,67 +12,27 @@ import (
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
-// consumeJobsFlag reports whether args[i] is a --jobs flag, returning the parsed
-// value and how many following arguments it consumed. diff and stdin share it so
-// both accept the flag in either form and reject bad values identically.
-func consumeJobsFlag(args []string, i int) (value int, consumed int, ok bool, err error) {
-	arg := args[i]
-	if rest, found := strings.CutPrefix(arg, "--jobs="); found {
-		n, perr := parseJobsValue(rest)
-		return n, 0, true, perr
-	}
-	if arg != "--jobs" {
-		return 0, 0, false, nil
-	}
-	if i+1 >= len(args) {
-		return 0, 0, true, fmt.Errorf("--jobs requires a non-negative integer")
-	}
-	n, perr := parseJobsValue(args[i+1])
-	return n, 1, true, perr
-}
-
 // parseStdinArgs accepts --jobs and nothing else.
 func parseStdinArgs(args []string) (int, error) {
-	jobs := 0
-	for i := 0; i < len(args); i++ {
-		n, consumed, ok, err := consumeJobsFlag(args, i)
-		if err != nil {
-			return 0, err
-		}
-		if !ok {
-			return 0, fmt.Errorf("unknown stdin option %q; usage: m3tal-review stdin [--jobs N]", args[i])
-		}
-		jobs = n
-		i += consumed
-	}
-	return jobs, nil
+	return parseOnlyJobsArgs(args, "stdin")
 }
 
 // parseDiffArgs splits diff arguments into the patch path and --jobs.
 func parseDiffArgs(args []string) (string, int, error) {
-	path, jobs := "", 0
-	for i := 0; i < len(args); i++ {
-		n, consumed, ok, err := consumeJobsFlag(args, i)
-		if err != nil {
-			return "", 0, err
-		}
-		if ok {
-			jobs = n
-			i += consumed
-			continue
-		}
-		if strings.HasPrefix(args[i], "-") {
-			return "", 0, fmt.Errorf("unknown diff option %q", args[i])
-		}
-		if path != "" {
-			return "", 0, fmt.Errorf("usage: m3tal-review diff [--jobs N] <file.diff|file.patch>")
-		}
-		path = args[i]
+	jobs, rest, err := stripJobsFlag(args)
+	if err != nil {
+		return "", 0, err
 	}
-	if path == "" {
+	if len(rest) == 0 {
 		return "", 0, fmt.Errorf("usage: m3tal-review diff [--jobs N] <file.diff|file.patch>")
 	}
-	return path, jobs, nil
+	if len(rest) > 1 {
+		return "", 0, fmt.Errorf("unexpected argument %q; usage: m3tal-review diff [--jobs N] <file.diff|file.patch>", rest[1])
+	}
+	if strings.HasPrefix(rest[0], "-") {
+		return "", 0, fmt.Errorf("unknown diff option %q", rest[0])
+	}
+	return rest[0], jobs, nil
 }
 
 // runDiffReview reviews an arbitrary unified diff (from a file or stdin)

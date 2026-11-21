@@ -21,6 +21,45 @@ func parseJobsValue(value string) (int, error) {
 	return n, nil
 }
 
+// stripJobsFlag removes --jobs N (or --jobs=N) from args, returning the parsed
+// value and the remaining arguments in order. Every command that accepts the
+// cap goes through it, so both spellings behave identically everywhere.
+func stripJobsFlag(args []string) (jobs int, rest []string, err error) {
+	rest = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--jobs":
+			if i+1 >= len(args) {
+				return 0, nil, fmt.Errorf("--jobs requires a non-negative integer")
+			}
+			i++
+			if jobs, err = parseJobsValue(args[i]); err != nil {
+				return 0, nil, err
+			}
+		case strings.HasPrefix(arg, "--jobs="):
+			if jobs, err = parseJobsValue(strings.TrimPrefix(arg, "--jobs=")); err != nil {
+				return 0, nil, err
+			}
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	return jobs, rest, nil
+}
+
+// parseOnlyJobsArgs accepts --jobs and rejects every other argument, for the
+// commands whose only option is the cap.
+func parseOnlyJobsArgs(args []string, command string) (int, error) {
+	jobs, rest, err := stripJobsFlag(args)
+	if err != nil {
+		return 0, err
+	}
+	if len(rest) > 0 {
+		return 0, fmt.Errorf("unknown %s option %q", command, rest[0])
+	}
+	return jobs, nil
+}
+
 // capProcessCPU applies an explicit --jobs cap to everything a command can
 // spend CPU on, not only to rule goroutines. The engine semaphore bounds
 // in-process rule analysis, but commands also do unbounded work of their own:

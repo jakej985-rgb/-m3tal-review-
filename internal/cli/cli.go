@@ -1525,7 +1525,7 @@ func printHelp() {
 	fmt.Println("  explain <rule>      Explain a rule with an example")
 	fmt.Println("  install-hook [--force]  Install a pre-commit hook")
 	fmt.Println("  completions <bash|zsh|fish>")
-	fmt.Println("  lint")
+	fmt.Println("  lint [--jobs N]     Run gofmt and go vet across the repository")
 	fmt.Println("  recover-history")
 	fmt.Println("  repair [run-id]     Constrained isolated repair workflow")
 	fmt.Println("    --finding <id>     Repair specific finding ID")

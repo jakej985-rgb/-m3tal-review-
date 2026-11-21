@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -15,36 +14,9 @@ import (
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
-// parseWatchOptions accepts --jobs N (or --jobs=N) and rejects anything else.
+// parseWatchOptions accepts --jobs and nothing else.
 func parseWatchOptions(args []string) (int, error) {
-	jobs := 0
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		value := ""
-		hasValue := false
-		if rest, ok := strings.CutPrefix(arg, "--jobs="); ok {
-			value, hasValue = rest, true
-			arg = "--jobs"
-		}
-		switch arg {
-		case "--jobs":
-			if !hasValue {
-				if i+1 >= len(args) {
-					return 0, fmt.Errorf("--jobs requires a non-negative integer")
-				}
-				i++
-				value = args[i]
-			}
-			n, err := parseJobsValue(value)
-			if err != nil {
-				return 0, err
-			}
-			jobs = n
-		default:
-			return 0, fmt.Errorf("unknown watch option %q", arg)
-		}
-	}
-	return jobs, nil
+	return parseOnlyJobsArgs(args, "watch")
 }
 
 // commandWatch re-runs the staged review whenever the staged diff changes.
