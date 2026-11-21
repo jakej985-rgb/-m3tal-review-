@@ -109,6 +109,9 @@ func (r TaintRule) CheckContext(ctx context.Context, diff string) []Finding {
 		if err := ctx.Err(); err != nil {
 			return findings
 		}
+		if IsTestOrFixtureFile(block.file) {
+			continue
+		}
 		if jsTaintFile(block.file) {
 			findings = append(findings, checkJSFile(block)...)
 			continue
@@ -852,7 +855,7 @@ func (r ScopeDefaultRule) CheckContext(ctx context.Context, diff string) []Findi
 		if err := ctx.Err(); err != nil {
 			return findings
 		}
-		if !strings.HasSuffix(block.file, ".go") {
+		if !strings.HasSuffix(block.file, ".go") || IsTestOrFixtureFile(block.file) {
 			continue
 		}
 		findings = append(findings, scopeFindingsForBlock(block)...)
@@ -936,7 +939,7 @@ func (r PluginTrustRule) CheckContext(ctx context.Context, diff string) []Findin
 		if err := ctx.Err(); err != nil {
 			return findings
 		}
-		if !strings.HasSuffix(block.file, ".go") {
+		if !strings.HasSuffix(block.file, ".go") || IsTestOrFixtureFile(block.file) {
 			continue
 		}
 		code := string(maskNonCode(block.file, block.text))
@@ -1165,6 +1168,9 @@ func (r CredentialQueryRule) CheckContext(ctx context.Context, diff string) []Fi
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
 		if err := ctx.Err(); err != nil {
 			return findings
+		}
+		if IsTestOrFixtureFile(block.file) {
+			continue
 		}
 		for _, m := range credentialQueryRe.FindAllStringIndex(block.text, -1) {
 			if offsetInComment(block.file, block.text, m[0]) {

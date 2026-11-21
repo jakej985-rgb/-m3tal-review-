@@ -95,6 +95,9 @@ func (r EvalRule) CheckContext(ctx context.Context, diff string) []Finding {
 		if err := ctx.Err(); err != nil {
 			return findings
 		}
+		if IsTestOrFixtureFile(block.file) {
+			continue
+		}
 		fileLanguage := (language.CodeChecker{}).Language(block.file)
 		ext := strings.ToLower(path.Ext(block.file))
 		codeMask := sourceCodeMask(block.file, block.text)

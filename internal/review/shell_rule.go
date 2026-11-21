@@ -60,6 +60,9 @@ func (r ShellRule) CheckContext(ctx context.Context, diff string) []Finding {
 		if err := ctx.Err(); err != nil {
 			return findings
 		}
+		if IsTestOrFixtureFile(fileDiff.Path) {
+			continue
+		}
 		// Performance optimization: Generate diff source blocks directly from fileDiff
 		// instead of re-parsing the entire diff and scanning for fileDiff.Path.
 		blocks := fileDiffSourceBlocks(fileDiff)

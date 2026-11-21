@@ -72,6 +72,13 @@ type patternRule struct {
 	// contains the pattern (for guards that live inside the matched construct,
 	// e.g. timeout fields inside an http.Server literal).
 	matchAbsent *regexp.Regexp
+	// inspectCallArgs, when set, expands the match to the balanced enclosing
+	// call arguments (handling nested parens, quotes, and newlines) before
+	// evaluating matchAbsent.
+	inspectCallArgs bool
+	// includeTests, when false (the default), automatically suppresses findings
+	// in test files, suites, testdata, and mock fixtures.
+	includeTests bool
 	// lineSeverityPattern, when set, overrides the finding severity for
 	// matches whose source line matches it (e.g. trusted vs attacker-controlled
 	// GitHub context interpolation in workflows).
@@ -96,6 +103,9 @@ func (r *patternRule) CheckContext(ctx context.Context, diff string) []Finding {
 		if err := ctx.Err(); err != nil {
 			return findings
 		}
+		if !r.includeTests && IsTestOrFixtureFile(block.file) {
+			continue
+		}
 		if r.filePattern != nil && !r.filePattern.MatchString(block.file) {
 			continue
 		}
@@ -115,7 +125,12 @@ func (r *patternRule) CheckContext(ctx context.Context, diff string) []Finding {
 				continue
 			}
 			for _, match := range p.pattern.FindAllStringIndex(code, -1) {
-				if r.matchAbsent != nil && r.matchAbsent.MatchString(code[match[0]:match[1]]) {
+				if r.inspectCallArgs && r.matchAbsent != nil {
+					callArgs := extractBalancedCallArgs(block.text, match[0])
+					if callArgs != "" && r.matchAbsent.MatchString(callArgs) {
+						continue
+					}
+				} else if r.matchAbsent != nil && r.matchAbsent.MatchString(code[match[0]:match[1]]) {
 					continue
 				}
 				if !matchTouchesAdded(block, code, match[0], match[1]) {
@@ -161,7 +176,12 @@ func (r *patternRule) CheckContext(ctx context.Context, diff string) []Finding {
 					continue
 				}
 				for _, match := range p.pattern.FindAllStringIndex(block.text, -1) {
-					if r.matchAbsent != nil && r.matchAbsent.MatchString(block.text[match[0]:match[1]]) {
+					if r.inspectCallArgs && r.matchAbsent != nil {
+						callArgs := extractBalancedCallArgs(block.text, match[0])
+						if callArgs != "" && r.matchAbsent.MatchString(callArgs) {
+							continue
+						}
+					} else if r.matchAbsent != nil && r.matchAbsent.MatchString(block.text[match[0]:match[1]]) {
 						continue
 					}
 					if !matchTouchesAdded(block, block.text, match[0], match[1]) {
@@ -251,4 +271,52 @@ func lineContentAt(source string, offset int) string {
 		return source[start:]
 	}
 	return source[start : offset+end]
+}
+
+// extractBalancedCallArgs scans forward from offset to find the opening '('
+// of a call expression, and tracks matching parentheses (respecting quotes)
+// to return the balanced call slice e.g. "(...)".
+func extractBalancedCallArgs(s string, offset int) string {
+	if offset < 0 || offset >= len(s) {
+		return ""
+	}
+	parenIdx := strings.IndexByte(s[offset:], '(')
+	if parenIdx < 0 {
+		return ""
+	}
+	start := offset + parenIdx
+	depth := 0
+	var inQuote byte
+	isEscaped := false
+
+	for i := start; i < len(s); i++ {
+		b := s[i]
+		if isEscaped {
+			isEscaped = false
+			continue
+		}
+		if b == '\\' {
+			isEscaped = true
+			continue
+		}
+		if inQuote != 0 {
+			if b == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		if b == '"' || b == '\'' || b == '`' {
+			inQuote = b
+			continue
+		}
+		if b == '(' {
+			depth++
+		} else if b == ')' {
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	return s[start:]
 }

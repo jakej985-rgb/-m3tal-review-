@@ -490,9 +490,11 @@ func ExtraRules(repositoryRoot string) []Rule {
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "missing-timeout", severity: "low",
-			remediation: "Pass an explicit timeout to outbound calls to avoid hanging on unresponsive servers.",
+			remediation:     "Pass an explicit timeout to outbound calls to avoid hanging on unresponsive servers.",
+			inspectCallArgs: true,
+			matchAbsent:     regexp.MustCompile(`\btimeout\s*=`),
 			patterns: []langPattern{
-				{language.LanguagePython, regexp.MustCompile(`\brequests\.(?:get|post|put|delete|patch|head|options|request)\s*\([^)]{0,200}`), "requests call without visible timeout= parameter"},
+				{language.LanguagePython, regexp.MustCompile(`\brequests\.(?:get|post|put|delete|patch|head|options|request)\s*\(`), "requests call without visible timeout= parameter"},
 				{language.LanguageGo, regexp.MustCompile(`http\.ListenAndServeTLS\s*\(`), "TLS HTTP server without visible timeout configuration"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
@@ -653,6 +655,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 			name: "missing-error-wrap", severity: "low",
 			remediation:    "Use %w with fmt.Errorf to preserve error wrapping and causality chain with errors.Is/As.",
 			excludePattern: missingErrorWrapExcludePattern,
+			matchAbsent:    regexp.MustCompile(`%w`),
 			patterns: []langPattern{
 				{language.LanguageGo, missingErrorWrapPattern, "fmt.Errorf with %s/%v loses error wrapping; use %w"},
 			}},

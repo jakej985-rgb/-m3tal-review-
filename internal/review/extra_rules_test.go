@@ -532,6 +532,43 @@ func TestNewRulesDetections(t *testing.T) {
 		if hasFinding(r.Check(extraDiff("main.go", neg)), "missing-error-wrap") {
 			t.Errorf("expected missing-error-wrap to accept %%w")
 		}
+		negWithOtherFormats := "package main\nimport \"fmt\"\nfunc f(dir string, err error) error {\n\treturn fmt.Errorf(\"cannot create directory %s: %w\", dir, err)\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", negWithOtherFormats)), "missing-error-wrap") {
+			t.Errorf("expected missing-error-wrap to accept %%w even when %%s is present in format string")
+		}
+	})
+
+	t.Run("missing-timeout-refinements", func(t *testing.T) {
+		r := rulesByName(t, "missing-timeout")[0]
+		pos := "import requests\ndef f(u):\n    return requests.get(u)\n"
+		if !hasFinding(r.Check(extraDiff("app.py", pos)), "missing-timeout") {
+			t.Errorf("expected missing-timeout to flag requests.get without timeout")
+		}
+		neg1 := "import requests\ndef f(u):\n    return requests.get(u, headers=h, timeout=6)\n"
+		if hasFinding(r.Check(extraDiff("app.py", neg1)), "missing-timeout") {
+			t.Errorf("expected missing-timeout to ignore requests.get with timeout=6")
+		}
+		neg2 := "import requests\ndef f(u):\n    return requests.get(\n        u,\n        headers=h,\n        timeout=10,\n    )\n"
+		if hasFinding(r.Check(extraDiff("app.py", neg2)), "missing-timeout") {
+			t.Errorf("expected missing-timeout to ignore multiline requests.get with timeout=10")
+		}
+		neg3 := "import requests\ndef f(u):\n    return requests.get(u, headers=get_headers(), timeout=5)\n"
+		if hasFinding(r.Check(extraDiff("app.py", neg3)), "missing-timeout") {
+			t.Errorf("expected missing-timeout to ignore nested call with timeout=5")
+		}
+	})
+
+	t.Run("test-suite-exclusion", func(t *testing.T) {
+		r := rulesByName(t, "xxe")[0]
+		code := "import xml.etree.ElementTree as ET\nroot = ET.fromstring(data)\n"
+		if !hasFinding(r.Check(extraDiff("parser.py", code)), "xxe") {
+			t.Errorf("expected xxe to flag production file parser.py")
+		}
+		for _, testFile := range []string{"tests/test_fuzz.py", "test_parser.py", "parser_test.py", "tests/data/sample.py"} {
+			if hasFinding(r.Check(extraDiff(testFile, code)), "xxe") {
+				t.Errorf("expected xxe to ignore test file %s", testFile)
+			}
+		}
 	})
 
 	t.Run("goroutine-leak-candidate", func(t *testing.T) {

@@ -63,6 +63,9 @@ func (r DeserializationRule) CheckContext(ctx context.Context, diff string) []Fi
 		if err := ctx.Err(); err != nil {
 			return findings
 		}
+		if IsTestOrFixtureFile(block.file) {
+			continue
+		}
 		fileLanguage := (language.CodeChecker{}).Language(block.file)
 		code := string(maskNonCode(block.file, block.text))
 		for _, unsafePattern := range unsafeDeserializationPatterns {

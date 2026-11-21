@@ -88,6 +88,9 @@ func (r CryptoRule) CheckContext(ctx context.Context, diff string) []Finding {
 		if err := ctx.Err(); err != nil {
 			return findings
 		}
+		if IsTestOrFixtureFile(block.file) {
+			continue
+		}
 		fileLanguage := (language.CodeChecker{}).Language(block.file)
 		code := string(maskNonCode(block.file, block.text))
 		for _, weakPattern := range weakPrimitivePatterns {

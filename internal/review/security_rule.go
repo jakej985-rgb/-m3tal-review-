@@ -98,22 +98,27 @@ func isGeneratedDependencyFile(file string) bool {
 	return strings.HasSuffix(base, ".sum")
 }
 
-// isTestSourceFile reports whether the path is a test file or fixture. Test
-// files legitimately contain credential-shaped literals (tokens, passwords,
-// keys) used to exercise auth and parsing code.
-func isTestSourceFile(file string) bool {
+// IsTestOrFixtureFile reports whether the path is a test file, test suite,
+// test data, or fixture. Test files legitimately contain mock tokens, dummy URLs,
+// testing parsers, and intentional vulnerabilities to exercise test cases.
+func IsTestOrFixtureFile(file string) bool {
 	base := strings.ToLower(path.Base(file))
-	lower := strings.ToLower(file)
 	slashPath := "/" + strings.TrimPrefix(filepath.ToSlash(file), "/")
-	// Fixture/data directories across ecosystems: Go testdata/, Python
-	// tests/ and tests/data/, generic fixtures/, JS test/ dirs.
-	for _, seg := range []string{"/testdata/", "/tests/", "/test/", "/fixtures/", "/fixture/"} {
-		if strings.Contains(slashPath, seg) || strings.Contains(lower, seg) {
+	lower := strings.ToLower(slashPath)
+	// Directory segments across ecosystems: Go testdata/, Python tests/ and tests/data/,
+	// generic fixtures/, JS/TS test/, __tests__/, specs/.
+	for _, seg := range []string{"/testdata/", "/tests/", "/test/", "/fixtures/", "/fixture/", "/specs/", "/spec/", "/__tests__/"} {
+		if strings.Contains(lower, seg) {
 			return true
 		}
 	}
+	// Python test files frequently start with "test_" (e.g. test_fuzz.py)
+	if strings.HasPrefix(base, "test_") && (strings.HasSuffix(base, ".py") || strings.HasSuffix(base, ".pyc")) {
+		return true
+	}
 	for _, suffix := range []string{
 		"_test.go", "_test.py", "_test.rb", "_test.java", "_test.kt",
+		"_test.rs", "_test.c", "_test.cpp", "_test.cc",
 		".test.js", ".test.ts", ".test.jsx", ".test.tsx",
 		".spec.js", ".spec.ts", ".spec.jsx", ".spec.tsx",
 	} {
@@ -122,6 +127,10 @@ func isTestSourceFile(file string) bool {
 		}
 	}
 	return false
+}
+
+func isTestSourceFile(file string) bool {
+	return IsTestOrFixtureFile(file)
 }
 
 func (r SecurityRule) Check(diff string) []Finding {
