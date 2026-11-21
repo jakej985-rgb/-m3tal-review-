@@ -27,6 +27,10 @@ func AllowlistedFixers() []Fixer {
 		GoFmtFixer{},
 		WorldWritableFileModeFixer{},
 		DebugLeftoverFixer{},
+		AsyncGapFixer{},
+		StaleStateFixer{},
+		ResourceLeakFixer{},
+		TouchTargetFixer{},
 	}
 }
 

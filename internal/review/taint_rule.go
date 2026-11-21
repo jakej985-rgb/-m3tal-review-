@@ -105,6 +105,9 @@ func (r TaintRule) CheckContext(ctx context.Context, diff string) []Finding {
 	// intra-package helper calls (handler -> SaveStack -> atomicWriteFile).
 	blocksByDir := make(map[string][]diffSourceBlock)
 	var dirs []string
+	var pyBlocks []diffSourceBlock
+	var tsBlocks []diffSourceBlock
+
 	for _, block := range sourceBlocks(diff, r.RepositoryRoot, r.WorkingTree) {
 		if err := ctx.Err(); err != nil {
 			return findings
@@ -112,7 +115,12 @@ func (r TaintRule) CheckContext(ctx context.Context, diff string) []Finding {
 		if IsTestOrFixtureFile(block.file) {
 			continue
 		}
-		if jsTaintFile(block.file) {
+		if isPythonFile(block.file) {
+			pyBlocks = append(pyBlocks, block)
+			continue
+		}
+		if isTypeScriptFile(block.file) {
+			tsBlocks = append(tsBlocks, block)
 			findings = append(findings, checkJSFile(block)...)
 			continue
 		}
@@ -127,6 +135,12 @@ func (r TaintRule) CheckContext(ctx context.Context, diff string) []Finding {
 	}
 	for _, dir := range dirs {
 		findings = append(findings, r.checkPackage(blocksByDir[dir])...)
+	}
+	if len(pyBlocks) > 0 {
+		findings = append(findings, checkPythonCrossFile(pyBlocks)...)
+	}
+	if len(tsBlocks) > 0 {
+		findings = append(findings, checkTypeScriptCrossFile(tsBlocks)...)
 	}
 	return findings
 }

@@ -114,7 +114,7 @@ var stdoutIsTTY = func() bool {
 // IsMachineReadableFormat reports whether format produces structured machine-readable output.
 func IsMachineReadableFormat(format string) bool {
 	switch strings.ToLower(strings.TrimSpace(format)) {
-	case "sarif", "json", "jsonl", "junit", "codeclimate":
+	case "sarif", "json", "jsonl", "junit", "codeclimate", "github-pr":
 		return true
 	default:
 		return false

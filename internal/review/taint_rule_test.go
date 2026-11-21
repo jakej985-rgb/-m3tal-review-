@@ -783,3 +783,138 @@ func Delete(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("sink before validator not flagged")
 	}
 }
+
+func TestPythonCrossFileTaintSQLInjection(t *testing.T) {
+	routesSrc := `from flask import request
+from app.db import db_query
+
+def get_user():
+    uid = request.args.get("id")
+    db_query(uid)
+`
+	dbSrc := `import sqlite3
+
+def db_query(user_id):
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id = " + user_id)
+`
+	diff := goDiff("app/routes.py", routesSrc) + goDiff("app/db.py", dbSrc)
+
+	rule := TaintRule{}
+	findings := rule.Check(diff)
+
+	var sqlFindings []Finding
+	for _, f := range findings {
+		if f.Rule == "request-taint" && strings.Contains(f.Message, "SQL") {
+			sqlFindings = append(sqlFindings, f)
+		}
+	}
+
+	if len(sqlFindings) == 0 {
+		t.Fatalf("expected cross-file SQL taint finding, got %+v", findings)
+	}
+	if sqlFindings[0].File != "app/db.py" {
+		t.Errorf("expected finding in app/db.py, got %s", sqlFindings[0].File)
+	}
+}
+
+func TestPythonCrossFileTaintShellExecution(t *testing.T) {
+	serverSrc := `from worker import execute_worker
+
+@app.post("/run")
+def run_task(cmd):
+    execute_worker(cmd)
+`
+	workerSrc := `import os
+
+def execute_worker(command):
+    os.system(command)
+`
+	diff := goDiff("server.py", serverSrc) + goDiff("worker.py", workerSrc)
+
+	rule := TaintRule{}
+	findings := rule.Check(diff)
+
+	var shellFindings []Finding
+	for _, f := range findings {
+		if f.Rule == "request-taint" && strings.Contains(f.Message, "shell") {
+			shellFindings = append(shellFindings, f)
+		}
+	}
+
+	if len(shellFindings) == 0 {
+		t.Fatalf("expected cross-file shell taint finding, got %+v", findings)
+	}
+	if shellFindings[0].File != "worker.py" {
+		t.Errorf("expected finding in worker.py, got %s", shellFindings[0].File)
+	}
+}
+
+func TestTypeScriptCrossFileTaintSQLInjection(t *testing.T) {
+	controllerSrc := `import { fetchUserData } from "../services/db";
+
+export function handleUser(req, res) {
+  const id = req.query.id;
+  fetchUserData(id);
+}
+`
+	dbSrc := `import { db } from "./client";
+
+export function fetchUserData(userId: string) {
+  db.query("SELECT * FROM users WHERE id = " + userId);
+}
+`
+	diff := goDiff("src/controllers/user.ts", controllerSrc) + goDiff("src/services/db.ts", dbSrc)
+
+	rule := TaintRule{}
+	findings := rule.Check(diff)
+
+	var sqlFindings []Finding
+	for _, f := range findings {
+		if f.Rule == "request-taint" && strings.Contains(f.Message, "SQL") {
+			sqlFindings = append(sqlFindings, f)
+		}
+	}
+
+	if len(sqlFindings) == 0 {
+		t.Fatalf("expected TypeScript cross-file SQL taint finding, got %+v", findings)
+	}
+	if sqlFindings[0].File != "src/services/db.ts" {
+		t.Errorf("expected finding in src/services/db.ts, got %s", sqlFindings[0].File)
+	}
+}
+
+func TestTypeScriptCrossFileTaintShellExecution(t *testing.T) {
+	routeSrc := `import { runWorker } from "../../lib/worker";
+
+export async function POST(req) {
+  const cmd = req.body.command;
+  runWorker(cmd);
+}
+`
+	workerSrc := `import child_process from "child_process";
+
+export function runWorker(taskCommand: string) {
+  child_process.exec(taskCommand);
+}
+`
+	diff := goDiff("app/api/route.ts", routeSrc) + goDiff("lib/worker.ts", workerSrc)
+
+	rule := TaintRule{}
+	findings := rule.Check(diff)
+
+	var shellFindings []Finding
+	for _, f := range findings {
+		if f.Rule == "request-taint" && strings.Contains(f.Message, "shell") {
+			shellFindings = append(shellFindings, f)
+		}
+	}
+
+	if len(shellFindings) == 0 {
+		t.Fatalf("expected TypeScript cross-file shell taint finding, got %+v", findings)
+	}
+	if shellFindings[0].File != "lib/worker.ts" {
+		t.Errorf("expected finding in lib/worker.ts, got %s", shellFindings[0].File)
+	}
+}
+

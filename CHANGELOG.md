@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+- **Automated Deterministic UI Repair** (`m3tal-review repair`):
+  - `AsyncGapFixer`: automatically injects `if (!mounted) return;` guards prior to unmounted `setState()` or context invocations across async gaps.
+  - `StaleStateFixer`: automatically implements `didUpdateWidget` entity change listeners resetting cursors/indices to prevent fatal out-of-bounds indexing.
+  - `ResourceLeakFixer`: automatically appends missing controller, timer, and subscription `.dispose()` / `.cancel()` calls in `dispose()`.
+  - `TouchTargetFixer`: automatically expands undersized tap targets (< 48x48 dp) with `BoxConstraints(minWidth: 48, minHeight: 48)`.
+- **Hot-Path UI Performance Engine** (`hot-path-allocation`):
+  - Detects runtime `RegExp` automaton recompilations and collection in-place `.sort()` calls inside Flutter `build()` methods and React render loops.
+  - Registered in quality category with explainability rationale and high confidence evidence.
+- **GitHub Action / CI PR Review Mode** (`--format github-pr`):
+  - Emits Devin-style Markdown pull request review summaries with status badges, metric breakdown tables, and deterministic rationales.
+  - Generates inline GitHub suggestion blocks (````suggestion ... ````) directly derived from allowlisted repair proposals for one-click commit application.
+- **Cross-File Polyglot Taint Tracing for Python & TypeScript**:
+  - Interprocedural taint propagation tracking untrusted inputs across functions and files in FastAPI/Flask (`request.args`, `request.form`) and Express/Next.js (`req.query`, `req.body`, `request.json()`).
+  - Flags SQL injection sinks (`cursor.execute`, `db.query`, `prisma.$queryRaw`) and shell execution sinks (`os.system`, `subprocess.run`, `child_process.exec`).
+- `auditCacheSchema` bumped to 22.
+
 ## [1.1.0] - 2026-11-20
 
 ### Added

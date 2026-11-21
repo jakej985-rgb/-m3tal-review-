@@ -52,6 +52,7 @@ var ruleRationales = map[string]string{
 	"stale-state-invalidation": "StatefulWidget cursor or index state retained across entity updates without reset, risking fatal out-of-bounds indexing.",
 	"resource-leak-disposable": "StatefulWidget controller, timer, or subscription allocated but not released in dispose().",
 	"unmounted-async-gap": "setState() or BuildContext called across an async gap without a mounted check, risking unmounted lifecycle exceptions.",
+	"hot-path-allocation": "Expensive object allocations or algorithmic sorting performed inside hot UI render paths, causing frame jank and GC pressure.",
 }
 
 // RedactExcerpt removes sensitive credential patterns and bounds excerpt size

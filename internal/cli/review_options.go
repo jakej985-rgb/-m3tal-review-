@@ -207,8 +207,8 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 			if err != nil {
 				return options, err
 			}
-			if v != "text" && v != "sarif" && v != "github" && v != "json" && v != "junit" && v != "codeclimate" && v != "jsonl" && v != "html" {
-				return options, fmt.Errorf("invalid --format %q; expected text, sarif, github, json, junit, codeclimate, jsonl, or html", v)
+			if v != "text" && v != "sarif" && v != "github" && v != "github-pr" && v != "json" && v != "junit" && v != "codeclimate" && v != "jsonl" && v != "html" {
+				return options, fmt.Errorf("invalid --format %q; expected text, sarif, github, github-pr, json, junit, codeclimate, jsonl, or html", v)
 			}
 			options.Format = v
 		case "--snippets":
@@ -289,7 +289,7 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 				options.ToolPaths["osv-scanner"] = strings.TrimPrefix(arg, "--osv-scanner-path=")
 				break
 			}
-			return options, fmt.Errorf("unknown review option %q; usage: m3tal-review review [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--base ref] [--baseline file] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets]", arg)
+			return options, fmt.Errorf("unknown review option %q; usage: m3tal-review review [--profile fast|full] [--with-tools] [--only rules] [--skip rules] [--fail-on severity] [--base ref] [--baseline file] [--format text|sarif|github|github-pr|json|junit|codeclimate|jsonl|html] [--snippets]", arg)
 		}
 	}
 	// Profile presets restrict the rule set for common workflows (explicit

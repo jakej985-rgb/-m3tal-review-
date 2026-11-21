@@ -849,6 +849,7 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.StaleStateRule{RepositoryRoot: repositoryRoot},
 		review.ResourceLeakRule{RepositoryRoot: repositoryRoot},
 		review.AsyncGapRule{RepositoryRoot: repositoryRoot},
+		review.HotPathRule{RepositoryRoot: repositoryRoot},
 	}
 	return append(rules, review.ExtraRules(repositoryRoot)...)
 }
@@ -1021,7 +1022,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				}
 				options.FailOn = v
 			case "--format":
-				if v != "text" && v != "sarif" && v != "github" && v != "json" && v != "junit" && v != "codeclimate" && v != "jsonl" && v != "html" {
+				if v != "text" && v != "sarif" && v != "github" && v != "github-pr" && v != "json" && v != "junit" && v != "codeclimate" && v != "jsonl" && v != "html" {
 					return auditOptions{}, fmt.Errorf("invalid --format %q", v)
 				}
 				options.Format = v
@@ -1191,7 +1192,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				options.ToolPaths["osv-scanner"] = strings.TrimPrefix(arg, "--osv-scanner-path=")
 				break
 			}
-			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--jobs N] [--profile fast|full] [--with-tools] [--with-slop] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets] [--baseline file] [--write-baseline file]", arg)
+			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--jobs N] [--profile fast|full] [--with-tools] [--with-slop] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|github-pr|json|junit|codeclimate|jsonl|html] [--snippets] [--baseline file] [--write-baseline file]", arg)
 		}
 	}
 	return options, nil

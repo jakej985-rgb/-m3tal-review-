@@ -352,6 +352,12 @@ func RunPipeline(cfg RunnerConfig) error {
 		fmt.Println(out)
 	case "github":
 		fmt.Print(formatFindingsGitHub(report.Findings))
+	case "github-pr":
+		out, err := formatReportGitHubPR(report, cfg.RepositoryRoot)
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
 	case "json":
 		out, err := formatFindingsJSON(report.Findings)
 		if err != nil {
