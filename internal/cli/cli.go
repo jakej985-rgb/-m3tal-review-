@@ -843,6 +843,9 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.EvalRule{RepositoryRoot: repositoryRoot},
 		review.XSSRule{RepositoryRoot: repositoryRoot},
 		review.SQLiRule{RepositoryRoot: repositoryRoot},
+		review.TouchTargetRule{RepositoryRoot: repositoryRoot},
+		review.TestViewportChromeRule{RepositoryRoot: repositoryRoot},
+		review.DesignSystemRule{RepositoryRoot: repositoryRoot},
 	}
 	return append(rules, review.ExtraRules(repositoryRoot)...)
 }

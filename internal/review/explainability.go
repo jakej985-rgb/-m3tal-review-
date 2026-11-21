@@ -46,6 +46,9 @@ var ruleRationales = map[string]string{
 	"deadlock":       "Potential lock-order inversion or circular wait condition detected.",
 	"race-condition": "Concurrent access to shared memory without mutual exclusion.",
 	"typestate":      "Resource state machine transition violated or resource leaked.",
+	"touch-target-size": "Interactive UI element has a computed touch target area below the 48x48 dp accessibility minimum.",
+	"test-viewport-chrome-contract": "Responsive layout test simulates desktop viewport but omits application shell chrome from boundary constraints.",
+	"design-system-spec": "UI implementation violates repository design system guidelines.",
 }
 
 // RedactExcerpt removes sensitive credential patterns and bounds excerpt size

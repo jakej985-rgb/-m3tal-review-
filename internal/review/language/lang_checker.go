@@ -23,6 +23,7 @@ const (
 	LanguageCSharp     CodeLanguage = "csharp"
 	LanguageRust       CodeLanguage = "rust"
 	LanguageSwift      CodeLanguage = "swift"
+	LanguageDart       CodeLanguage = "dart"
 	LanguagePHP        CodeLanguage = "php"
 	LanguageShell      CodeLanguage = "shell"
 	LanguageUnknown    CodeLanguage = "unknown"
@@ -100,6 +101,8 @@ func NormalizeLanguage(name string) CodeLanguage {
 		return LanguageRust
 	case "swift":
 		return LanguageSwift
+	case "dart":
+		return LanguageDart
 	case "php":
 		return LanguagePHP
 	case "shell", "sh", "bash", "zsh":
@@ -222,6 +225,8 @@ func (c CodeChecker) Detect(file string, content []byte) DetectionResult {
 		return DetectionResult{Language: LanguageRust, Confidence: ConfidenceHigh, Reason: "extension: .rs"}
 	case ".swift":
 		return DetectionResult{Language: LanguageSwift, Confidence: ConfidenceHigh, Reason: "extension: .swift"}
+	case ".dart":
+		return DetectionResult{Language: LanguageDart, Confidence: ConfidenceHigh, Reason: "extension: .dart"}
 	case ".php", ".phtml":
 		return DetectionResult{Language: LanguagePHP, Confidence: ConfidenceHigh, Reason: "extension: " + lowerExt}
 	case ".sh", ".bash", ".zsh":

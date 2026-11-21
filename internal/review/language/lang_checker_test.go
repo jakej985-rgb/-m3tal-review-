@@ -24,6 +24,7 @@ func TestCodeCheckerDetectsSupportedLanguages(t *testing.T) {
 		"Main.cs":           LanguageCSharp,
 		"main.rs":           LanguageRust,
 		"main.swift":        LanguageSwift,
+		"main.dart":         LanguageDart,
 		"index.php":         LanguagePHP,
 		"README.md":         LanguageUnknown,
 		"UPPERCASE.JS":      LanguageJavaScript,
