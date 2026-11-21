@@ -248,6 +248,33 @@ rules:
     file_exclude_pattern: '.*_test\.go$'
 ```
 
+## Bounded CPU Usage (`--jobs`)
+
+By default, analysis runs across available CPU cores. `--jobs N` (or `-j N`) caps
+how many analysis rules run concurrently, clamps in-process Go work via
+`runtime.GOMAXPROCS`, and sets `GOMAXPROCS=N` and `GOFLAGS=-p=N` for child
+processes so `go vet`, `go test`, and Go-based scanners respect the limit too.
+
+`review`, `audit`, `watch`, `repair`, `lint`, `diff`, `stdin`, and `check-deps` all accept it:
+
+```bash
+m3tal-review audit --jobs 2
+m3tal-review review --profile full --jobs 2
+m3tal-review diff --jobs 2 change.patch
+```
+
+The cap reaches the Go programs those commands shell out to — `--profile full`'s
+`go vet` / `go test ./...`, repair's verification `go test`, the semantic tier's
+`go list`, and any Go-based `--with-tools` scanner — by setting `GOMAXPROCS` in
+their environment and appending `-p=N` to `GOFLAGS`. Programs that are not
+built with Go read neither setting, so `git` and non-Go scanners run uncapped;
+the git calls are short-lived and dominated by the analysis they feed.
+
+### Environment Variables
+
+- `M3TAL_RULE_TIMEOUT` — per-rule analysis timeout (Go duration, default `2m`)
+- `M3TAL_DEBUG` — print per-rule timing and finding counts to stderr
+
 ## CI Integration
 
 ### GitHub Actions Annotations

@@ -14,11 +14,21 @@ import (
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
+// parseWatchOptions accepts --jobs and nothing else.
+func parseWatchOptions(args []string) (int, error) {
+	return parseOnlyJobsArgs(args, "watch")
+}
+
 // commandWatch re-runs the staged review whenever the staged diff changes.
-func commandWatch(interval time.Duration) error {
+func commandWatch(interval time.Duration, args []string) error {
 	if interval <= 0 {
 		interval = 3 * time.Second
 	}
+	jobs, err := parseWatchOptions(args)
+	if err != nil {
+		return err
+	}
+	capProcessCPU(jobs)
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return err
@@ -52,7 +62,7 @@ func commandWatch(interval time.Duration) error {
 			if hash != lastHash {
 				lastHash = hash
 				fmt.Printf("=== %s — %d bytes staged ===\n", time.Now().Format("15:04:05"), len(diff))
-				findings := review.NewEngine(defaultRules(repositoryRoot)...).RunContext(ctx, diff)
+				findings := cappedEngine(jobs, defaultRules(repositoryRoot)...).RunContext(ctx, diff)
 				if ctx.Err() != nil {
 					fmt.Println("\nWatch stopped.")
 					return nil

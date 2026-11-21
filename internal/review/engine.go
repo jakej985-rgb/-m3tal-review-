@@ -4,19 +4,35 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 )
 
 type Engine struct {
-	rules []Rule
+	rules       []Rule
+	maxParallel int
 }
 
 func NewEngine(rules ...Rule) *Engine {
 	return &Engine{
 		rules: rules,
 	}
+}
+
+// SetMaxParallel bounds how many rules analyse a diff at once. Zero or
+// negative means runtime.GOMAXPROCS(0), which lets every rule run
+// concurrently and is the historical behaviour. Lower values cap the CPU
+// burst an audit produces on a shared machine, at the cost of wall time.
+// Call it before Run/RunContext; Engine does not mutate maxParallel itself.
+func (e *Engine) SetMaxParallel(n int) { e.maxParallel = n }
+
+func (e *Engine) parallelism() int {
+	if e.maxParallel > 0 {
+		return e.maxParallel
+	}
+	return runtime.GOMAXPROCS(0)
 }
 
 func (e *Engine) Run(diff string) []Finding {
@@ -28,12 +44,29 @@ func (e *Engine) Run(diff string) []Finding {
 func (e *Engine) RunContext(ctx context.Context, diff string) []Finding {
 	// Rules are independent; run them concurrently but concatenate results
 	// in registration order so output stays deterministic.
+	limit := e.parallelism()
+	if limit > len(e.rules) {
+		limit = len(e.rules)
+	}
 	results := make([][]Finding, len(e.rules))
 	var wg sync.WaitGroup
+	var sem chan struct{}
+	if limit > 0 && limit < len(e.rules) {
+		sem = make(chan struct{}, limit)
+	}
 	for i, rule := range e.rules {
+		if sem != nil {
+			// Acquire before spawning so a capped run never leaves rule
+			// goroutines parked behind the semaphore; checkRuleSafely
+			// starts one of its own per rule for timeout enforcement.
+			sem <- struct{}{}
+		}
 		wg.Add(1)
 		go func(i int, rule Rule) {
 			defer wg.Done()
+			if sem != nil {
+				defer func() { <-sem }()
+			}
 			results[i] = checkRuleSafely(ctx, rule, diff)
 		}(i, rule)
 	}

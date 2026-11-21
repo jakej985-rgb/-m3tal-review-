@@ -766,15 +766,35 @@ func TestParseReviewAndAuditOptions(t *testing.T) {
 	if err != nil || profile != "full" || !withTools {
 		t.Fatalf("parseReviewOptions = %q, %t, %v", profile, withTools, err)
 	}
-	options, err := parseAuditOptions([]string{"--include-ignored", "--profile=full", "--max-files", "20", "--max-bytes=4096", "--with-tools"})
+	options, err := parseAuditOptions([]string{"--include-ignored", "--profile=full", "--max-files", "20", "--max-bytes=4096", "--with-tools", "--jobs=3"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !options.IncludeIgnored || !options.WithTools || options.Profile != "full" || options.MaxFiles != 20 || options.MaxBytes != 4096 {
+	if !options.IncludeIgnored || !options.WithTools || options.Profile != "full" || options.MaxFiles != 20 || options.MaxBytes != 4096 || options.Jobs != 3 {
 		t.Fatalf("parsed audit options = %+v", options)
+	}
+	if got, err := parseAuditOptions([]string{"--jobs", "4"}); err != nil || got.Jobs != 4 {
+		t.Fatalf("parseAuditOptions --jobs 4 = %+v, %v", got, err)
+	}
+	if got, err := parseAuditOptions([]string{"--jobs", "0"}); err != nil || got.Jobs != 0 {
+		t.Fatalf("parseAuditOptions --jobs 0 = %+v, %v", got, err)
 	}
 	if _, err := parseAuditOptions([]string{"--max-files", "0"}); err == nil {
 		t.Fatal("expected zero file budget to be rejected")
+	}
+	if got, err := parseReviewOptions([]string{"--jobs", "4"}); err != nil || got.Jobs != 4 {
+		t.Fatalf("parseReviewOptions --jobs 4 = %+v, %v", got, err)
+	}
+	if got, err := parseReviewOptions([]string{"--jobs=2"}); err != nil || got.Jobs != 2 {
+		t.Fatalf("parseReviewOptions --jobs=2 = %+v, %v", got, err)
+	}
+	for _, args := range [][]string{{"--jobs", "-1"}, {"--jobs"}, {"--jobs=many"}} {
+		if _, err := parseAuditOptions(args); err == nil {
+			t.Fatalf("expected %v to be rejected", args)
+		}
+		if _, err := parseReviewOptions(args); err == nil {
+			t.Fatalf("expected review %v to be rejected", args)
+		}
 	}
 }
 

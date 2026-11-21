@@ -90,3 +90,13 @@ func main(){println("unformatted")}
 		t.Fatalf("expected --exclude flag to pass, got err: %v", runErr)
 	}
 }
+
+// The --jobs value must be rejected before lint touches the repository, so a
+// typo cannot start an uncapped vet run and then fail.
+func TestCommandLintRejectsInvalidJobs(t *testing.T) {
+	for _, args := range [][]string{{"--jobs", "-1"}, {"--jobs"}, {"--jobs=many"}} {
+		if err := commandLint(args); err == nil {
+			t.Fatalf("expected commandLint(%v) to reject the jobs value", args)
+		}
+	}
+}

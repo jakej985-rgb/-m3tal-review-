@@ -19,6 +19,7 @@ func commandCheckDeps(args []string) error {
 	allowUnknown := false
 	allowUnknownSet := false
 	targetPath := ""
+	jobs := 0
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -61,6 +62,22 @@ func commandCheckDeps(args []string) error {
 		case arg == "--no-allow-unknown" || arg == "--disallow-unknown":
 			allowUnknown = false
 			allowUnknownSet = true
+		case arg == "--jobs":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--jobs requires a non-negative integer")
+			}
+			i++
+			n, err := parseJobsValue(args[i])
+			if err != nil {
+				return err
+			}
+			jobs = n
+		case strings.HasPrefix(arg, "--jobs="):
+			n, err := parseJobsValue(strings.TrimPrefix(arg, "--jobs="))
+			if err != nil {
+				return err
+			}
+			jobs = n
 		case strings.HasPrefix(arg, "-"):
 			return fmt.Errorf("unknown flag %q for check-deps", arg)
 		default:
@@ -71,6 +88,10 @@ func commandCheckDeps(args []string) error {
 			}
 		}
 	}
+
+	// Dependency analysis parses every Go file and licenses, so the cap applies
+	// before any of it runs.
+	capProcessCPU(jobs)
 
 	repoRoot := targetPath
 	if repoRoot == "" {

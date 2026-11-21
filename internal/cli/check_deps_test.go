@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -11,6 +12,30 @@ func TestCommandCheckDepsNonGoDir(t *testing.T) {
 	err := commandCheckDeps([]string{tmpDir})
 	if err != nil {
 		t.Fatalf("expected nil error for non-Go directory, got: %v", err)
+	}
+}
+
+func TestCommandCheckDepsJobs(t *testing.T) {
+	original := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() { runtime.GOMAXPROCS(original) })
+	t.Setenv("GOMAXPROCS", "")
+	t.Setenv("GOFLAGS", "")
+
+	tmpDir := t.TempDir()
+	if err := commandCheckDeps([]string{"--jobs", "1", tmpDir}); err != nil {
+		t.Fatalf("check-deps --jobs 1: %v", err)
+	}
+	if got := os.Getenv("GOMAXPROCS"); got != "1" {
+		t.Fatalf("child GOMAXPROCS = %q, want %q", got, "1")
+	}
+	if got := os.Getenv("GOFLAGS"); got != "-p=1" {
+		t.Fatalf("child GOFLAGS = %q, want %q", got, "-p=1")
+	}
+	if err := commandCheckDeps([]string{"--jobs=2", tmpDir}); err != nil {
+		t.Fatalf("check-deps --jobs=2: %v", err)
+	}
+	if err := commandCheckDeps([]string{"--jobs", "-1"}); err == nil {
+		t.Fatal("expected negative --jobs to be rejected")
 	}
 }
 

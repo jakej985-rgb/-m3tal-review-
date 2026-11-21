@@ -173,7 +173,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		return explainRule(commandArgs[0])
 
 	case "stdin":
-		return commandStdin()
+		return commandStdin(commandArgs)
 
 	case "diff":
 		return commandDiff(commandArgs)
@@ -182,7 +182,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		return commandDoctor()
 
 	case "watch":
-		return commandWatch(3 * time.Second)
+		return commandWatch(3*time.Second, commandArgs)
 
 	case "completions":
 		if len(commandArgs) != 1 {
@@ -438,8 +438,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 			rules = workingTreeRules(rules)
 		}
 		rules = filterRules(rules, options.Only, options.Skip)
+		capProcessCPU(options.Jobs)
 		progress.Stage(2, 4, "Executing heuristic review rules")
-		engine := review.NewEngine(rules...)
+		engine := cappedEngine(options.Jobs, rules...)
 
 		findings := engine.Run(diff)
 
@@ -492,6 +493,10 @@ func executeWithArgs(command string, commandArgs []string) error {
 		if err := applyUserConfigAudit(&options, cfg); err != nil {
 			return err
 		}
+		// A --jobs cap has to cover the subprocesses the audit shells out to
+		// (git, go vet/test under --profile full, --with-tools scanners), not
+		// just rule goroutines, or the machine still pins while a child runs.
+		capProcessCPU(options.Jobs)
 		// Audit defaults to security signal: code-slop volume drowns real
 		// findings, so it is skipped unless --with-slop or an explicit
 		// --only/--skip selection is given.
@@ -921,6 +926,7 @@ type auditOptions struct {
 	Degraded         bool
 	MaxFiles         int
 	MaxBytes         int64
+	Jobs             int
 	Profile          string
 	Only             []string
 	Skip             []string
@@ -1070,6 +1076,23 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 			} else {
 				options.MaxBytes = value
 			}
+		case arg == "--jobs":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("--jobs requires a non-negative integer")
+			}
+			i++
+			value, err := parseJobsValue(args[i])
+			if err != nil {
+				return auditOptions{}, err
+			}
+			options.Jobs = value
+		case strings.HasPrefix(arg, "--jobs="):
+			_, raw, _ := strings.Cut(arg, "=")
+			value, err := parseJobsValue(raw)
+			if err != nil {
+				return auditOptions{}, err
+			}
+			options.Jobs = value
 		case arg == "--degraded" || arg == "--allow-degraded":
 			options.Degraded = true
 		case arg == "--tool-path":
@@ -1162,7 +1185,7 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				options.ToolPaths["osv-scanner"] = strings.TrimPrefix(arg, "--osv-scanner-path=")
 				break
 			}
-			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--profile fast|full] [--with-tools] [--with-slop] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets] [--baseline file] [--write-baseline file]", arg)
+			return auditOptions{}, fmt.Errorf("unknown audit option %q; usage: m3tal-review audit [--include-ignored] [--max-files N] [--max-bytes N] [--jobs N] [--profile fast|full] [--with-tools] [--with-slop] [--vuln-scan] [--only rules] [--skip rules] [--fail-on severity] [--format text|sarif|github|json|junit|codeclimate|jsonl|html] [--snippets] [--baseline file] [--write-baseline file]", arg)
 		}
 	}
 	return options, nil
@@ -1303,7 +1326,7 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 			fileRules = append(fileRules, rule)
 		}
 	}
-	engine := review.NewEngine(fileRules...)
+	engine := cappedEngine(options.Jobs, fileRules...)
 	cache := newAuditCache(repositoryRoot, fileRules, true)
 	defer cache.flush()
 	hash := sha256.New()
@@ -1340,7 +1363,7 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 		}
 	}
 	if len(policyRules) > 0 {
-		findings = append(findings, review.NewEngine(policyRules...).Run(pathsOnlyDiff(files))...)
+		findings = append(findings, cappedEngine(options.Jobs, policyRules...).Run(pathsOnlyDiff(files))...)
 	}
 	return findings, files, unanalyzed, hex.EncodeToString(hash.Sum(nil)), cov, nil
 }
@@ -1471,12 +1494,14 @@ func printHelp() {
 	fmt.Println("    --with-tools        Run installed gitleaks, gosec, and osv-scanner binaries")
 	fmt.Println("    --check-run        Post a GitHub Check Run with annotations")
 	fmt.Println("    --pr-comment       Comment findings on the current PR via gh")
+	fmt.Println("    --jobs N           Cap rules analysed at once (default: all CPU cores; 0 = auto)")
 	fmt.Println("  check-deps [path]   Analyze Go module hygiene and license policy")
 	fmt.Println("    --format text|json|jsonl")
 	fmt.Println("    --strict          Fail on any hygiene or license finding")
 	fmt.Println("    --allow-licenses  Allowlist of approved SPDX licenses")
 	fmt.Println("    --deny-licenses   Denylist of forbidden SPDX licenses")
 	fmt.Println("    --allow-unknown   Permit unknown/missing dependency licenses")
+	fmt.Println("    --jobs N           Cap analysis at once (default: all CPU cores; 0 = auto)")
 	fmt.Println("  audit")
 	fmt.Println("    --profile fast|full  Add local Go format, vet, and test checks in full mode")
 	fmt.Println("    --with-tools        Run installed gitleaks, gosec, and osv-scanner binaries")
@@ -1486,6 +1511,7 @@ func printHelp() {
 	fmt.Println("    --include-ignored  Include ignored untracked files (bounded by scan limits)")
 	fmt.Println("    --max-files N      Set the maximum files to read (default 10000)")
 	fmt.Println("    --max-bytes N      Set the maximum total bytes to read (default 134217728)")
+	fmt.Println("    --jobs N           Cap rules analysed at once (default: all CPU cores; 0 = auto)")
 	fmt.Println("  history [--last N] [--status S] [--scope S] [--grep text] [--format json]")
 	fmt.Println("  history show <run-id> [--format json|jsonl|html]")
 	fmt.Println("  history prune [--older-than <duration>] [--keep <count>] [--max-size <bytes/mb>] [--dry-run]")
@@ -1494,21 +1520,22 @@ func printHelp() {
 	fmt.Println("  config diff [proposed-file] [--base <path>] [--format json|text]")
 	fmt.Println("  policy diff|dry-run [proposed-file] [--format json|text]")
 	fmt.Println("  show <run-id>")
-	fmt.Println("  diff <file.patch>   Review an arbitrary patch file")
-	fmt.Println("  stdin               Review a diff from stdin")
-	fmt.Println("  watch               Re-review when the staged diff changes")
+	fmt.Println("  diff [--jobs N] <file.patch>  Review an arbitrary patch file")
+	fmt.Println("  stdin [--jobs N]    Review a diff from stdin")
+	fmt.Println("  watch [--jobs N]    Re-review when the staged diff changes")
 	fmt.Println("  doctor              Check git/repo/storage health")
 	fmt.Println("  list-rules          List all registered rules")
 	fmt.Println("  explain <rule>      Explain a rule with an example")
 	fmt.Println("  install-hook [--force]  Install a pre-commit hook")
 	fmt.Println("  completions <bash|zsh|fish>")
-	fmt.Println("  lint")
+	fmt.Println("  lint [--jobs N]     Run gofmt and go vet across the repository")
 	fmt.Println("  recover-history")
 	fmt.Println("  repair [run-id]     Constrained isolated repair workflow")
 	fmt.Println("    --finding <id>     Repair specific finding ID")
 	fmt.Println("    --rule <rule>      Repair findings from specific rule")
 	fmt.Println("    --fixer <name>     Use specific allowlisted fixer")
 	fmt.Println("    --max-attempts N   Maximum repair attempts (default 3)")
+	fmt.Println("    --jobs N           Cap rules analysed at once (default: all CPU cores; 0 = auto)")
 	fmt.Println("    --dry-run          Simulate and verify in sandbox without applying")
 	fmt.Println("    --yes, --approve   Approve verified repairs without prompt")
 	fmt.Println("    --history          Display repair audit history")

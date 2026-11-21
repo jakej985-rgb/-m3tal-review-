@@ -48,6 +48,27 @@ func TestParseRepairOptions(t *testing.T) {
 			},
 		},
 		{
+			name: "jobs",
+			args: []string{"--jobs", "2"},
+			expected: repairOptions{
+				maxAttempts: 3,
+				jobs:        2,
+			},
+		},
+		{
+			name: "jobs with equals",
+			args: []string{"--jobs=4"},
+			expected: repairOptions{
+				maxAttempts: 3,
+				jobs:        4,
+			},
+		},
+		{
+			name:    "invalid jobs",
+			args:    []string{"--jobs", "-1"},
+			wantErr: true,
+		},
+		{
 			name:    "invalid max attempts",
 			args:    []string{"--max-attempts", "0"},
 			wantErr: true,
@@ -74,6 +95,7 @@ func TestParseRepairOptions(t *testing.T) {
 					opts.autoApprove != tc.expected.autoApprove ||
 					opts.formatJSON != tc.expected.formatJSON ||
 					opts.showHistory != tc.expected.showHistory ||
+					opts.jobs != tc.expected.jobs ||
 					opts.runID != tc.expected.runID {
 					t.Errorf("opts mismatch:\ngot  %+v\nwant %+v", opts, tc.expected)
 				}
@@ -143,7 +165,7 @@ func TestCommandRepairNoEligibleFindings(t *testing.T) {
 }
 
 func TestCommandRepairInvalidRunID(t *testing.T) {
-	_, _, err := resolveFindingsForRepair("/tmp", "../../invalid-run-id")
+	_, _, err := resolveFindingsForRepair("/tmp", "../../invalid-run-id", 0)
 	if err == nil {
 		t.Fatal("expected invalid runID to return error, got nil")
 	}

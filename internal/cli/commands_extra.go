@@ -12,9 +12,32 @@ import (
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
+// parseStdinArgs accepts --jobs and nothing else.
+func parseStdinArgs(args []string) (int, error) {
+	return parseOnlyJobsArgs(args, "stdin")
+}
+
+// parseDiffArgs splits diff arguments into the patch path and --jobs.
+func parseDiffArgs(args []string) (string, int, error) {
+	jobs, rest, err := stripJobsFlag(args)
+	if err != nil {
+		return "", 0, err
+	}
+	if len(rest) == 0 {
+		return "", 0, fmt.Errorf("usage: m3tal-review diff [--jobs N] <file.diff|file.patch>")
+	}
+	if len(rest) > 1 {
+		return "", 0, fmt.Errorf("unexpected argument %q; usage: m3tal-review diff [--jobs N] <file.diff|file.patch>", rest[1])
+	}
+	if strings.HasPrefix(rest[0], "-") {
+		return "", 0, fmt.Errorf("unknown diff option %q", rest[0])
+	}
+	return rest[0], jobs, nil
+}
+
 // runDiffReview reviews an arbitrary unified diff (from a file or stdin)
 // against the current repository's rules.
-func runDiffReview(diff string, sourceName string) error {
+func runDiffReview(diff string, sourceName string, jobs int) error {
 	if strings.TrimSpace(diff) == "" {
 		return fmt.Errorf("no diff content provided")
 	}
@@ -29,7 +52,7 @@ func runDiffReview(diff string, sourceName string) error {
 	if root, err := git.RepositoryRoot(workingDir); err == nil {
 		repositoryRoot = root
 	}
-	findings := review.NewEngine(defaultRules(repositoryRoot)...).Run(diff)
+	findings := cappedEngine(jobs, defaultRules(repositoryRoot)...).Run(diff)
 	findings = review.ApplyFindingFilters(diff, findings, repositoryRoot, false)
 	if len(findings) == 0 {
 		fmt.Println("No findings.")
@@ -46,19 +69,25 @@ func runDiffReview(diff string, sourceName string) error {
 	return nil
 }
 
-func commandStdin() error {
+func commandStdin(args []string) error {
+	jobs, err := parseStdinArgs(args)
+	if err != nil {
+		return err
+	}
+	capProcessCPU(jobs)
 	data, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<20))
 	if err != nil {
 		return fmt.Errorf("read stdin: %w", err)
 	}
-	return runDiffReview(string(data), "stdin")
+	return runDiffReview(string(data), "stdin", jobs)
 }
 
 func commandDiff(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: m3tal-review diff <file.diff|file.patch>")
+	path, jobs, err := parseDiffArgs(args)
+	if err != nil {
+		return err
 	}
-	path := args[0]
+	capProcessCPU(jobs)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("stat diff file: %w", err)
@@ -73,7 +102,7 @@ func commandDiff(args []string) error {
 	if err != nil {
 		return fmt.Errorf("read diff file: %w", err)
 	}
-	return runDiffReview(string(data), filepath.Base(path))
+	return runDiffReview(string(data), filepath.Base(path), jobs)
 }
 
 func commandDoctor() error {
