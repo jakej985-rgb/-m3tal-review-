@@ -7,14 +7,14 @@ import (
 	"testing"
 )
 
-func TestCapAuditCPUAppliesJobsToProcessAndChildren(t *testing.T) {
+func TestCapProcessCPUAppliesJobsToProcessAndChildren(t *testing.T) {
 	original := runtime.GOMAXPROCS(0)
 	t.Cleanup(func() { runtime.GOMAXPROCS(original) })
 	t.Setenv("GOMAXPROCS", "")
 	t.Setenv("GOFLAGS", "-mod=mod")
 
 	// One job never exceeds the core count, so this holds on any machine.
-	capAuditCPU(1)
+	capProcessCPU(1)
 
 	if got := runtime.GOMAXPROCS(0); got != 1 {
 		t.Fatalf("GOMAXPROCS after --jobs 1 = %d, want 1", got)
@@ -29,13 +29,13 @@ func TestCapAuditCPUAppliesJobsToProcessAndChildren(t *testing.T) {
 
 // An existing -p is left alone and overridden by the appended one: go parses
 // GOFLAGS with a flag set, where the last occurrence wins.
-func TestCapAuditCPUAppendsAfterExistingParallelism(t *testing.T) {
+func TestCapProcessCPUAppendsAfterExistingParallelism(t *testing.T) {
 	original := runtime.GOMAXPROCS(0)
 	t.Cleanup(func() { runtime.GOMAXPROCS(original) })
 	t.Setenv("GOMAXPROCS", "")
 	t.Setenv("GOFLAGS", "-p=8")
 
-	capAuditCPU(2)
+	capProcessCPU(2)
 
 	want := "-p=8 -p=2"
 	if got := os.Getenv("GOFLAGS"); got != want {
@@ -45,13 +45,13 @@ func TestCapAuditCPUAppendsAfterExistingParallelism(t *testing.T) {
 
 // The user's GOFLAGS must reach the child byte-for-byte, with the cap merely
 // appended: re-splitting the value would collapse spacing and re-join tokens.
-func TestCapAuditCPUPreservesExistingGoflags(t *testing.T) {
+func TestCapProcessCPUPreservesExistingGoflags(t *testing.T) {
 	original := runtime.GOMAXPROCS(0)
 	t.Cleanup(func() { runtime.GOMAXPROCS(original) })
 	t.Setenv("GOMAXPROCS", "")
 	t.Setenv("GOFLAGS", "-mod=mod  -trimpath")
 
-	capAuditCPU(1)
+	capProcessCPU(1)
 
 	want := "-mod=mod  -trimpath -p=1"
 	if got := os.Getenv("GOFLAGS"); got != want {
@@ -59,14 +59,14 @@ func TestCapAuditCPUPreservesExistingGoflags(t *testing.T) {
 	}
 }
 
-func TestCapAuditCPUClampsToAvailableCPUs(t *testing.T) {
+func TestCapProcessCPUClampsToAvailableCPUs(t *testing.T) {
 	original := runtime.GOMAXPROCS(0)
 	t.Cleanup(func() { runtime.GOMAXPROCS(original) })
 	t.Setenv("GOMAXPROCS", "")
 	t.Setenv("GOFLAGS", "")
 
 	cpus := runtime.NumCPU()
-	capAuditCPU(cpus + 8)
+	capProcessCPU(cpus + 8)
 
 	want := strconv.Itoa(cpus)
 	if got := runtime.GOMAXPROCS(0); got != cpus {
@@ -80,12 +80,12 @@ func TestCapAuditCPUClampsToAvailableCPUs(t *testing.T) {
 	}
 }
 
-func TestCapAuditCPUIgnoresAuto(t *testing.T) {
+func TestCapProcessCPUIgnoresAuto(t *testing.T) {
 	before := runtime.GOMAXPROCS(0)
 	t.Setenv("GOMAXPROCS", "untouched")
 	t.Setenv("GOFLAGS", "-mod=mod")
 
-	capAuditCPU(0)
+	capProcessCPU(0)
 
 	if got := runtime.GOMAXPROCS(0); got != before {
 		t.Fatalf("GOMAXPROCS changed for --jobs 0: %d, want %d", got, before)

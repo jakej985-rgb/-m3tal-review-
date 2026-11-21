@@ -5,19 +5,24 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
-// capAuditCPU applies an explicit --jobs cap to everything an audit can spend
-// CPU on, not only to rule goroutines. The engine semaphore bounds in-process
-// rule analysis, but an audit also shells out: git for the file inventory, go
-// vet / go test ./... under --profile full, gitleaks/gosec/osv-scanner under
-// --with-tools, and go list for the semantic tier. Each of those is a Go
-// program that defaults to one worker per core, so without this a --jobs 2
-// audit still saturates the machine whenever a child is running, which is the
-// bulk of the lock-up on --profile full.
+// capProcessCPU applies an explicit --jobs cap to everything a command can
+// spend CPU on, not only to rule goroutines. The engine semaphore bounds
+// in-process rule analysis, but the commands also shell out: git for the file
+// inventory, go vet / go test ./... under --profile full (and repair's own
+// verification run), gitleaks/gosec/osv-scanner under --with-tools, and go list
+// for the semantic tier. The Go tools default to one worker per core, so
+// without this a --jobs 2 run still saturates the machine whenever a child is
+// running, which is the bulk of the lock-up under --profile full.
+//
+// Only Go programs honour these settings. git is a C program and any scanner
+// that is not Go-built ignores both; they are short-lived and left alone.
 //
 // jobs <= 0 means auto (all cores, historical behaviour) and changes nothing.
-func capAuditCPU(jobs int) {
+func capProcessCPU(jobs int) {
 	if jobs <= 0 {
 		return
 	}
@@ -32,10 +37,10 @@ func capAuditCPU(jobs int) {
 	n := strconv.Itoa(limit)
 	// In-process: rule fan-out (belt and braces), GC workers, semantic loaders.
 	runtime.GOMAXPROCS(limit)
-	// Children inherit the same ceiling; every Go tool the audit invokes reads it.
+	// Children inherit the same ceiling; every Go tool the command invokes reads it.
 	_ = os.Setenv("GOMAXPROCS", n)
 	// go build/vet/test parallelism is -p, not GOMAXPROCS, so bound that too.
-	// Append rather than parse and rebuild the value: the audit has no business
+	// Append rather than parse and rebuild the value: the tool has no business
 	// rewriting a user's GOFLAGS, and re-splitting silently collapses their
 	// spacing. Duplicate flags are accepted, and go applies the later -p.
 	goflags := strings.TrimSpace(os.Getenv("GOFLAGS"))
@@ -43,4 +48,12 @@ func capAuditCPU(jobs int) {
 		goflags += " "
 	}
 	_ = os.Setenv("GOFLAGS", goflags+"-p="+n)
+}
+
+// cappedEngine builds an engine whose rule fan-out honours --jobs, so every
+// command that runs rules applies the same cap.
+func cappedEngine(jobs int, rules ...review.Rule) *review.Engine {
+	engine := review.NewEngine(rules...)
+	engine.SetMaxParallel(jobs)
+	return engine
 }

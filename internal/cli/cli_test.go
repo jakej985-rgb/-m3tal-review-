@@ -782,9 +782,18 @@ func TestParseReviewAndAuditOptions(t *testing.T) {
 	if _, err := parseAuditOptions([]string{"--max-files", "0"}); err == nil {
 		t.Fatal("expected zero file budget to be rejected")
 	}
+	if got, err := parseReviewOptions([]string{"--jobs", "4"}); err != nil || got.Jobs != 4 {
+		t.Fatalf("parseReviewOptions --jobs 4 = %+v, %v", got, err)
+	}
+	if got, err := parseReviewOptions([]string{"--jobs=2"}); err != nil || got.Jobs != 2 {
+		t.Fatalf("parseReviewOptions --jobs=2 = %+v, %v", got, err)
+	}
 	for _, args := range [][]string{{"--jobs", "-1"}, {"--jobs"}, {"--jobs=many"}} {
 		if _, err := parseAuditOptions(args); err == nil {
 			t.Fatalf("expected %v to be rejected", args)
+		}
+		if _, err := parseReviewOptions(args); err == nil {
+			t.Fatalf("expected review %v to be rejected", args)
 		}
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,11 +16,48 @@ import (
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
+// parseWatchOptions accepts --jobs N (or --jobs=N) and rejects anything else.
+func parseWatchOptions(args []string) (int, error) {
+	jobs := 0
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		value := ""
+		hasValue := false
+		if rest, ok := strings.CutPrefix(arg, "--jobs="); ok {
+			value, hasValue = rest, true
+			arg = "--jobs"
+		}
+		switch arg {
+		case "--jobs":
+			if !hasValue {
+				if i+1 >= len(args) {
+					return 0, fmt.Errorf("--jobs requires a non-negative integer")
+				}
+				i++
+				value = args[i]
+			}
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 {
+				return 0, fmt.Errorf("--jobs requires a non-negative integer")
+			}
+			jobs = n
+		default:
+			return 0, fmt.Errorf("unknown watch option %q", arg)
+		}
+	}
+	return jobs, nil
+}
+
 // commandWatch re-runs the staged review whenever the staged diff changes.
-func commandWatch(interval time.Duration) error {
+func commandWatch(interval time.Duration, args []string) error {
 	if interval <= 0 {
 		interval = 3 * time.Second
 	}
+	jobs, err := parseWatchOptions(args)
+	if err != nil {
+		return err
+	}
+	capProcessCPU(jobs)
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return err
@@ -52,7 +91,7 @@ func commandWatch(interval time.Duration) error {
 			if hash != lastHash {
 				lastHash = hash
 				fmt.Printf("=== %s — %d bytes staged ===\n", time.Now().Format("15:04:05"), len(diff))
-				findings := review.NewEngine(defaultRules(repositoryRoot)...).RunContext(ctx, diff)
+				findings := cappedEngine(jobs, defaultRules(repositoryRoot)...).RunContext(ctx, diff)
 				if ctx.Err() != nil {
 					fmt.Println("\nWatch stopped.")
 					return nil

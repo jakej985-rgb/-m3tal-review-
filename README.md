@@ -322,16 +322,21 @@ Include ignored files such as `.env`, or adjust the default scan budgets:
 m3tal-review audit --include-ignored --max-files 20000 --max-bytes 536870912
 ```
 
-Keep the machine responsive while an audit runs with `--jobs N`, which caps how
-many analysis rules run at once (default: all CPU cores; `0` means auto):
+Keep the machine responsive with `--jobs N`, which caps how many analysis rules
+run at once (default: all CPU cores; `0` means auto). `review`, `audit`, `watch`,
+and `repair` all accept it:
 
 ```bash
 m3tal-review audit --jobs 2
+m3tal-review review --profile full --jobs 2
 ```
 
-The cap also covers the subprocesses an audit spawns, so `--profile full`'s
-`go vet` / `go test ./...`, `--with-tools` scanners, and the semantic tier's
-`go list` inherit the same ceiling instead of using every core.
+The cap reaches the Go programs those commands shell out to — `--profile full`'s
+`go vet` / `go test ./...`, repair's verification `go test`, the semantic tier's
+`go list`, and any Go-based `--with-tools` scanner — by setting `GOMAXPROCS` in
+their environment and appending `-p=N` to `GOFLAGS`. Programs that are not
+built with Go read neither setting, so `git` and non-Go scanners run uncapped;
+the git calls are short-lived and dominated by the analysis they feed.
 
 Add the Go confidence checks to an audit with `--profile full`.
 

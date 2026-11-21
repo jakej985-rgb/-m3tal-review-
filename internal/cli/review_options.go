@@ -33,6 +33,7 @@ type reviewOptions struct {
 	SummaryOnly      bool
 	MaxFindings      int
 	MaxDiffSize      int64
+	Jobs             int
 	Rule             string
 	Framework        []string
 	RulesFile        string
@@ -185,6 +186,16 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 			}
 			options.Rule = v
 			options.Only = []string{v}
+		case "--jobs":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return options, fmt.Errorf("--jobs requires a non-negative integer")
+			}
+			options.Jobs = n
 		case "--base":
 			v, err := next()
 			if err != nil {

@@ -25,6 +25,7 @@ type repairOptions struct {
 	showHistory bool
 	formatJSON  bool
 	runID       string
+	jobs        int
 }
 
 func parseRepairOptions(args []string) (repairOptions, error) {
@@ -63,6 +64,16 @@ func parseRepairOptions(args []string) (repairOptions, error) {
 				return opts, fmt.Errorf("invalid --max-attempts %q", args[i])
 			}
 			opts.maxAttempts = n
+		case "--jobs":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--jobs requires a non-negative integer")
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 0 {
+				return opts, fmt.Errorf("--jobs requires a non-negative integer")
+			}
+			opts.jobs = n
 		case "--dry-run":
 			opts.dryRun = true
 		case "--yes", "--approve":
@@ -79,6 +90,14 @@ func parseRepairOptions(args []string) (repairOptions, error) {
 		case "--history", "history":
 			opts.showHistory = true
 		default:
+			if rest, ok := strings.CutPrefix(arg, "--jobs="); ok {
+				n, err := strconv.Atoi(rest)
+				if err != nil || n < 0 {
+					return opts, fmt.Errorf("--jobs requires a non-negative integer")
+				}
+				opts.jobs = n
+				continue
+			}
 			if strings.HasPrefix(arg, "-") {
 				return opts, fmt.Errorf("unknown repair option %q", arg)
 			}
@@ -98,6 +117,9 @@ func commandRepair(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Repair verifies fixes with `go test ./...` and re-runs rules to locate
+	// findings, so it needs the same ceiling as review and audit.
+	capProcessCPU(opts.jobs)
 
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -124,7 +146,7 @@ func commandRepair(args []string) error {
 	}
 
 	// Resolve findings to repair
-	findings, findingSource, err := resolveFindingsForRepair(repositoryRoot, opts.runID)
+	findings, findingSource, err := resolveFindingsForRepair(repositoryRoot, opts.runID, opts.jobs)
 	if err != nil {
 		return err
 	}
@@ -215,7 +237,7 @@ func commandRepair(args []string) error {
 	return nil
 }
 
-func resolveFindingsForRepair(repositoryRoot, runID string) ([]review.Finding, string, error) {
+func resolveFindingsForRepair(repositoryRoot, runID string, jobs int) ([]review.Finding, string, error) {
 	if runID != "" {
 		if !review.IsValidRunID(runID) {
 			return nil, "", fmt.Errorf("invalid run ID %q: expected 16 lowercase hexadecimal characters", runID)
@@ -248,7 +270,7 @@ func resolveFindingsForRepair(repositoryRoot, runID string) ([]review.Finding, s
 	// Fallback to checking staged diff
 	diff, err := git.StagedDiff(repositoryRoot)
 	if err == nil && strings.TrimSpace(diff) != "" {
-		findings := review.NewEngine(defaultRules(repositoryRoot)...).Run(diff)
+		findings := cappedEngine(jobs, defaultRules(repositoryRoot)...).Run(diff)
 		findings = review.ApplyFindingFilters(diff, findings, repositoryRoot, false)
 		return findings, "staged", nil
 	}
@@ -256,7 +278,7 @@ func resolveFindingsForRepair(repositoryRoot, runID string) ([]review.Finding, s
 	// Fallback to checking unstaged working tree diff
 	wtDiff, err := git.UnstagedDiff(repositoryRoot)
 	if err == nil && strings.TrimSpace(wtDiff) != "" {
-		findings := review.NewEngine(defaultRules(repositoryRoot)...).Run(wtDiff)
+		findings := cappedEngine(jobs, defaultRules(repositoryRoot)...).Run(wtDiff)
 		findings = review.ApplyFindingFilters(wtDiff, findings, repositoryRoot, true)
 		return findings, "unstaged", nil
 	}

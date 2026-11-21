@@ -179,7 +179,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		return commandDoctor()
 
 	case "watch":
-		return commandWatch(3 * time.Second)
+		return commandWatch(3*time.Second, commandArgs)
 
 	case "completions":
 		if len(commandArgs) != 1 {
@@ -435,8 +435,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 			rules = workingTreeRules(rules)
 		}
 		rules = filterRules(rules, options.Only, options.Skip)
+		capProcessCPU(options.Jobs)
 		progress.Stage(2, 4, "Executing heuristic review rules")
-		engine := review.NewEngine(rules...)
+		engine := cappedEngine(options.Jobs, rules...)
 
 		findings := engine.Run(diff)
 
@@ -492,7 +493,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		// A --jobs cap has to cover the subprocesses the audit shells out to
 		// (git, go vet/test under --profile full, --with-tools scanners), not
 		// just rule goroutines, or the machine still pins while a child runs.
-		capAuditCPU(options.Jobs)
+		capProcessCPU(options.Jobs)
 		// Audit defaults to security signal: code-slop volume drowns real
 		// findings, so it is skipped unless --with-slop or an explicit
 		// --only/--skip selection is given.
@@ -1491,6 +1492,7 @@ func printHelp() {
 	fmt.Println("    --with-tools        Run installed gitleaks, gosec, and osv-scanner binaries")
 	fmt.Println("    --check-run        Post a GitHub Check Run with annotations")
 	fmt.Println("    --pr-comment       Comment findings on the current PR via gh")
+	fmt.Println("    --jobs N           Cap rules analysed at once (default: all CPU cores; 0 = auto)")
 	fmt.Println("  check-deps [path]   Analyze Go module hygiene and license policy")
 	fmt.Println("    --format text|json|jsonl")
 	fmt.Println("    --strict          Fail on any hygiene or license finding")
@@ -1517,7 +1519,7 @@ func printHelp() {
 	fmt.Println("  show <run-id>")
 	fmt.Println("  diff <file.patch>   Review an arbitrary patch file")
 	fmt.Println("  stdin               Review a diff from stdin")
-	fmt.Println("  watch               Re-review when the staged diff changes")
+	fmt.Println("  watch [--jobs N]    Re-review when the staged diff changes")
 	fmt.Println("  doctor              Check git/repo/storage health")
 	fmt.Println("  list-rules          List all registered rules")
 	fmt.Println("  explain <rule>      Explain a rule with an example")
@@ -1530,6 +1532,7 @@ func printHelp() {
 	fmt.Println("    --rule <rule>      Repair findings from specific rule")
 	fmt.Println("    --fixer <name>     Use specific allowlisted fixer")
 	fmt.Println("    --max-attempts N   Maximum repair attempts (default 3)")
+	fmt.Println("    --jobs N           Cap rules analysed at once (default: all CPU cores; 0 = auto)")
 	fmt.Println("    --dry-run          Simulate and verify in sandbox without applying")
 	fmt.Println("    --yes, --approve   Approve verified repairs without prompt")
 	fmt.Println("    --history          Display repair audit history")
