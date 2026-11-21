@@ -292,10 +292,9 @@ func ExtraRules(repositoryRoot string) []Rule {
 			name: "pipe-to-shell", severity: "high",
 			raw:         true,
 			anyLanguage: true,
-			// Documentation and markdown show install instructions, not executed
-			// code; comment lines (shell #, C //) are likewise not executable.
-			excludePattern: regexp.MustCompile(`(?i)\.(?:md|markdown|mdx|rst|txt)$|(?:^|/)(?:docs?|examples?)/`),
-			skipLine:       regexp.MustCompile(`^\s*(?:#|//|<!--)`),
+			// Documentation, markdown, and compiled source code do not execute shell install pipes directly.
+			excludePattern: regexp.MustCompile(`(?i)\.(?:md|markdown|mdx|rst|txt|go|java|rs|cpp|c)$|(?:^|/)(?:docs?|examples?)/`),
+			skipLine:       regexp.MustCompile(`^\s*(?:#|//|<!--)|(?i)(?:BlockedTokens|BlockedCommands|DeniedCommands|DenyList|BlockList|AllowList|\[\]string)\b`),
 			remediation:    "Download scripts to a file, verify a checksum/signature, then execute.",
 			patterns: []langPattern{
 				{language.LanguageUnknown, regexp.MustCompile(`(?:curl|wget)[^\n|]{0,120}?\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b`), "Remote script piped directly to a shell"},

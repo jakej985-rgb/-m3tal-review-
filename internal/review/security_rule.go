@@ -58,6 +58,10 @@ var placeholderPrefixes = []string{
 
 func isPlaceholderValue(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "tokenizer", "bpe", "wordpiece", "unigram", "checkpoint", "model_card", "manifest", "archive":
+		return true
+	}
 	for _, p := range placeholderSubstrings {
 		if strings.Contains(value, p) {
 			return true
@@ -235,10 +239,44 @@ func findConfigCredential(text string) (string, string) {
 }
 
 func isCredentialName(name string) bool {
-	name = strings.ToLower(name)
-	name = strings.NewReplacer("_", "", "-", "", ".", "").Replace(name)
+	lowerRaw := strings.ToLower(name)
+	// Check for NLP/lexer/compiler tokens that are not auth credentials
+	if strings.Contains(lowerRaw, "tokens") ||
+		strings.Contains(lowerRaw, "tokenizer") ||
+		strings.Contains(lowerRaw, "tokenize") ||
+		strings.Contains(lowerRaw, "tokenization") {
+		return false
+	}
+	for _, nonCredPrefix := range []string{"max", "min", "num", "total", "count", "input", "output", "prompt", "completion"} {
+		if strings.HasPrefix(lowerRaw, nonCredPrefix+"_") || strings.HasPrefix(lowerRaw, nonCredPrefix) {
+			if strings.Contains(lowerRaw, "token") {
+				return false
+			}
+		}
+	}
+	// Check for suffixes indicating metadata, types, counts, or strategies rather than credential secrets
+	for _, nonCredSuffix := range []string{
+		"type", "kind", "id", "ids", "count", "strategy", "role",
+		"stream", "limit", "max", "len", "length", "pos", "index",
+		"offset", "size", "rate", "cost", "budget", "sec",
+	} {
+		if strings.HasSuffix(lowerRaw, nonCredSuffix) || strings.HasSuffix(lowerRaw, "_"+nonCredSuffix) {
+			return false
+		}
+	}
+	// Lexer token constants (e.g. TokenEOF, TokenWhitespace, TokenNewline)
+	if strings.HasPrefix(lowerRaw, "token") {
+		switch lowerRaw {
+		case "tokeneof", "tokenwhitespace", "tokennewline", "tokenerror",
+			"tokenident", "tokenkeyword", "tokenoperator", "tokenliteral",
+			"tokenstring", "tokenint", "tokenfloat", "tokencomment":
+			return false
+		}
+	}
+
+	norm := strings.NewReplacer("_", "", "-", "", ".", "").Replace(lowerRaw)
 	for _, marker := range []string{"password", "passwd", "apikey", "accesskey", "privatekey", "token", "secret"} {
-		if strings.Contains(name, marker) {
+		if strings.Contains(norm, marker) {
 			return true
 		}
 	}

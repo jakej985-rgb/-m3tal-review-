@@ -124,6 +124,11 @@ func TestSecurityRuleIgnoresNonSecrets(t *testing.T) {
 		{"example prefix", "a.go", `password = "example-password"`},
 		{"masked", "a.go", `password = "xxxxxxxx"`},
 		{"short value", "a.go", `password = "short"`},
+		{"tokenizer role", "manifest.go", `ArtifactTokenizer = "tokenizer"`},
+		{"tokenizer strategy", "recipe.go", `TokenizerStrategy = "byte_bpe_fast"`},
+		{"token type", "lexer.go", `TokenType = "ident_token"`},
+		{"token count", "stats.go", `token_count = "100000000"`},
+		{"max tokens", "params.go", `max_tokens = "204800000"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

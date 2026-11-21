@@ -28,7 +28,7 @@ type CoverageMetadata struct {
 	Exclusions      []ScopeExclusion `json:"exclusions,omitempty"`
 }
 
-// IsVendorOrDependencyPath returns true for common third-party dependency and generated paths.
+// IsVendorOrDependencyPath returns true for common third-party dependency, lockfile, and generated paths.
 func IsVendorOrDependencyPath(path string) bool {
 	normalized := filepath.ToSlash(path)
 	parts := strings.Split(normalized, "/")
@@ -37,6 +37,16 @@ func IsVendorOrDependencyPath(path string) bool {
 		case "node_modules", "vendor", ".bundle", "dist", "build", ".next", ".nuxt", "bower_components":
 			return true
 		}
+	}
+	base := strings.ToLower(filepath.Base(normalized))
+	switch base {
+	case "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+		"go.sum", "cargo.lock", "gemfile.lock", "composer.lock", "poetry.lock",
+		"pubspec.lock", "packages.lock.json", "flake.lock":
+		return true
+	}
+	if strings.HasSuffix(base, ".sum") || strings.HasSuffix(base, ".lock") {
+		return true
 	}
 	return false
 }
@@ -54,6 +64,15 @@ func IsDataOrDatasetPath(path string) bool {
 		".h5", ".hdf5", ".safetensors", ".weights", ".pt", ".pth",
 		".onnx", ".pkl", ".pickle", ".feather":
 		return true
+	}
+	// Check for text training corpora or dataset manifests inside dataset directories
+	for _, dir := range []string{"/data/", "/datasets/", "/corpus/", "/training/"} {
+		if strings.Contains("/"+lower, dir) {
+			switch ext {
+			case ".txt", ".tsv", ".csv", ".jsonl", ".parquet", ".arrow":
+				return true
+			}
+		}
 	}
 	return false
 }

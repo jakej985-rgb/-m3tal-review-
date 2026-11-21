@@ -150,6 +150,24 @@ func TestEntropyRuleNegatives(t *testing.T) {
 			code: `background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
 `,
 		},
+		{
+			name: "Commit SHA in JSON file is not flagged",
+			file: "metadata.json",
+			code: `{"commit": "4a7b9c8d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b"}
+`,
+		},
+		{
+			name: "SHA256 checksum in YAML file is not flagged",
+			file: "build.yaml",
+			code: `sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+`,
+		},
+		{
+			name: "Provenance JSON manifest is not flagged",
+			file: "provenance.json",
+			code: `{"artifact_digest": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}
+`,
+		},
 	}
 
 	for _, tc := range cases {

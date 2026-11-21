@@ -52,6 +52,9 @@ var (
 	// uuidPattern matches standard UUIDs which are high-entropy but not secrets.
 	uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
+	// nonSecretKeyRe matches keys representing integrity checksums, commit hashes, or object identifiers.
+	nonSecretKeyRe = regexp.MustCompile(`(?i)["']?(?:commit|sha|sha256|sha1|sha512|md5|checksum|digest|etag|fingerprint|integrity|version|build|target|uuid)["']?\s*[:=]`)
+
 	// candidateStringPattern matches quoted strings or assignments in untrusted content.
 	candidateStringPattern = regexp.MustCompile(`"([^"\r\n\\]{16,512})"` +
 		`|'([^'\r\n\\]{16,512})'` +
@@ -177,7 +180,8 @@ func isGeneratedDataFile(filePath string) bool {
 	switch base {
 	case "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
 		"go.sum", "cargo.lock", "gemfile.lock", "composer.lock", "poetry.lock",
-		"pubspec.lock", "packages.lock.json", "flake.lock":
+		"pubspec.lock", "packages.lock.json", "flake.lock",
+		"provenance.json", "dataset.json", "manifest.json", "metadata.json":
 		return true
 	}
 	if strings.HasSuffix(base, ".sum") || strings.HasSuffix(base, ".lock") ||
@@ -257,10 +261,13 @@ func (r EntropyRule) CheckContext(ctx context.Context, diff string) []Finding {
 				continue
 			}
 
-			// Don't flag secrets inside comment lines
+			// Don't flag secrets inside comment lines or regex definitions
 			trimmed := strings.TrimSpace(lineText)
 			isEnv := strings.HasPrefix(filepath.Base(block.file), ".env")
 			if !isEnv && (strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "#")) {
+				continue
+			}
+			if strings.Contains(lineText, "regexp.MustCompile") {
 				continue
 			}
 
@@ -271,6 +278,11 @@ func (r EntropyRule) CheckContext(ctx context.Context, diff string) []Finding {
 
 			isSensitive := isSensitiveFile(block.file)
 			hasSecretContext := contextSecretRe.MatchString(lineText)
+
+			// If line clearly indicates an integrity checksum, commit SHA, or object identifier without secret context, skip it
+			if nonSecretKeyRe.MatchString(lineText) && !hasSecretContext {
+				continue
+			}
 
 			// If neither sensitive file nor secret context, skip line to minimize false positives
 			if !isSensitive && !hasSecretContext {
