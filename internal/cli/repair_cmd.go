@@ -69,9 +69,9 @@ func parseRepairOptions(args []string) (repairOptions, error) {
 				return opts, fmt.Errorf("--jobs requires a non-negative integer")
 			}
 			i++
-			n, err := strconv.Atoi(args[i])
-			if err != nil || n < 0 {
-				return opts, fmt.Errorf("--jobs requires a non-negative integer")
+			n, err := parseJobsValue(args[i])
+			if err != nil {
+				return opts, err
 			}
 			opts.jobs = n
 		case "--dry-run":
@@ -91,9 +91,9 @@ func parseRepairOptions(args []string) (repairOptions, error) {
 			opts.showHistory = true
 		default:
 			if rest, ok := strings.CutPrefix(arg, "--jobs="); ok {
-				n, err := strconv.Atoi(rest)
-				if err != nil || n < 0 {
-					return opts, fmt.Errorf("--jobs requires a non-negative integer")
+				n, err := parseJobsValue(rest)
+				if err != nil {
+					return opts, err
 				}
 				opts.jobs = n
 				continue

@@ -170,7 +170,7 @@ func executeWithArgs(command string, commandArgs []string) error {
 		return explainRule(commandArgs[0])
 
 	case "stdin":
-		return commandStdin()
+		return commandStdin(commandArgs)
 
 	case "diff":
 		return commandDiff(commandArgs)
@@ -1078,16 +1078,16 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 				return auditOptions{}, fmt.Errorf("--jobs requires a non-negative integer")
 			}
 			i++
-			value, err := strconv.Atoi(args[i])
-			if err != nil || value < 0 {
-				return auditOptions{}, fmt.Errorf("--jobs requires a non-negative integer")
+			value, err := parseJobsValue(args[i])
+			if err != nil {
+				return auditOptions{}, err
 			}
 			options.Jobs = value
 		case strings.HasPrefix(arg, "--jobs="):
 			_, raw, _ := strings.Cut(arg, "=")
-			value, err := strconv.Atoi(raw)
-			if err != nil || value < 0 {
-				return auditOptions{}, fmt.Errorf("--jobs requires a non-negative integer")
+			value, err := parseJobsValue(raw)
+			if err != nil {
+				return auditOptions{}, err
 			}
 			options.Jobs = value
 		case arg == "--degraded" || arg == "--allow-degraded":
@@ -1323,8 +1323,7 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 			fileRules = append(fileRules, rule)
 		}
 	}
-	engine := review.NewEngine(fileRules...)
-	engine.SetMaxParallel(options.Jobs)
+	engine := cappedEngine(options.Jobs, fileRules...)
 	cache := newAuditCache(repositoryRoot, fileRules, true)
 	defer cache.flush()
 	hash := sha256.New()
@@ -1361,7 +1360,7 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 		}
 	}
 	if len(policyRules) > 0 {
-		findings = append(findings, review.NewEngine(policyRules...).Run(pathsOnlyDiff(files))...)
+		findings = append(findings, cappedEngine(options.Jobs, policyRules...).Run(pathsOnlyDiff(files))...)
 	}
 	return findings, files, unanalyzed, hex.EncodeToString(hash.Sum(nil)), cov, nil
 }
@@ -1499,6 +1498,7 @@ func printHelp() {
 	fmt.Println("    --allow-licenses  Allowlist of approved SPDX licenses")
 	fmt.Println("    --deny-licenses   Denylist of forbidden SPDX licenses")
 	fmt.Println("    --allow-unknown   Permit unknown/missing dependency licenses")
+	fmt.Println("    --jobs N           Cap analysis at once (default: all CPU cores; 0 = auto)")
 	fmt.Println("  audit")
 	fmt.Println("    --profile fast|full  Add local Go format, vet, and test checks in full mode")
 	fmt.Println("    --with-tools        Run installed gitleaks, gosec, and osv-scanner binaries")
@@ -1517,8 +1517,8 @@ func printHelp() {
 	fmt.Println("  config diff [proposed-file] [--base <path>] [--format json|text]")
 	fmt.Println("  policy diff|dry-run [proposed-file] [--format json|text]")
 	fmt.Println("  show <run-id>")
-	fmt.Println("  diff <file.patch>   Review an arbitrary patch file")
-	fmt.Println("  stdin               Review a diff from stdin")
+	fmt.Println("  diff [--jobs N] <file.patch>  Review an arbitrary patch file")
+	fmt.Println("  stdin [--jobs N]    Review a diff from stdin")
 	fmt.Println("  watch [--jobs N]    Re-review when the staged diff changes")
 	fmt.Println("  doctor              Check git/repo/storage health")
 	fmt.Println("  list-rules          List all registered rules")

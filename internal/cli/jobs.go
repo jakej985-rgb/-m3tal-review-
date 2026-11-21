@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"strconv"
@@ -9,19 +10,32 @@ import (
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
+// parseJobsValue validates a --jobs argument. Every command that accepts the
+// flag shares this rule so they cannot drift: any non-negative integer is
+// valid, and 0 (like an unset flag) means auto.
+func parseJobsValue(value string) (int, error) {
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("--jobs requires a non-negative integer")
+	}
+	return n, nil
+}
+
 // capProcessCPU applies an explicit --jobs cap to everything a command can
 // spend CPU on, not only to rule goroutines. The engine semaphore bounds
-// in-process rule analysis, but the commands also shell out: git for the file
-// inventory, go vet / go test ./... under --profile full (and repair's own
-// verification run), gitleaks/gosec/osv-scanner under --with-tools, and go list
-// for the semantic tier. The Go tools default to one worker per core, so
-// without this a --jobs 2 run still saturates the machine whenever a child is
-// running, which is the bulk of the lock-up under --profile full.
+// in-process rule analysis, but commands also do unbounded work of their own:
+// dependency analysis, semantic loading, and the subprocesses they shell out
+// to (git for the file inventory, go vet / go test ./... under --profile full,
+// repair's verification run, gitleaks/gosec/osv-scanner under --with-tools, and
+// go list for the semantic tier). The Go tools default to one worker per core,
+// so without this a --jobs 2 run still saturates the machine whenever a child
+// runs, which is the bulk of the lock-up under --profile full.
 //
 // Only Go programs honour these settings. git is a C program and any scanner
 // that is not Go-built ignores both; they are short-lived and left alone.
 //
 // jobs <= 0 means auto (all cores, historical behaviour) and changes nothing.
+// Calling it more than once is safe: repeating the same cap is a no-op.
 func capProcessCPU(jobs int) {
 	if jobs <= 0 {
 		return
@@ -38,16 +52,22 @@ func capProcessCPU(jobs int) {
 	// In-process: rule fan-out (belt and braces), GC workers, semantic loaders.
 	runtime.GOMAXPROCS(limit)
 	// Children inherit the same ceiling; every Go tool the command invokes reads it.
-	_ = os.Setenv("GOMAXPROCS", n)
+	if os.Getenv("GOMAXPROCS") != n {
+		_ = os.Setenv("GOMAXPROCS", n)
+	}
 	// go build/vet/test parallelism is -p, not GOMAXPROCS, so bound that too.
 	// Append rather than parse and rebuild the value: the tool has no business
 	// rewriting a user's GOFLAGS, and re-splitting silently collapses their
 	// spacing. Duplicate flags are accepted, and go applies the later -p.
+	override := "-p=" + n
 	goflags := strings.TrimSpace(os.Getenv("GOFLAGS"))
+	if goflags == override || strings.HasSuffix(goflags, " "+override) {
+		return // already capped at this level; do not grow the value
+	}
 	if goflags != "" {
 		goflags += " "
 	}
-	_ = os.Setenv("GOFLAGS", goflags+"-p="+n)
+	_ = os.Setenv("GOFLAGS", goflags+override)
 }
 
 // cappedEngine builds an engine whose rule fan-out honours --jobs, so every

@@ -324,11 +324,12 @@ m3tal-review audit --include-ignored --max-files 20000 --max-bytes 536870912
 
 Keep the machine responsive with `--jobs N`, which caps how many analysis rules
 run at once (default: all CPU cores; `0` means auto). `review`, `audit`, `watch`,
-and `repair` all accept it:
+`repair`, `diff`, `stdin`, and `check-deps` all accept it:
 
 ```bash
 m3tal-review audit --jobs 2
 m3tal-review review --profile full --jobs 2
+m3tal-review diff --jobs 2 change.patch
 ```
 
 The cap reaches the Go programs those commands shell out to — `--profile full`'s

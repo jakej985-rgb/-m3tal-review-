@@ -191,9 +191,9 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 			if err != nil {
 				return options, err
 			}
-			n, err := strconv.Atoi(v)
-			if err != nil || n < 0 {
-				return options, fmt.Errorf("--jobs requires a non-negative integer")
+			n, err := parseJobsValue(v)
+			if err != nil {
+				return options, err
 			}
 			options.Jobs = n
 		case "--base":

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -36,9 +35,9 @@ func parseWatchOptions(args []string) (int, error) {
 				i++
 				value = args[i]
 			}
-			n, err := strconv.Atoi(value)
-			if err != nil || n < 0 {
-				return 0, fmt.Errorf("--jobs requires a non-negative integer")
+			n, err := parseJobsValue(value)
+			if err != nil {
+				return 0, err
 			}
 			jobs = n
 		default:

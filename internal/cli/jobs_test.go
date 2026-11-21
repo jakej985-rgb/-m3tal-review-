@@ -7,6 +7,50 @@ import (
 	"testing"
 )
 
+func TestParseJobsValue(t *testing.T) {
+	tests := []struct {
+		value   string
+		want    int
+		wantErr bool
+	}{
+		{"0", 0, false},
+		{"4", 4, false},
+		{"100", 100, false},
+		{"-1", 0, true},
+		{"", 0, true},
+		{"many", 0, true},
+		{" 2", 0, true},
+	}
+	for _, tc := range tests {
+		got, err := parseJobsValue(tc.value)
+		if (err != nil) != tc.wantErr {
+			t.Fatalf("parseJobsValue(%q) err = %v, wantErr %t", tc.value, err, tc.wantErr)
+		}
+		if !tc.wantErr && got != tc.want {
+			t.Fatalf("parseJobsValue(%q) = %d, want %d", tc.value, got, tc.want)
+		}
+	}
+}
+
+// Repeating the same cap must not keep growing GOFLAGS.
+func TestCapProcessCPUIsIdempotent(t *testing.T) {
+	original := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() { runtime.GOMAXPROCS(original) })
+	t.Setenv("GOMAXPROCS", "")
+	t.Setenv("GOFLAGS", "-mod=mod")
+
+	capProcessCPU(1)
+	first := os.Getenv("GOFLAGS")
+	capProcessCPU(1)
+
+	if first != "-mod=mod -p=1" {
+		t.Fatalf("first cap = %q, want %q", first, "-mod=mod -p=1")
+	}
+	if got := os.Getenv("GOFLAGS"); got != first {
+		t.Fatalf("second cap changed GOFLAGS: %q then %q", first, got)
+	}
+}
+
 func TestCapProcessCPUAppliesJobsToProcessAndChildren(t *testing.T) {
 	original := runtime.GOMAXPROCS(0)
 	t.Cleanup(func() { runtime.GOMAXPROCS(original) })
