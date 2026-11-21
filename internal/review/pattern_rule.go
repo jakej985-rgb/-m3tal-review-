@@ -137,11 +137,15 @@ func (r *patternRule) CheckContext(ctx context.Context, diff string) []Finding {
 					continue
 				}
 				line := lineAtOffset(block.firstLine, code, match[0])
+				lineText := lineContentAt(block.text, match[0])
+				if isScannerPatternDefinition(lineText) {
+					continue
+				}
 				// maskNonCode blanks string literals; check skipLine against the
 				// raw text too so guards like `x == ""` remain visible (offsets
 				// are preserved by masking).
 				if r.skipLine != nil && (r.skipLine.MatchString(lineContentAt(code, match[0])) ||
-					r.skipLine.MatchString(lineContentAt(block.text, match[0]))) {
+					r.skipLine.MatchString(lineText)) {
 					continue
 				}
 				key := block.file + ":" + strconv.Itoa(line)
@@ -188,7 +192,11 @@ func (r *patternRule) CheckContext(ctx context.Context, diff string) []Finding {
 						continue
 					}
 					line := lineAtOffset(block.firstLine, block.text, match[0])
-					if r.skipLine != nil && r.skipLine.MatchString(lineContentAt(block.text, match[0])) {
+					lineText := lineContentAt(block.text, match[0])
+					if isScannerPatternDefinition(lineText) {
+						continue
+					}
+					if r.skipLine != nil && r.skipLine.MatchString(lineText) {
 						continue
 					}
 					key := block.file + ":" + strconv.Itoa(line)
@@ -319,4 +327,14 @@ func extractBalancedCallArgs(s string, offset int) string {
 		}
 	}
 	return s[start:]
+}
+
+// isScannerPatternDefinition returns true if the line defines a regex pattern or rule entry,
+// avoiding self-matching where scanner rules flag their own pattern definitions.
+func isScannerPatternDefinition(line string) bool {
+	return strings.Contains(line, "regexp.MustCompile") ||
+		strings.Contains(line, "langPattern{") ||
+		strings.Contains(line, "langPattern {") ||
+		strings.Contains(line, "remediation:") ||
+		strings.Contains(line, "remediation :")
 }

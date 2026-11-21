@@ -69,3 +69,20 @@ func TestCryptoRuleFindsPythonAndJSSecrets(t *testing.T) {
 		t.Fatalf("js findings = %+v; want 1", got)
 	}
 }
+
+func TestCryptoRuleIgnoresGitObjectSHA1(t *testing.T) {
+	diff := `diff --git a/sandbox.go b/sandbox.go
+--- a/sandbox.go
++++ b/sandbox.go
+@@ -0,0 +1,6 @@
++package repair
++
++func gitBlobHash(r io.Reader, size int64) (string, error) {
++	h := sha1.New()
++	return hex.EncodeToString(h.Sum(nil)), nil
++}
++`
+	if got := (CryptoRule{}).Check(diff); len(got) != 0 {
+		t.Fatalf("expected git object sha1 to be ignored, got: %+v", got)
+	}
+}

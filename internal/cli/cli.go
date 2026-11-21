@@ -1210,6 +1210,8 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, progress Progr
 	fileSet := make(map[string]bool, len(files))
 	unanalyzedSet := make(map[string]bool)
 	var vendorFiles []string
+	var dataFiles []string
+	const maxSingleAuditFileBytes = 2 << 20 // 2 MB per file limit for working-tree line-by-line analysis
 	// EvalSymlinks resolves the final path of each file; the repository root
 	// must be canonicalized the same way or Rel fails when the root itself
 	// contains a symlink (e.g. /var -> /private/var, 8.3 short names).
@@ -1225,6 +1227,10 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, progress Progr
 		}
 		if review.IsVendorOrDependencyPath(file) && (len(options.Include) == 0 || !pathMatchesAny(options.Include, file)) {
 			vendorFiles = append(vendorFiles, file)
+			continue
+		}
+		if review.IsDataOrDatasetPath(file) && (len(options.Include) == 0 || !pathMatchesAny(options.Include, file)) {
+			dataFiles = append(dataFiles, file)
 			continue
 		}
 		if !filepath.IsLocal(file) {
@@ -1267,7 +1273,7 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, progress Progr
 			fileSet[file] = true
 			continue
 		}
-		if contentInfo.Size() < 0 || contentInfo.Size() > options.MaxBytes-bytesRead {
+		if contentInfo.Size() < 0 || contentInfo.Size() > options.MaxBytes-bytesRead || (contentInfo.Size() > maxSingleAuditFileBytes && (len(options.Include) == 0 || !pathMatchesAny(options.Include, file))) {
 			unanalyzedSet[file] = true
 			fileSet[file] = true
 			continue
@@ -1303,6 +1309,13 @@ func walkWorkingTree(repositoryRoot string, options auditOptions, progress Progr
 			Reason: "third-party dependency / vendor path (node_modules, vendor)",
 			Count:  len(vendorFiles),
 			Paths:  vendorFiles,
+		})
+	}
+	if len(dataFiles) > 0 {
+		cov.Exclusions = append(cov.Exclusions, review.ScopeExclusion{
+			Reason: "raw dataset / non-code data format (.jsonl, .csv, .parquet, weights, etc.)",
+			Count:  len(dataFiles),
+			Paths:  dataFiles,
 		})
 	}
 

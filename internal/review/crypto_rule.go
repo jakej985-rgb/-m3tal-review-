@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/review/language"
 )
@@ -99,6 +100,24 @@ func (r CryptoRule) CheckContext(ctx context.Context, diff string) []Finding {
 			}
 			for _, match := range weakPattern.pattern.FindAllStringIndex(code, -1) {
 				if !matchTouchesAdded(block, code, match[0], match[1]) {
+					continue
+				}
+				// Suppress git object hashing (git protocol specification mandates SHA-1 for blob/tree/commit hashes)
+				ctxStart := match[0] - 250
+				if ctxStart < 0 {
+					ctxStart = 0
+				}
+				ctxEnd := match[1] + 250
+				if ctxEnd > len(block.text) {
+					ctxEnd = len(block.text)
+				}
+				surrounding := block.text[ctxStart:ctxEnd]
+				if strings.Contains(surrounding, "gitBlobHash") ||
+					strings.Contains(surrounding, "gitTreeHash") ||
+					strings.Contains(surrounding, "gitCommitHash") ||
+					strings.Contains(surrounding, "git object") ||
+					strings.Contains(surrounding, "blob %d") ||
+					strings.Contains(surrounding, "blob %s") {
 					continue
 				}
 				line := lineAtOffset(block.firstLine, code, match[0])

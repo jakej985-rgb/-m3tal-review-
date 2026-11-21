@@ -262,3 +262,37 @@ func TestIsVendorOrDependencyPath(t *testing.T) {
 		}
 	}
 }
+
+func TestIsDataOrDatasetPath(t *testing.T) {
+	cases := []struct {
+		path   string
+		isData bool
+	}{
+		{"data/chat-curriculum.jsonl", true},
+		{"dataset.csv", true},
+		{"data/export.tsv", true},
+		{"features.parquet", true},
+		{"stream.arrow", true},
+		{"weights.safetensors", true},
+		{"model.pt", true},
+		{"model.onnx", true},
+		{"data.npy", true},
+		{"embeddings.npz", true},
+		{"weights.h5", true},
+		{"data.jsonl.gz", true},
+		{"data.csv.gz", true},
+		{"asset.bin", false},
+		{"src/main.go", false},
+		{"frontend/App.tsx", false},
+		{"package.json", false},
+		{"README.md", false},
+		{"config.yaml", false},
+	}
+
+	for _, tc := range cases {
+		got := IsDataOrDatasetPath(tc.path)
+		if got != tc.isData {
+			t.Errorf("IsDataOrDatasetPath(%q) = %t, want %t", tc.path, got, tc.isData)
+		}
+	}
+}

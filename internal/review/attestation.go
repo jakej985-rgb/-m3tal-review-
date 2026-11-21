@@ -41,6 +41,23 @@ func IsVendorOrDependencyPath(path string) bool {
 	return false
 }
 
+// IsDataOrDatasetPath returns true for raw datasets, model weights, and data formats
+// that should not be scanned line-by-line as source code in working-tree audits.
+func IsDataOrDatasetPath(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(path))
+	if strings.HasSuffix(lower, ".jsonl.gz") || strings.HasSuffix(lower, ".csv.gz") || strings.HasSuffix(lower, ".tsv.gz") {
+		return true
+	}
+	ext := filepath.Ext(lower)
+	switch ext {
+	case ".jsonl", ".csv", ".tsv", ".parquet", ".arrow", ".npy", ".npz",
+		".h5", ".hdf5", ".safetensors", ".weights", ".pt", ".pth",
+		".onnx", ".pkl", ".pickle", ".feather":
+		return true
+	}
+	return false
+}
+
 // ReportAttestation provides a tamper-evident digest of review execution inputs and verdict.
 // The Signature field is an unkeyed SHA-256 checksum (see
 // ComputeAttestationSignature): it detects accidental modification, not

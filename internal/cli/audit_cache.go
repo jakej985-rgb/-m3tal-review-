@@ -21,7 +21,7 @@ import (
 // version. Bump auditCacheSchema whenever rule patterns change semantics;
 // stale entries are simply ignored (they never produce wrong output, only
 // missed cache hits) because the key includes the schema.
-const auditCacheSchema = "15"
+const auditCacheSchema = "16"
 
 const auditCacheMaxBytes = 8 << 20 // skip caching very large file diffs
 const auditCacheMaxEntries = 20000 // bound memory/disk use
@@ -51,7 +51,7 @@ func newAuditCache(repositoryRoot string, rules []review.Rule, enabled bool) *au
 		names = append(names, r.Name())
 	}
 	sort.Strings(names)
-	ruleSum := sha256.Sum256([]byte(strings.Join(names, "\x00") + "\x00" + auditCacheSchema))
+	ruleSum := sha256.Sum256([]byte(strings.Join(names, "\x00") + "\x00" + auditCacheSchema + "\x00" + version))
 	dir := filepath.Join(base, "m3tal-review", hex.EncodeToString(rootSum[:8]))
 	c := &auditCache{
 		path:    filepath.Join(dir, "audit-"+hex.EncodeToString(ruleSum[:8])+".json"),
