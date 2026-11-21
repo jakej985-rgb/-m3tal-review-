@@ -50,6 +50,8 @@ var ruleRationales = map[string]string{
 	"test-viewport-chrome-contract": "Responsive layout test simulates desktop viewport but omits application shell chrome from boundary constraints.",
 	"design-system-spec": "UI implementation violates repository design system guidelines.",
 	"stale-state-invalidation": "StatefulWidget cursor or index state retained across entity updates without reset, risking fatal out-of-bounds indexing.",
+	"resource-leak-disposable": "StatefulWidget controller, timer, or subscription allocated but not released in dispose().",
+	"unmounted-async-gap": "setState() or BuildContext called across an async gap without a mounted check, risking unmounted lifecycle exceptions.",
 }
 
 // RedactExcerpt removes sensitive credential patterns and bounds excerpt size

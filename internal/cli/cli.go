@@ -847,6 +847,8 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.TestViewportChromeRule{RepositoryRoot: repositoryRoot},
 		review.DesignSystemRule{RepositoryRoot: repositoryRoot},
 		review.StaleStateRule{RepositoryRoot: repositoryRoot},
+		review.ResourceLeakRule{RepositoryRoot: repositoryRoot},
+		review.AsyncGapRule{RepositoryRoot: repositoryRoot},
 	}
 	return append(rules, review.ExtraRules(repositoryRoot)...)
 }
