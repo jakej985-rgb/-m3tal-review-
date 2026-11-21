@@ -49,6 +49,7 @@ var ruleRationales = map[string]string{
 	"touch-target-size": "Interactive UI element has a computed touch target area below the 48x48 dp accessibility minimum.",
 	"test-viewport-chrome-contract": "Responsive layout test simulates desktop viewport but omits application shell chrome from boundary constraints.",
 	"design-system-spec": "UI implementation violates repository design system guidelines.",
+	"stale-state-invalidation": "StatefulWidget cursor or index state retained across entity updates without reset, risking fatal out-of-bounds indexing.",
 }
 
 // RedactExcerpt removes sensitive credential patterns and bounds excerpt size
