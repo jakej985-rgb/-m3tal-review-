@@ -682,6 +682,12 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&AmbiguousHardwareMatcherRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&MockTelemetryBleedRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&TransportHandleChurnRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&UncanceledStreamRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&CIOrphanedTestsRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&UnhandledStreamRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&UnboundedBufferRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&UnparentedLauncherRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&UnflaggedTransportRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 	}
 }
 

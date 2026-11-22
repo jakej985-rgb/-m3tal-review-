@@ -131,6 +131,11 @@ func (r SlopRule) checkFile(fd FileDiff) []Finding {
 			return r.checkPHPSyntax(fd.Path, fd.AddedLines)
 		}
 		return r.checkAddedLineRegex(fd)
+	case language.LanguageDart:
+		if r.RepositoryRoot != "" {
+			return r.checkDartSyntax(fd.Path, fd.AddedLines)
+		}
+		return r.checkAddedLineRegex(fd)
 	default:
 		return nil
 	}

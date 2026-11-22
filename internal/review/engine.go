@@ -92,7 +92,7 @@ func categoryForRule(rule string) string {
 		return "security"
 	}
 	switch rule {
-	case "hardcoded-credential", "exposed-secret", "high-entropy-secret", "world-writable-file-mode", "insecure-tls-verification", "risky-shell-execution", "rust-ffi-unwind", "jvm-insecure-deserialization", "cpp-unbounded-buffer", "android-signing-bypass", "release-rebase-race", "slsa-provenance-schema", "hazard-safety-classification", "simulation-hardware-permissions", "hardware-disconnect-safe-state", "optimistic-actuation-safety":
+	case "hardcoded-credential", "exposed-secret", "high-entropy-secret", "world-writable-file-mode", "insecure-tls-verification", "risky-shell-execution", "rust-ffi-unwind", "jvm-insecure-deserialization", "cpp-unbounded-buffer", "android-signing-bypass", "release-rebase-race", "slsa-provenance-schema", "hazard-safety-classification", "simulation-hardware-permissions", "hardware-disconnect-safe-state", "optimistic-actuation-safety", "uncanceled-stream-subscription", "unparented-external-launcher":
 		return "security"
 	case "review-risk":
 		return "risk"
@@ -100,7 +100,7 @@ func categoryForRule(rule string) string {
 		return "drift"
 	case "code-slop-analysis-error", "repository-lint", "review-policy-config-error":
 		return "confidence"
-	case "touch-target-size", "test-viewport-chrome-contract", "design-system-spec", "stale-state-invalidation", "resource-leak-disposable", "unmounted-async-gap", "hot-path-allocation", "flutter-semantics-action", "flutter-scroll-focus-visibility", "test-a11y-action-gap", "rust-unsafe-safety-rationale", "jvm-coroutine-leak", "asymmetric-storage-wrapper", "gh-cli-asset-url", "backup-recovery-bypass", "release-preflight-scope", "route-guard-schema-mismatch", "ambiguous-hardware-matcher", "mock-telemetry-bleed", "transport-handle-identity-churn":
+	case "touch-target-size", "test-viewport-chrome-contract", "design-system-spec", "stale-state-invalidation", "resource-leak-disposable", "unmounted-async-gap", "hot-path-allocation", "flutter-semantics-action", "flutter-scroll-focus-visibility", "test-a11y-action-gap", "rust-unsafe-safety-rationale", "jvm-coroutine-leak", "asymmetric-storage-wrapper", "gh-cli-asset-url", "backup-recovery-bypass", "release-preflight-scope", "route-guard-schema-mismatch", "ambiguous-hardware-matcher", "mock-telemetry-bleed", "transport-handle-identity-churn", "ci-orphaned-test-suite", "unhandled-stream-lifecycle", "unbounded-serial-buffer", "unflagged-experimental-transport":
 		return "quality"
 	default:
 		return "review"

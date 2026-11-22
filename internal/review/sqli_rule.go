@@ -70,6 +70,41 @@ var sqliPatterns = []struct {
 		raw:      true,
 		message:  "SQL query built with template interpolation; use parameterized queries",
 	},
+	{
+		language: language.LanguageCSharp,
+		pattern:  regexp.MustCompile(`\.(?:FromSqlRaw|ExecuteSqlRaw|ExecuteSqlRawAsync)\s*\(\s*(?:\$|[^,)]*?\+)`),
+		raw:      true,
+		message:  "EF Core raw SQL executed with interpolated string or concatenation; use FromSqlInterpolated or parameterized queries",
+	},
+	{
+		language: language.LanguageCSharp,
+		pattern:  regexp.MustCompile(`new\s+SqlCommand\s*\(\s*(?:\$|[^,)]*?\+)`),
+		raw:      true,
+		message:  "SqlCommand constructed with string interpolation or concatenation; use SqlParameter",
+	},
+	{
+		language: language.LanguageJava,
+		pattern:  regexp.MustCompile(`\.(?:createQuery|createNativeQuery|prepareCall|prepareStatement|executeQuery|executeUpdate)\s*\([^;\n]{0,180}?(?:\+|String\.format|formatted\()`),
+		message:  "SQL/HQL query built with concatenation or formatting; use parameterized queries",
+	},
+	{
+		language: language.LanguageKotlin,
+		pattern:  regexp.MustCompile(`\.(?:createQuery|createNativeQuery|prepareCall|prepareStatement|executeQuery|executeUpdate)\s*\([^;\n]{0,180}?(?:\+|"\s*\$\{)`),
+		raw:      true,
+		message:  "SQL query built with string interpolation or concatenation; use parameterized queries",
+	},
+	{
+		language: language.LanguagePHP,
+		pattern:  regexp.MustCompile(`\b(?:query|prepare|exec)\s*\([^;)]*?(?:\.\s*\$[a-zA-Z_\x7f-\xff]|"[^"]*\$[a-zA-Z_\x7f-\xff])`),
+		raw:      true,
+		message:  "PDO/mysqli query built with concatenation or interpolation; use parameterized prepared statements",
+	},
+	{
+		language: language.LanguagePHP,
+		pattern:  regexp.MustCompile(`(?:DB::|->)\s*(?:raw|whereRaw|havingRaw|selectRaw|orderByRaw|groupByRaw)\s*\([^;)]*?(?:\.\s*\$[a-zA-Z_\x7f-\xff]|"[^"]*\$[a-zA-Z_\x7f-\xff])`),
+		raw:      true,
+		message:  "Laravel raw query built with variable concatenation or interpolation; pass bindings as second argument",
+	},
 }
 
 func (r SQLiRule) Check(diff string) []Finding {

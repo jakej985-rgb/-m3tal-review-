@@ -50,3 +50,24 @@ func TestSQLiRuleFindsPythonAndJSTemplate(t *testing.T) {
 		t.Fatalf("js findings = %+v; want 1", got)
 	}
 }
+
+func TestSQLiRuleFindsCSharpJavaPHP(t *testing.T) {
+	// C# EF Core raw SQL interpolation
+	csDiff := "diff --git a/Repo.cs b/Repo.cs\n--- a/Repo.cs\n+++ b/Repo.cs\n@@ -0,0 +1 @@\n+ctx.Users.FromSqlRaw($\"SELECT * FROM Users WHERE Name = '{name}'\");\n"
+	if got := (SQLiRule{}).Check(csDiff); len(got) != 1 {
+		t.Fatalf("csharp findings = %+v; want 1", got)
+	}
+
+	// Java JPA query concatenation
+	javaDiff := "diff --git a/OrderRepo.java b/OrderRepo.java\n--- a/OrderRepo.java\n+++ b/OrderRepo.java\n@@ -0,0 +1 @@\n+em.createNativeQuery(\"SELECT * FROM orders WHERE id = \" + orderId);\n"
+	if got := (SQLiRule{}).Check(javaDiff); len(got) != 1 {
+		t.Fatalf("java findings = %+v; want 1", got)
+	}
+
+	// PHP Laravel raw query concatenation
+	phpDiff := "diff --git a/User.php b/User.php\n--- a/User.php\n+++ b/User.php\n@@ -0,0 +1 @@\n+DB::raw(\"SELECT * FROM users WHERE email = '\" . $email . \"'\");\n"
+	if got := (SQLiRule{}).Check(phpDiff); len(got) != 1 {
+		t.Fatalf("php findings = %+v; want 1", got)
+	}
+}
+

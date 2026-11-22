@@ -204,6 +204,22 @@ func extractModifiedSymbols(path string, diff *FileDiff, content []byte) []strin
 		return extractJSTSSymbols(content, changedLines)
 	case ".rs":
 		return extractRustSymbols(content, changedLines)
+	case ".java":
+		return extractJavaSymbols(content, changedLines)
+	case ".kt", ".kts":
+		return extractKotlinSymbols(content, changedLines)
+	case ".cs":
+		return extractCSharpSymbols(content, changedLines)
+	case ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx":
+		return extractCPPSymbols(content, changedLines)
+	case ".swift":
+		return extractSwiftSymbols(content, changedLines)
+	case ".dart":
+		return extractDartSymbols(content, changedLines)
+	case ".php":
+		return extractPHPSymbols(content, changedLines)
+	case ".sh", ".bash", ".zsh":
+		return extractShellSymbols(content, changedLines)
 	default:
 		return extractGenericSymbols(content, changedLines)
 	}
@@ -275,49 +291,222 @@ func extractGoSymbols(content []byte, changedLines map[int]bool) []string {
 	return symbols
 }
 
-var pySymbolRe = regexp.MustCompile(`^\s*(?:def|class)\s+([a-zA-Z0-9_]+)`)
+var (
+	pySymbolRe     = regexp.MustCompile(`^\s*(?:async\s+def|def|class)\s+([a-zA-Z0-9_]+)`)
+	pyRouteRe      = regexp.MustCompile(`@(?:app|router|bp|api_router)\.(get|post|put|delete|patch|route)\s*\(\s*['"]([^'"]+)['"]`)
+	jsSymbolRe     = regexp.MustCompile(`^\s*(?:export\s+)?(?:async\s+)?(?:function|class|const|let|var|interface|type|enum)\s+([a-zA-Z0-9_]+)`)
+	jsRouteRe      = regexp.MustCompile(`\b(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*['"]([^'"]+)['"]`)
+	rustSymbolRe   = regexp.MustCompile(`^\s*(?:pub(?:\([^)]+\))?\s+)?(?:async\s+|const\s+|unsafe\s+|extern\s+(?:"[^"]+"\s+)?)?(?:fn|struct|enum|trait|type|mod)\s+([a-zA-Z0-9_]+)`)
+	rustRouteRe    = regexp.MustCompile(`#\[\s*(get|post|put|delete|patch)\s*\(\s*["']([^"']+)["']`)
+	javaSymbolRe   = regexp.MustCompile(`^\s*(?:public|protected|private|static|final|abstract|\s)*\b(?:class|interface|enum|record)\s+([a-zA-Z0-9_]+)|(?:public|protected|private|static|final|abstract|\s)+(?:[a-zA-Z0-9_<>[\]]+)\s+([a-zA-Z0-9_]+)\s*\([^)]*\)\s*(?:throws\s+[^{]+)?\s*\{?`)
+	javaRouteRe    = regexp.MustCompile(`@(Get|Post|Put|Delete|Patch|Request)Mapping\s*\(\s*(?:value\s*=\s*)?["']([^"']+)["']`)
+	ktSymbolRe     = regexp.MustCompile(`^\s*(?:data\s+|sealed\s+|enum\s+|inner\s+|open\s+|abstract\s+)?(?:class|interface|object)\s+([a-zA-Z0-9_]+)|(?:suspend\s+|override\s+|private\s+|public\s+|internal\s+)*fun\s+(?:<[^>]+>\s+)?([a-zA-Z0-9_]+)\s*\(`)
+	ktRouteRe      = regexp.MustCompile(`\b(get|post|put|delete|patch|route)\s*\(\s*["']([^"']+)["']`)
+	csharpSymbolRe = regexp.MustCompile(`\b(?:class|record(?:\s+struct)?|struct|interface|enum)\s+([A-Za-z0-9_]+)|(?:public|protected|private|internal|static|async|virtual|override|abstract|sealed|partial|\s+)+[A-Za-z0-9_<>[\]?]+\s+([A-Za-z0-9_]+)\s*\([^)]*\)\s*(?:=>|{)`)
+	csharpRouteRe  = regexp.MustCompile(`\b(?:app|routes|group)\.(MapGet|MapPost|MapPut|MapDelete|MapPatch)\s*\(\s*"([^"]+)"|\[Http(Get|Post|Put|Delete|Patch)\s*\(\s*"([^"]+)"`)
+	cppSymbolRe    = regexp.MustCompile(`\b(?:class|struct|enum(?:\s+class)?|namespace)\s+([a-zA-Z0-9_]+)|(?:[\w:*&<>\s]+?\s+)?(?:([a-zA-Z0-9_]+::)*[a-zA-Z0-9_~]+)\s*\([^;]*\)\s*(?:const)?\s*[{;]?`)
+	swiftSymbolRe  = regexp.MustCompile(`\b(?:struct|class|actor|protocol|enum|extension|func)\s+([a-zA-Z0-9_]+)`)
+	dartSymbolRe   = regexp.MustCompile(`\b(?:class|mixin|enum|extension)\s+([a-zA-Z0-9_]+)|(?:void|[A-Z]\w*(?:<[^>]+>)?)\s+([a-zA-Z0-9_]+)\s*\(`)
+	dartRouteRe    = regexp.MustCompile(`\bGoRoute\s*\(\s*path:\s*['"]([^'"]+)['"]`)
+	phpSymbolRe    = regexp.MustCompile(`\b(?:class|trait|interface|enum)\s+([a-zA-Z0-9_]+)|\bfunction\s+([a-zA-Z0-9_]+)`)
+	phpRouteRe     = regexp.MustCompile(`Route::(get|post|put|patch|delete|any)\s*\(\s*['"]([^'"]+)['"]|#\[Route\s*\(\s*['"]([^'"]+)['"]`)
+	shellSymbolRe  = regexp.MustCompile(`^\s*(?:function\s+)?([a-zA-Z_][a-zA-Z0-9_-]*)\s*\(\s*\)|^\s*function\s+([a-zA-Z_][a-zA-Z0-9_-]*)`)
+	genericSymbolRe = regexp.MustCompile(`^\s*(?:public|private|protected|static|class|interface|func|fn|function|def)\s+([a-zA-Z0-9_]+)`)
+)
 
 func extractPythonSymbols(content []byte, changedLines map[int]bool) []string {
-	return extractRegexSymbols(content, changedLines, pySymbolRe)
-}
-
-var jsSymbolRe = regexp.MustCompile(`^\s*(?:export\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+([a-zA-Z0-9_]+)`)
-
-func extractJSTSSymbols(content []byte, changedLines map[int]bool) []string {
-	return extractRegexSymbols(content, changedLines, jsSymbolRe)
-}
-
-var rustSymbolRe = regexp.MustCompile(`^\s*(?:pub\s+)?(?:fn|struct|enum|trait|impl)\s+([a-zA-Z0-9_]+)`)
-
-func extractRustSymbols(content []byte, changedLines map[int]bool) []string {
-	return extractRegexSymbols(content, changedLines, rustSymbolRe)
-}
-
-var genericSymbolRe = regexp.MustCompile(`^\s*(?:public|private|protected|static|class|interface|func|fn|function|def)\s+([a-zA-Z0-9_]+)`)
-
-func extractGenericSymbols(content []byte, changedLines map[int]bool) []string {
-	return extractRegexSymbols(content, changedLines, genericSymbolRe)
-}
-
-func extractRegexSymbols(content []byte, changedLines map[int]bool, re *regexp.Regexp) []string {
 	lines := strings.Split(string(content), "\n")
 	symbolSet := make(map[string]bool)
 	var symbols []string
 
-	for idx, line := range lines {
-		lineNum := idx + 1
-		if !changedLines[lineNum] {
-			continue
+	addSym := func(name string) {
+		name = strings.TrimSpace(name)
+		if name != "" && !symbolSet[name] {
+			symbolSet[name] = true
+			symbols = append(symbols, name)
 		}
-		matches := re.FindStringSubmatch(line)
-		if len(matches) > 1 {
-			sym := matches[1]
-			if !symbolSet[sym] {
-				symbolSet[sym] = true
-				symbols = append(symbols, sym)
+	}
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		lineNum := i + 1
+
+		if changedLines[lineNum] {
+			if m := pyRouteRe.FindStringSubmatch(line); len(m) >= 3 {
+				addSym(strings.ToUpper(m[1]) + " " + m[2])
+			}
+		}
+
+		m := pySymbolRe.FindStringSubmatch(line)
+		if len(m) > 1 {
+			name := m[1]
+			if changedLines[lineNum] {
+				addSym(name)
+			}
+
+			declIndent := len(line) - len(strings.TrimLeft(line, " \t"))
+			suiteEndLine := lineNum
+
+			for scanIdx := i + 1; scanIdx < len(lines); scanIdx++ {
+				scanLine := lines[scanIdx]
+				trimmed := strings.TrimSpace(scanLine)
+				if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+					continue
+				}
+				curIndent := len(scanLine) - len(strings.TrimLeft(scanLine, " \t"))
+				if curIndent <= declIndent {
+					break
+				}
+				suiteEndLine = scanIdx + 1
+			}
+
+			for cl := lineNum; cl <= suiteEndLine; cl++ {
+				if changedLines[cl] {
+					addSym(name)
+					break
+				}
 			}
 		}
 	}
+	return symbols
+}
+
+func extractJSTSSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, jsSymbolRe, jsRouteRe)
+}
+
+func extractRustSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, rustSymbolRe, rustRouteRe)
+}
+
+func extractJavaSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, javaSymbolRe, javaRouteRe)
+}
+
+func extractKotlinSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, ktSymbolRe, ktRouteRe)
+}
+
+func extractCSharpSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, csharpSymbolRe, csharpRouteRe)
+}
+
+func extractCPPSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, cppSymbolRe, nil)
+}
+
+func extractSwiftSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, swiftSymbolRe, nil)
+}
+
+func extractDartSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, dartSymbolRe, dartRouteRe)
+}
+
+func extractPHPSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, phpSymbolRe, phpRouteRe)
+}
+
+func extractShellSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, shellSymbolRe, nil)
+}
+
+func extractGenericSymbols(content []byte, changedLines map[int]bool) []string {
+	return extractBraceSpanSymbols(content, changedLines, genericSymbolRe, nil)
+}
+
+func extractBraceSpanSymbols(content []byte, changedLines map[int]bool, declRe *regexp.Regexp, routeRe *regexp.Regexp) []string {
+	lines := strings.Split(string(content), "\n")
+	symbolSet := make(map[string]bool)
+	var symbols []string
+
+	addSym := func(name string) {
+		name = strings.TrimSpace(name)
+		if name != "" && !symbolSet[name] {
+			symbolSet[name] = true
+			symbols = append(symbols, name)
+		}
+	}
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		lineNum := i + 1
+
+		if routeRe != nil && changedLines[lineNum] {
+			if m := routeRe.FindStringSubmatch(line); len(m) > 1 {
+				if len(m) >= 3 && m[2] != "" {
+					addSym(strings.ToUpper(m[1]) + " " + m[2])
+				} else {
+					addSym(m[1])
+				}
+			}
+		}
+
+		if declRe == nil {
+			continue
+		}
+
+		m := declRe.FindStringSubmatch(line)
+		if len(m) > 1 {
+			name := ""
+			for j := len(m) - 1; j >= 1; j-- {
+				if m[j] != "" {
+					name = m[j]
+					break
+				}
+			}
+			if name == "" {
+				continue
+			}
+
+			if changedLines[lineNum] {
+				addSym(name)
+			}
+
+			braceStartLine := -1
+			for scanIdx := i; scanIdx < len(lines); scanIdx++ {
+				l := lines[scanIdx]
+				if strings.Contains(l, "{") {
+					braceStartLine = scanIdx
+					break
+				}
+				if strings.Contains(l, ";") || scanIdx > i+3 {
+					break
+				}
+			}
+
+			if braceStartLine != -1 {
+				openCount := 0
+				endLine := -1
+				for scanIdx := braceStartLine; scanIdx < len(lines); scanIdx++ {
+					for _, ch := range lines[scanIdx] {
+						if ch == '{' {
+							openCount++
+						} else if ch == '}' {
+							openCount--
+							if openCount == 0 {
+								endLine = scanIdx + 1
+								break
+							}
+						}
+					}
+					if openCount == 0 && endLine != -1 {
+						break
+					}
+				}
+
+				if endLine != -1 {
+					for cl := lineNum; cl <= endLine; cl++ {
+						if changedLines[cl] {
+							addSym(name)
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return symbols
 }
 

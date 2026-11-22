@@ -41,6 +41,11 @@ var unsafeDeserializationPatterns = []struct {
 		message:  "jsonpickle can instantiate arbitrary Python objects; avoid decoding untrusted data",
 	},
 	{
+		language: language.LanguagePython,
+		pattern:  regexp.MustCompile(`\b(?:torch\.load|joblib\.load)\s*\(`),
+		message:  "Unsafe model deserialization can execute arbitrary code; use torch.load(..., weights_only=True) or safetensors",
+	},
+	{
 		language: language.LanguagePHP,
 		pattern:  regexp.MustCompile(`\bunserialize\s*\(`),
 		message:  "unserialize on untrusted data can instantiate arbitrary objects; use json_decode",
@@ -49,6 +54,16 @@ var unsafeDeserializationPatterns = []struct {
 		language: language.LanguageJavaScript,
 		pattern:  regexp.MustCompile(`\brequire\s*\(\s*['"](?:node-serialize|funcster|serialize-javascript)['"]`),
 		message:  "Insecure serialization library can execute arbitrary code; use JSON",
+	},
+	{
+		language: language.LanguageCSharp,
+		pattern:  regexp.MustCompile(`\b(?:BinaryFormatter|NetDataContractSerializer|SoapFormatter|LosFormatter|ObjectStateFormatter)\b|TypeNameHandling\s*=\s*TypeNameHandling\.(?:All|Auto|Objects|Arrays)`),
+		message:  "Insecure .NET deserialization can execute arbitrary code; use System.Text.Json",
+	},
+	{
+		language: language.LanguageJava,
+		pattern:  regexp.MustCompile(`\bnew\s+XMLDecoder\s*\(|\bXMLDecoder\.readObject\s*\(`),
+		message:  "XMLDecoder deserialization can execute arbitrary code; use a safe XML parser",
 	},
 }
 
