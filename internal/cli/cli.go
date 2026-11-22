@@ -802,6 +802,35 @@ func executeWithArgs(command string, commandArgs []string) error {
 	case "policy":
 		return runPolicyCommand(commandArgs)
 
+	case "lsp":
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		repoRoot, _ := git.RepositoryRoot(workingDir)
+		server := NewLSPServer(os.Stdin, os.Stdout, repoRoot)
+		return server.Serve()
+
+	case "dashboard":
+		port := 8080
+		for i := 0; i < len(commandArgs); i++ {
+			if commandArgs[i] == "--port" && i+1 < len(commandArgs) {
+				if p, err := strconv.Atoi(commandArgs[i+1]); err == nil && p > 0 {
+					port = p
+				}
+				i++
+			}
+		}
+		workingDir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		repoRoot, err := git.RepositoryRoot(workingDir)
+		if err != nil {
+			repoRoot = workingDir
+		}
+		return StartDashboardServer(repoRoot, port)
+
 	case "help":
 		printHelp()
 		return nil
@@ -854,6 +883,11 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.FlutterSemanticsRule{RepositoryRoot: repositoryRoot},
 		review.ScrollFocusRule{RepositoryRoot: repositoryRoot},
 		review.A11yTestGapRule{RepositoryRoot: repositoryRoot},
+		review.RustSafetyRule{RepositoryRoot: repositoryRoot},
+		review.RustFFIPanicRule{RepositoryRoot: repositoryRoot},
+		review.JVMCoroutineLeakRule{RepositoryRoot: repositoryRoot},
+		review.JVMInsecureDeserializationRule{RepositoryRoot: repositoryRoot},
+		review.CPPUnboundedBufferRule{RepositoryRoot: repositoryRoot},
 	}
 	return append(rules, review.ExtraRules(repositoryRoot)...)
 }
@@ -1563,6 +1597,8 @@ func printHelp() {
 	fmt.Println("    --dry-run          Simulate and verify in sandbox without applying")
 	fmt.Println("    --yes, --approve   Approve verified repairs without prompt")
 	fmt.Println("    --history          Display repair audit history")
+	fmt.Println("  lsp                 Run Language Server Protocol daemon on stdin/stdout")
+	fmt.Println("  dashboard [--port N] Launch local browser review dashboard and trends")
 	fmt.Println("  version [--json]")
 	fmt.Println("  help")
 }

@@ -57,6 +57,11 @@ var ruleRationales = map[string]string{
 	"flutter-semantics-action": "Interactive Semantics button excludes descendant semantics without providing an explicit onTap action, rendering it inoperable for screen readers.",
 	"flutter-scroll-focus-visibility": "Interactive focusable widget inside a scrollable container handles focus without ensuring visibility via Scrollable.ensureVisible, hiding focus rings during keyboard traversal.",
 	"test-a11y-action-gap": "Widget test asserts accessibility elements via shallow type queries without verifying semantic node attributes or exercising accessibility actions.",
+	"rust-unsafe-safety-rationale": "Unsafe Rust block or function lacks an explicit preceding // SAFETY: comment explaining the invariants and proof of soundness.",
+	"rust-ffi-unwind": "Extern 'C' function performs panicking operations without catch_unwind, risking undefined process aborts across FFI boundaries.",
+	"jvm-coroutine-leak": "Unconfined coroutine scope or unmanaged thread pool created without lifecycle cancellation or bounding.",
+	"jvm-insecure-deserialization": "ObjectInputStream.readObject() invoked without an ObjectInputFilter, risking arbitrary remote code execution.",
+	"cpp-unbounded-buffer": "Unbounded C/C++ string/buffer function invoked without destination bounds checking, risking memory corruption.",
 }
 
 // RedactExcerpt removes sensitive credential patterns and bounds excerpt size

@@ -27,8 +27,14 @@
   - `FlutterSemanticsRule` (`flutter-semantics-action`): flags `Semantics` buttons that exclude descendant semantics without an explicit `onTap` activation action, preventing inoperable buttons for screen reader users.
   - `SemanticsActionFixer` (`semantics-action-fixer`): automatically extracts child gesture tap handlers and injects `onTap: <callback>` and `excludeSemantics: true` into the outer `Semantics` widget, generating inline GitHub PR suggestions.
   - `ScrollFocusRule` (`flutter-scroll-focus-visibility`): flags `onFocusChange` in scrollable containers that update focus state without calling `Scrollable.ensureVisible`, preventing clipped rows with invisible focus outlines during keyboard Tab navigation.
-  - `A11yTestGapRule` (`test-a11y-action-gap`): detects shallow widget test assertions (e.g., `find.byType(Tooltip)`) that count widgets without exercising semantics actions (`tester.getSemantics`, `SemanticsAction.tap`) or hover display.
-- `auditCacheSchema` bumped to 24.
+- **Phase 5 — Language Frontends & Coverage Expansion** (`rust-unsafe-safety-rationale`, `rust-ffi-unwind`, `jvm-coroutine-leak`, `jvm-insecure-deserialization`, `cpp-unbounded-buffer`):
+  - Rust safety rules: requires explicit `// SAFETY:` rationale comments on `unsafe` blocks and detects uncaught panic unwind hazards in `extern "C"` FFI functions.
+  - Kotlin & Java rules: detects unconfined `GlobalScope.launch` lifecycle leaks and critical `ObjectInputStream.readObject()` deserialization without class filters.
+  - C & C++ rules: flags unbounded buffer functions (`strcpy`, `strcat`, `sprintf`, `gets`) risking memory corruption and suggests bounds-checked alternatives.
+- **Phase 6 — Ecosystem & Platform Evolution** (`m3tal-review lsp`, `m3tal-review dashboard`):
+  - Language Server Protocol daemon (`m3tal-review lsp`): standard JSON-RPC 2.0 LSP server for VS Code, Neovim, and IntelliJ providing real-time diagnostics (`publishDiagnostics`) and 1-click automated repairs (`codeAction`).
+  - Local Review Dashboard (`m3tal-review dashboard`): offline HTTP dashboard server visualizing grade trends, score distributions, and recent review runs.
+- `auditCacheSchema` bumped to 25.
 
 ## [1.1.0] - 2026-11-20
 

@@ -666,6 +666,12 @@ func ExtraRules(repositoryRoot string) []Rule {
 			patterns: []langPattern{
 				{language.LanguageGo, goroutineLeakPattern, "Unbounded goroutine spawned without termination signaling"},
 			}},
+		&AndroidSigningRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&ReleaseRebaseRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&SLSAProvenanceRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&GhCliAssetRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&AsymmetricStorageRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&HazardSafetyRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 	}
 }
 
