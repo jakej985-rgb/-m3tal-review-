@@ -134,3 +134,35 @@ new file mode 100644
 		t.Fatalf("expected 0 findings for multi-line await with inner callbacks, got %d: %+v", len(findings), findings)
 	}
 }
+
+func TestAsyncGapRuleDetectsSetStateInInitStateAndDispose(t *testing.T) {
+	diff := `diff --git a/lib/presentation/screen.dart b/lib/presentation/screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/screen.dart
+@@ -0,0 +1,18 @@
++class _ScreenState extends State<Screen> {
++  @override
++  void initState() {
++    super.initState();
++    setState(() {
++      _loaded = true;
++    });
++  }
++
++  @override
++  void dispose() {
++    setState(() {
++      _active = false;
++    });
++    super.dispose();
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 2 {
+		t.Fatalf("expected 2 findings for setState in initState and dispose, got %d: %+v", len(findings), findings)
+	}
+}
+

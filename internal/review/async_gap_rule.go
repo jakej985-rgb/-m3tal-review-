@@ -40,6 +40,7 @@ var (
 	contextUseRe = regexp.MustCompile(
 		`\b(?:Navigator\.(?:of|pop|push)|ScaffoldMessenger\.of|Theme\.of|context\.(?:go|push|pop))\b`,
 	)
+	lifecycleIllegalSetStateRe = regexp.MustCompile(`\bvoid\s+(initState|dispose)\s*\(\s*\)`)
 )
 
 func (r AsyncGapRule) CheckContext(ctx context.Context, diff string) []Finding {
@@ -71,6 +72,38 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 
 	for i, line := range lines {
 		lineNum := block.firstLine + i
+
+		// Check for setState called inside initState() or dispose()
+		if m := lifecycleIllegalSetStateRe.FindStringSubmatch(line); len(m) > 1 {
+			lifecycleMethod := m[1]
+			end := i + 30
+			if end > len(lines) {
+				end = len(lines)
+			}
+			for j := i + 1; j < end; j++ {
+				currLine := lines[j]
+				currLineNum := block.firstLine + j
+				if strings.Contains(currLine, "void ") || strings.Contains(currLine, "Widget ") || strings.Contains(currLine, "Future<") {
+					break
+				}
+				if setStateRe.MatchString(currLine) && (block.addedLines[currLineNum] || block.addedLines[lineNum]) {
+					key := fmt.Sprintf("%s:%d:lifecycle-%s-setstate", block.file, currLineNum, lifecycleMethod)
+					if !seen[key] {
+						seen[key] = true
+						findings = append(findings, Finding{
+							Rule:        "unmounted-async-gap",
+							Severity:    "high",
+							Category:    "quality",
+							File:        block.file,
+							Line:        currLineNum,
+							Message:     fmt.Sprintf("Calling setState() inside %s() throws or is redundant; the framework cannot re-render unmounted/building widgets", lifecycleMethod),
+							Remediation: fmt.Sprintf("In %s(), assign state variables directly without calling setState().", lifecycleMethod),
+							Confidence:  "High",
+						})
+					}
+				}
+			}
+		}
 
 		// Look for an await expression
 		if !awaitExprRe.MatchString(line) {

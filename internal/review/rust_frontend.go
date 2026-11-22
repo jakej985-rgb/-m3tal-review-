@@ -281,6 +281,8 @@ func (r RustAsyncLockRule) checkAsyncLockBlock(block diffSourceBlock, seen map[s
 		idxClose := findMatchingBrace(fnChunk, braceIdx)
 
 		var fnBody string
+		if idxClose > 0 && idxClose <= len(fnChunk) {
+			fnBody = fnChunk[:idxClose]
 		} else {
 			end := i + 40
 			if end > len(lines) {
