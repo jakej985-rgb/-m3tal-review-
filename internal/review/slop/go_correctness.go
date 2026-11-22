@@ -70,6 +70,109 @@ func (v *slopInspector) checkResourceClose(fn *ast.FuncDecl) {
 	}
 }
 
+// checkDeferBeforeErrCheck detects deferring .Close() on a resource before checking if err != nil.
+// If the call returns an error, the resource is nil and calling .Close() causes a panic on return.
+func (v *slopInspector) checkDeferBeforeErrCheck(fn *ast.FuncDecl) {
+	if fn.Body == nil {
+		return
+	}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		block, ok := n.(*ast.BlockStmt)
+		if !ok {
+			return true
+		}
+		for i := 0; i < len(block.List)-1; i++ {
+			assign, ok := block.List[i].(*ast.AssignStmt)
+			if !ok || len(assign.Lhs) < 2 || len(assign.Rhs) != 1 {
+				continue
+			}
+			call, ok := assign.Rhs[0].(*ast.CallExpr)
+			if !ok {
+				continue
+			}
+			name := callName(call)
+			if !isHTTPDoCall(name) && !isFileOpenCall(name) && !isSQLRowsCall(name) {
+				continue
+			}
+
+			resIdent, ok1 := assign.Lhs[0].(*ast.Ident)
+			errIdent, ok2 := assign.Lhs[len(assign.Lhs)-1].(*ast.Ident)
+			if !ok1 || !ok2 {
+				continue
+			}
+			resName := resIdent.Name
+			errName := errIdent.Name
+
+			deferStmt, ok := block.List[i+1].(*ast.DeferStmt)
+			if !ok || deferStmt.Call == nil {
+				continue
+			}
+			sel, ok := deferStmt.Call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Close" {
+				continue
+			}
+			base := baseIdent(sel.X)
+			if base != resName && base != resName+".Body" {
+				continue
+			}
+
+			if i+2 < len(block.List) {
+				if ifStmt, ok := block.List[i+2].(*ast.IfStmt); ok {
+					if isErrCheck(ifStmt.Cond, errName) {
+						v.addFindingPos(deferStmt.Pos(),
+							"Resource closed with defer before checking error",
+							"Check `if err != nil` before calling `defer "+base+".Close()`; a non-nil error leaves the resource nil and panics.")
+					}
+				}
+			}
+		}
+		return true
+	})
+}
+
+func isErrCheck(cond ast.Expr, errName string) bool {
+	bin, ok := cond.(*ast.BinaryExpr)
+	if !ok {
+		return false
+	}
+	if bin.Op == token.NEQ || bin.Op == token.EQL {
+		if id, ok := bin.X.(*ast.Ident); ok && id.Name == errName {
+			if id2, ok := bin.Y.(*ast.Ident); ok && id2.Name == "nil" {
+				return true
+			}
+		}
+		if id, ok := bin.Y.(*ast.Ident); ok && id.Name == errName {
+			if id2, ok := bin.X.(*ast.Ident); ok && id2.Name == "nil" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkWaitGroupAddInGo detects calling sync.WaitGroup.Add inside a spawned goroutine.
+func (v *slopInspector) checkWaitGroupAddInGo(goStmt *ast.GoStmt) {
+	if goStmt == nil || goStmt.Call == nil {
+		return
+	}
+	ast.Inspect(goStmt.Call, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Add" {
+			base := baseIdent(sel.X)
+			baseLower := strings.ToLower(base)
+			if strings.Contains(baseLower, "wg") || strings.Contains(baseLower, "waitgroup") {
+				v.addFindingPos(call.Pos(),
+					"sync.WaitGroup.Add called inside spawned goroutine",
+					"Call wg.Add in the coordinator goroutine before `go` to prevent a race where wg.Wait() finishes before the goroutine starts.")
+			}
+		}
+		return true
+	})
+}
+
 func callName(call *ast.CallExpr) string {
 	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 		if id, ok := sel.X.(*ast.Ident); ok {

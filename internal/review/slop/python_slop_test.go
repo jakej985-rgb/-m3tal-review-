@@ -102,3 +102,51 @@ func TestPythonSyntaxAnalyzerDoesNotTreatIdentifierSuffixAsContinuation(t *testi
 	}
 	t.Fatalf("identifier ending in 'and' swallowed a following control statement: %+v", findings)
 }
+
+func TestPythonExtraFindings_BareExceptNoneCompareBlockingAsync(t *testing.T) {
+	source := `class MyService:
+    items: list = []
+
+    async def fetch_data(self, val):
+        if val == None:
+            time.sleep(1)
+        try:
+            do_work()
+        except:
+            pass
+`
+	repo := stageNonGoSlopSource(t, "service.py", source)
+	findings := (review.SlopRule{RepositoryRoot: repo}).Check(fullSourceDiff("service.py", source))
+
+	foundMutable := false
+	foundNone := false
+	foundBlocking := false
+	foundBareExcept := false
+
+	for _, f := range findings {
+		switch f.Message {
+		case "Mutable class attribute":
+			foundMutable = true
+		case "Comparison with None using == or !=":
+			foundNone = true
+		case "Blocking synchronous call inside async def":
+			foundBlocking = true
+		case "Bare except: catches BaseException":
+			foundBareExcept = true
+		}
+	}
+
+	if !foundMutable {
+		t.Errorf("expected 'Mutable class attribute' finding, got %+v", findings)
+	}
+	if !foundNone {
+		t.Errorf("expected 'Comparison with None using == or !=' finding, got %+v", findings)
+	}
+	if !foundBlocking {
+		t.Errorf("expected 'Blocking synchronous call inside async def' finding, got %+v", findings)
+	}
+	if !foundBareExcept {
+		t.Errorf("expected 'Bare except: catches BaseException' finding, got %+v", findings)
+	}
+}
+

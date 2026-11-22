@@ -732,8 +732,11 @@ func inspectGoAST(fset *token.FileSet, f *ast.File, file string, addedLines []in
 		case *ast.FuncDecl:
 			inspector.checkFunctionSize(node)
 			inspector.checkResourceClose(node)
+			inspector.checkDeferBeforeErrCheck(node)
 			inspector.checkInitFunc(node)
 			inspector.checkCyclomatic(node)
+		case *ast.GoStmt:
+			inspector.checkWaitGroupAddInGo(node)
 		case *ast.ForStmt:
 			// "for {}" is a deliberate infinite loop, not slop.
 			if node.Init != nil || node.Cond != nil || node.Post != nil {

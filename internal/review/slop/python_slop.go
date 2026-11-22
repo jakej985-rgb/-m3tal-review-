@@ -539,14 +539,18 @@ func stripPythonComment(line string, tripleQuote *byte, tripleSize *int, normalQ
 }
 
 var (
-	pythonTypeCompare  = regexp.MustCompile(`\btype\s*\(\s*[\w.]+\s*\)\s*={1,2}\s*[A-Z]\w*`)
-	pythonIsLiteral    = regexp.MustCompile(`\bis\s+(?:not\s+)?(?:\d|["'])`)
-	pythonGlobalStmt   = regexp.MustCompile(`^\s*global\s+\w+`)
-	pythonMutableClass = regexp.MustCompile(`^\s*([A-Za-z_]\w*)\s*=\s*(?:\[\s*\]|\{\s*\}|set\s*\(|list\s*\(|dict\s*\()`)
-	pythonDefHeader    = regexp.MustCompile(`^\s*(?:async\s+)?def\s+\w+`)
-	pythonClassHeader  = regexp.MustCompile(`^\s*class\s+\w+`)
-	pythonFinallyHdr   = regexp.MustCompile(`^\s*finally\s*:`)
-	pythonTerminating  = regexp.MustCompile(`^\s*(?:return\b|break\b|continue\b)`)
+	pythonTypeCompare     = regexp.MustCompile(`\btype\s*\(\s*[\w.]+\s*\)\s*={1,2}\s*[A-Z]\w*`)
+	pythonIsLiteral       = regexp.MustCompile(`\bis\s+(?:not\s+)?(?:\d|["'])`)
+	pythonGlobalStmt      = regexp.MustCompile(`^\s*global\s+\w+`)
+	pythonMutableClass    = regexp.MustCompile(`^\s*([A-Za-z_]\w*)(?:\s*:\s*[^=]+)?\s*=\s*(?:\[\s*\]|\{\s*\}|set\s*\(|list\s*\(|dict\s*\()`)
+	pythonDefHeader       = regexp.MustCompile(`^\s*(?:async\s+)?def\s+\w+`)
+	pythonAsyncDefHeader  = regexp.MustCompile(`^\s*async\s+def\s+\w+`)
+	pythonBlockingInAsync = regexp.MustCompile(`\b(?:time\.sleep|requests\.(?:get|post|put|delete|patch|head)|urllib\.request\.urlopen)\s*\(`)
+	pythonBareExcept      = regexp.MustCompile(`^\s*except\s*:`)
+	pythonNoneCompare     = regexp.MustCompile(`(?:==|!=)\s*None\b|\bNone\s*(?:==|!=)`)
+	pythonClassHeader     = regexp.MustCompile(`^\s*class\s+\w+`)
+	pythonFinallyHdr      = regexp.MustCompile(`^\s*finally\s*:`)
+	pythonTerminating     = regexp.MustCompile(`^\s*(?:return\b|break\b|continue\b)`)
 )
 
 // pythonExtraFindings covers Python-specific style/correctness heuristics:
@@ -559,6 +563,7 @@ func pythonExtraFindings(file, source string, added map[int]bool) []Finding {
 	// at class-body indent is shared mutable state.
 	classIndent := -1
 	funcIndent := -1
+	asyncIndent := -1
 	for i, raw := range rawLines {
 		lineNo := i + 1
 		code := strings.TrimSpace(raw)
@@ -569,16 +574,26 @@ func pythonExtraFindings(file, source string, added map[int]bool) []Finding {
 		if m := pythonClassHeader.FindStringSubmatch(raw); m != nil {
 			classIndent = indent
 			funcIndent = -1
+			asyncIndent = -1
+			continue
+		}
+		if pythonAsyncDefHeader.MatchString(raw) {
+			asyncIndent = indent
+			funcIndent = indent
 			continue
 		}
 		if pythonDefHeader.MatchString(raw) {
 			funcIndent = indent
+			asyncIndent = -1
 			continue
 		}
 		if funcIndent >= 0 && indent <= funcIndent {
 			funcIndent = -1
 		}
-		if classIndent >= 0 && indent == classIndent+4 {
+		if asyncIndent >= 0 && indent <= asyncIndent {
+			asyncIndent = -1
+		}
+		if classIndent >= 0 && indent > classIndent {
 			if pythonMutableClass.MatchString(raw) {
 				if added[lineNo] {
 					findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: lineNo, Message: "Mutable class attribute", Remediation: "Move the mutable default into __init__ or use a tuple/immutable default."})
@@ -587,6 +602,12 @@ func pythonExtraFindings(file, source string, added map[int]bool) []Finding {
 		}
 		if added[lineNo] {
 			switch {
+			case pythonBareExcept.MatchString(code):
+				findings = append(findings, Finding{Rule: "code-slop", Severity: "medium", File: file, Line: lineNo, Message: "Bare except: catches BaseException", Remediation: "Catch Exception or specific error types instead of bare except:."})
+			case pythonNoneCompare.MatchString(code):
+				findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: lineNo, Message: "Comparison with None using == or !=", Remediation: "Use 'is None' or 'is not None' for identity comparison."})
+			case asyncIndent >= 0 && indent > asyncIndent && pythonBlockingInAsync.MatchString(code):
+				findings = append(findings, Finding{Rule: "code-slop", Severity: "high", File: file, Line: lineNo, Message: "Blocking synchronous call inside async def", Remediation: "Use asyncio.sleep() or an async HTTP client (e.g. httpx, aiohttp) inside async functions to avoid event loop starvation."})
 			case pythonTypeCompare.MatchString(code):
 				findings = append(findings, Finding{Rule: "code-slop", Severity: "low", File: file, Line: lineNo, Message: "type() comparison instead of isinstance()", Remediation: "Use isinstance(x, T) which also handles subclasses."})
 			case pythonIsLiteral.MatchString(code):

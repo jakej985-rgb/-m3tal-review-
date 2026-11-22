@@ -123,3 +123,47 @@ func TestSlopMalformedFilesAreReportedIndividually(t *testing.T) {
 		t.Fatalf("unexpected findings: %+v", fs)
 	}
 }
+
+func TestSlopDeferBeforeErrCheckAndWaitGroupAdd(t *testing.T) {
+	src := `package main
+
+import (
+	"net/http"
+	"sync"
+)
+
+func fetch(url string) error {
+	resp, err := http.Get(url)
+	defer resp.Body.Close()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func spawn(wg *sync.WaitGroup) {
+	go func() {
+		wg.Add(1)
+		defer wg.Done()
+	}()
+}
+`
+	got := slopMessages(t, src)
+	foundDefer := false
+	foundWg := false
+	for _, msg := range got {
+		if msg == "Resource closed with defer before checking error" {
+			foundDefer = true
+		}
+		if msg == "sync.WaitGroup.Add called inside spawned goroutine" {
+			foundWg = true
+		}
+	}
+	if !foundDefer {
+		t.Errorf("expected 'Resource closed with defer before checking error', got %v", got)
+	}
+	if !foundWg {
+		t.Errorf("expected 'sync.WaitGroup.Add called inside spawned goroutine', got %v", got)
+	}
+}
+

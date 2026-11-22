@@ -896,9 +896,11 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.A11yTestGapRule{RepositoryRoot: repositoryRoot},
 		review.RustSafetyRule{RepositoryRoot: repositoryRoot},
 		review.RustFFIPanicRule{RepositoryRoot: repositoryRoot},
+		review.RustAsyncLockRule{RepositoryRoot: repositoryRoot},
 		review.JVMCoroutineLeakRule{RepositoryRoot: repositoryRoot},
 		review.JVMInsecureDeserializationRule{RepositoryRoot: repositoryRoot},
 		review.CPPUnboundedBufferRule{RepositoryRoot: repositoryRoot},
+		review.CSharpAsyncRule{RepositoryRoot: repositoryRoot},
 	}
 	return append(rules, review.ExtraRules(repositoryRoot)...)
 }

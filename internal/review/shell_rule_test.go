@@ -56,3 +56,29 @@ func TestShellRuleName(t *testing.T) {
 		t.Errorf("Name() = %q, want %q", got, "risky-shell-execution")
 	}
 }
+
+func TestShellRuleFindsPythonAndPHPShellExecution(t *testing.T) {
+	pyDiff := `diff --git a/runner.py b/runner.py
+--- a/runner.py
++++ b/runner.py
+@@ -0,0 +1,2 @@
++output = subprocess.getoutput("ls " + path)
++pipe = os.popen("cat " + file)
++`
+	findings := (ShellRule{}).Check(pyDiff)
+	if len(findings) != 2 {
+		t.Fatalf("expected 2 Python shell findings, got %d: %+v", len(findings), findings)
+	}
+
+	phpDiff := `diff --git a/runner.php b/runner.php
+--- a/runner.php
++++ b/runner.php
+@@ -0,0 +1 @@
++proc_open($cmd, $descriptors, $pipes);
++`
+	findingsPHP := (ShellRule{}).Check(phpDiff)
+	if len(findingsPHP) != 1 {
+		t.Fatalf("expected 1 PHP proc_open finding, got %d: %+v", len(findingsPHP), findingsPHP)
+	}
+}
+

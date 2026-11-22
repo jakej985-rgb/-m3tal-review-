@@ -582,4 +582,17 @@ func TestNewRulesDetections(t *testing.T) {
 			t.Errorf("expected goroutine-leak-candidate to ignore goroutine with context Done")
 		}
 	})
+
+	t.Run("js-common-mistakes-async", func(t *testing.T) {
+		r := rulesByName(t, "js-common-mistakes")[0]
+		forEachCode := "items.forEach(async (item) => {\n  await process(item);\n});\n"
+		if !hasFinding(r.Check(extraDiff("service.ts", forEachCode)), "js-common-mistakes") {
+			t.Errorf("expected js-common-mistakes to flag forEach(async ...)")
+		}
+
+		useEffectCode := "useEffect(async () => {\n  const data = await fetchData();\n  setData(data);\n}, []);\n"
+		if !hasFinding(r.Check(extraDiff("component.tsx", useEffectCode)), "js-common-mistakes") {
+			t.Errorf("expected js-common-mistakes to flag useEffect(async ...)")
+		}
+	})
 }

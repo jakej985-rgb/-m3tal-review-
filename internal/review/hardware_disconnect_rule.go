@@ -21,8 +21,8 @@ func (HardwareDisconnectRule) Name() string { return "hardware-disconnect-safe-s
 var (
 	hardwareDriverFileRe = regexp.MustCompile(`(?i)(?:bridge|serial|hardware|driver|peripheral|transport).*\.(?:dart|ts|js|go|py|kt|java|cpp)$`)
 
-	// disconnectMethodRe matches disconnect/close method declarations
-	disconnectMethodRe = regexp.MustCompile(`(?i)(?:Future<\w+>\s+|async\s+)?(?:disconnect|closeConnection|closePort|terminateLink)\s*\([^)]*\)\s*(?:async\s*)?\{`)
+	// disconnectMethodRe matches disconnect method declarations
+	disconnectMethodRe = regexp.MustCompile(`(?i)(?:Future<\w+>\s+|async\s+)?\b(?:disconnect|disconnectDevice|disconnectHardware)\s*\([^)]*\)\s*(?:async\s*)?\{`)
 
 	// portCloseCallRe matches closing the connection handle
 	portCloseCallRe = regexp.MustCompile(`(?i)(?:_closeConnection|_closePort|connection\.close|port\.close|_transport\.close|_transport\.disconnect)\s*\(`)

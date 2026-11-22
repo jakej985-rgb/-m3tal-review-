@@ -284,6 +284,7 @@ var (
 	cConstructsPattern = regexp.MustCompile(`\b(?:typedef\s+struct|extern\s+(?:int|char|void|unsigned|const)|\bstdio\.h\b|\bstdlib\.h\b)\b`)
 	goPackagePattern   = regexp.MustCompile(`(?m)^\s*package\s+[a-zA-Z_]\w*`)
 	pyConstructPattern = regexp.MustCompile(`(?m)^\s*(?:def\s+\w+\s*\(|class\s+\w+|import\s+\w+|from\s+\w+\s+import)`)
+	shellShebangPattern = regexp.MustCompile(`\b(?:bash|sh|zsh|dash|ash|ksh)\b`)
 )
 
 func isLikelyCppContent(content []byte) bool {
@@ -300,6 +301,13 @@ func isLikelyCContent(content []byte) bool {
 	return cConstructsPattern.Match(content)
 }
 
+func isShellShebang(firstLine string) bool {
+	if strings.Contains(firstLine, "fish") || strings.Contains(firstLine, "tcsh") || strings.Contains(firstLine, "csh") || strings.Contains(firstLine, "wish") {
+		return false
+	}
+	return shellShebangPattern.MatchString(firstLine)
+}
+
 func detectShebang(content []byte) (DetectionResult, bool) {
 	firstLineEnd := bytes.IndexByte(content, '\n')
 	if firstLineEnd == -1 {
@@ -310,7 +318,7 @@ func detectShebang(content []byte) (DetectionResult, bool) {
 	switch {
 	case strings.Contains(firstLine, "python"):
 		return DetectionResult{Language: LanguagePython, Confidence: ConfidenceHigh, Reason: "shebang: python"}, true
-	case strings.Contains(firstLine, "bash") || strings.Contains(firstLine, "sh") || strings.Contains(firstLine, "zsh"):
+	case isShellShebang(firstLine):
 		return DetectionResult{Language: LanguageShell, Confidence: ConfidenceHigh, Reason: "shebang: shell"}, true
 	case strings.Contains(firstLine, "node"):
 		return DetectionResult{Language: LanguageJavaScript, Confidence: ConfidenceHigh, Reason: "shebang: node"}, true

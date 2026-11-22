@@ -43,11 +43,12 @@ var riskyShellPatterns = []struct {
 		message:  "Shell command executed through a command-string flag; review for untrusted input",
 	},
 	{language: language.LanguagePython, pattern: regexp.MustCompile(`(?s)\bsubprocess\.(?:run|Popen|call|check_call|check_output)\s*\((?:[^()]|\([^()]*\))*?\bshell\s*=\s*True\b`), message: "Shell command execution enabled; review for untrusted input"},
-	{language: language.LanguagePython, pattern: regexp.MustCompile(`\bos\.system\s*\(`), message: "Shell command execution enabled; review for untrusted input"},
+	{language: language.LanguagePython, pattern: regexp.MustCompile(`\bsubprocess\.(?:getoutput|getstatusoutput)\s*\(`), message: "Shell command execution enabled; review for untrusted input"},
+	{language: language.LanguagePython, pattern: regexp.MustCompile(`\bos\.(?:system|popen)\s*\(`), message: "Shell command execution enabled; review for untrusted input"},
 	{language: language.LanguageJavaScript, pattern: regexp.MustCompile(`\bchild_process\.(?:exec|execSync)\s*\(`), message: "Shell command execution enabled; review for untrusted input"},
 	{language: language.LanguageC, pattern: regexp.MustCompile(`\b(?:system|popen)\s*\(`), message: "Shell command execution enabled; review for untrusted input"},
 	{language: language.LanguageCpp, pattern: regexp.MustCompile(`\b(?:system|popen)\s*\(`), message: "Shell command execution enabled; review for untrusted input"},
-	{language: language.LanguagePHP, pattern: regexp.MustCompile(`\b(?:shell_exec|exec|system|passthru|popen)\s*\(`), message: "Shell command execution enabled; review for untrusted input"},
+	{language: language.LanguagePHP, pattern: regexp.MustCompile(`\b(?:shell_exec|exec|system|passthru|popen|proc_open)\s*\(`), message: "Shell command execution enabled; review for untrusted input"},
 }
 
 func (r ShellRule) Check(diff string) []Finding {

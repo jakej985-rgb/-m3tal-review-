@@ -219,3 +219,111 @@ func (r RustFFIPanicRule) checkFFIBlock(block diffSourceBlock, seen map[string]b
 
 	return findings
 }
+
+// RustAsyncLockRule detects synchronous locks (std::sync::Mutex or parking_lot::Mutex)
+// acquired inside async functions or blocks that cross .await points, which starves
+// async runtime worker threads and can cause deadlocks.
+type RustAsyncLockRule struct {
+	RepositoryRoot string
+	WorkingTree    bool
+}
+
+func (RustAsyncLockRule) Name() string {
+	return "rust-async-lock-hazard"
+}
+
+func (r RustAsyncLockRule) Check(diff string) []Finding {
+	return r.CheckContext(context.Background(), diff)
+}
+
+var (
+	asyncFnRe = regexp.MustCompile(`\basync\s+(?:unsafe\s+)?fn\s+([a-zA-Z0-9_]+)`)
+	syncLockAcquireRe = regexp.MustCompile(`\b(?:std::sync::Mutex|parking_lot::Mutex|[a-zA-Z0-9_]+)\.lock\s*\(\s*\)`)
+	awaitCallRe = regexp.MustCompile(`\b[a-zA-Z0-9_().]+?\.await\b`)
+)
+
+func (r RustAsyncLockRule) CheckContext(ctx context.Context, diff string) []Finding {
+	var findings []Finding
+	seen := make(map[string]bool)
+
+	for _, fileDiff := range ParseDiff(diff) {
+		if err := ctx.Err(); err != nil {
+			return findings
+		}
+
+		filePath := fileDiff.Path
+		if !strings.HasSuffix(filePath, ".rs") || isTestFile(filePath) {
+			continue
+		}
+
+		blocks := fileDiffSourceBlocks(fileDiff)
+		for _, block := range blocks {
+			findings = append(findings, r.checkAsyncLockBlock(block, seen)...)
+		}
+	}
+
+	return findings
+}
+
+func (r RustAsyncLockRule) checkAsyncLockBlock(block diffSourceBlock, seen map[string]bool) []Finding {
+	var findings []Finding
+	lines := strings.Split(block.text, "\n")
+
+	for i, line := range lines {
+		m := asyncFnRe.FindStringSubmatch(line)
+		if len(m) < 2 {
+			continue
+		}
+
+		findingLine := block.firstLine + i
+		fnChunk := strings.Join(lines[i:], "\n")
+		braceIdx := strings.Index(fnChunk, "{")
+		idxClose := findMatchingBrace(fnChunk, braceIdx)
+
+		var fnBody string
+		} else {
+			end := i + 40
+			if end > len(lines) {
+				end = len(lines)
+			}
+			fnBody = strings.Join(lines[i:end], "\n")
+		}
+
+		hasSyncLock := false
+		for _, bodyLine := range strings.Split(fnBody, "\n") {
+			if strings.Contains(bodyLine, "tokio::sync::Mutex") || strings.Contains(bodyLine, "async_std") {
+				continue
+			}
+			if strings.Contains(bodyLine, ".lock().await") {
+				continue
+			}
+			if syncLockAcquireRe.MatchString(bodyLine) || strings.Contains(bodyLine, "std::sync::Mutex") || strings.Contains(bodyLine, "parking_lot::Mutex") {
+				hasSyncLock = true
+				break
+			}
+		}
+
+		// Check if function contains both a synchronous lock acquisition and .await
+		if hasSyncLock && awaitCallRe.MatchString(fnBody) {
+			key := fmt.Sprintf("%s:%d:rust-async-lock-hazard", block.file, findingLine)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+
+			findings = append(findings, Finding{
+				File:        block.file,
+				Line:        findingLine,
+				Rule:        "rust-async-lock-hazard",
+				Severity:    "high",
+				Category:    "concurrency",
+				Confidence:  "high",
+				Message:     fmt.Sprintf("Synchronous lock held across .await hazard: async fn %q acquires a synchronous mutex and performs .await, risking executor thread starvation and deadlock.", m[1]),
+				Remediation: "Use tokio::sync::Mutex (or async_std::sync::Mutex) instead of std::sync::Mutex / parking_lot, or drop the lock guard before awaiting.",
+			})
+		}
+	}
+
+	return findings
+}
+

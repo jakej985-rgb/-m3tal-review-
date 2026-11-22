@@ -153,6 +153,7 @@ func TestLanguageDetectionShebang(t *testing.T) {
 		{"scripts/tool", "#!/usr/bin/env python3\nimport sys", LanguagePython, ConfidenceHigh},
 		{"build/server", "#!/usr/bin/env node\nconsole.log(1)", LanguageJavaScript, ConfidenceHigh},
 		{"cron/job", "#!/usr/bin/php\n<?php phpinfo();", LanguagePHP, ConfidenceHigh},
+		{"scripts/interactive", "#!/usr/bin/env fish\necho fishy", LanguageUnknown, ConfidenceLow},
 	}
 
 	for _, c := range cases {
