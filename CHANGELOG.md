@@ -17,7 +17,14 @@
 - **Cross-File Polyglot Taint Tracing for Python & TypeScript**:
   - Interprocedural taint propagation tracking untrusted inputs across functions and files in FastAPI/Flask (`request.args`, `request.form`) and Express/Next.js (`req.query`, `req.body`, `request.json()`).
   - Flags SQL injection sinks (`cursor.execute`, `db.query`, `prisma.$queryRaw`) and shell execution sinks (`os.system`, `subprocess.run`, `child_process.exec`).
-- `auditCacheSchema` bumped to 22.
+- **AI Agent Specification & Governance Engine** (`agent-spec-contract`):
+  - Detects contract contradictions between agent instructions (`.agents/agents/*/agent.md`) and repository governance (`AGENTS.md`), including:
+    - Optional delegation clauses bypassing mandatory domain specialist reviews.
+    - Scope collisions between unconditioned full repository audit mandates and narrowest mode rules.
+    - Direct/standalone invocation definitions for subagents configured with `mainAgent: false`.
+  - Deterministic automated repair (`AgentSpecFixer` / `agent-spec-fixer`) replacing non-compliant optional delegation with compliant specialist delegation contracts.
+  - Generates inline GitHub PR suggestions for one-click commit adoption during code reviews.
+- `auditCacheSchema` bumped to 23.
 
 ## [1.1.0] - 2026-11-20
 

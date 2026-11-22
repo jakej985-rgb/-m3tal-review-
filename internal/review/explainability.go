@@ -53,6 +53,7 @@ var ruleRationales = map[string]string{
 	"resource-leak-disposable": "StatefulWidget controller, timer, or subscription allocated but not released in dispose().",
 	"unmounted-async-gap": "setState() or BuildContext called across an async gap without a mounted check, risking unmounted lifecycle exceptions.",
 	"hot-path-allocation": "Expensive object allocations or algorithmic sorting performed inside hot UI render paths, causing frame jank and GC pressure.",
+	"agent-spec-contract": "Agent specification contradicts repository governance, bypasses required domain specialists, or has conflicting scope directives.",
 }
 
 // RedactExcerpt removes sensitive credential patterns and bounds excerpt size

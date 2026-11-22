@@ -96,7 +96,7 @@ func categoryForRule(rule string) string {
 		return "security"
 	case "review-risk":
 		return "risk"
-	case "review-policy":
+	case "review-policy", "agent-spec-contract":
 		return "drift"
 	case "code-slop-analysis-error", "repository-lint", "review-policy-config-error":
 		return "confidence"

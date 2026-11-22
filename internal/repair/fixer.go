@@ -31,6 +31,7 @@ func AllowlistedFixers() []Fixer {
 		StaleStateFixer{},
 		ResourceLeakFixer{},
 		TouchTargetFixer{},
+		AgentSpecFixer{},
 	}
 }
 

@@ -850,6 +850,7 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.ResourceLeakRule{RepositoryRoot: repositoryRoot},
 		review.AsyncGapRule{RepositoryRoot: repositoryRoot},
 		review.HotPathRule{RepositoryRoot: repositoryRoot},
+		review.AgentSpecRule{RepositoryRoot: repositoryRoot},
 	}
 	return append(rules, review.ExtraRules(repositoryRoot)...)
 }
