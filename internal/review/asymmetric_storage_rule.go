@@ -47,18 +47,25 @@ func (r AsymmetricStorageRule) CheckContext(ctx context.Context, diff string) []
 			continue
 		}
 
+		scanText := block.text
+		startLine := block.firstLine
+		if fullData, err := readRuleSource(r.repositoryRoot, block.file, r.workingTree); err == nil && len(fullData) > 0 {
+			scanText = string(fullData)
+			startLine = 1
+		}
+
 		// Does this file/block contain references to both prefs and storage?
-		hasPrefs := prefsFieldRe.MatchString(block.text)
-		hasStorage := storageFieldRe.MatchString(block.text)
-		hasDualCheck := dualCheckRe.MatchString(block.text)
+		hasPrefs := prefsFieldRe.MatchString(scanText)
+		hasStorage := storageFieldRe.MatchString(scanText)
+		hasDualCheck := dualCheckRe.MatchString(scanText)
 
 		if !hasPrefs || !hasStorage || !hasDualCheck {
 			continue
 		}
 
-		lines := strings.Split(block.text, "\n")
+		lines := strings.Split(scanText, "\n")
 		for i, line := range lines {
-			lineNum := block.firstLine + i
+			lineNum := startLine + i
 			// Check if this line guards on prefs only
 			if singlePrefsCheckRe.MatchString(line) {
 				// Verify if the next ~10 lines have an else if for storage

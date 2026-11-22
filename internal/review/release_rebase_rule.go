@@ -37,12 +37,16 @@ func (r ReleaseRebaseRule) CheckContext(ctx context.Context, diff string) []Find
 			continue
 		}
 
-		lines := strings.Split(block.text, "\n")
+		scanText := block.text
+		startLine := block.firstLine
+		if fullData, err := readRuleSource(r.repositoryRoot, block.file, r.workingTree); err == nil && len(fullData) > 0 {
+			scanText = string(fullData)
+			startLine = 1
+		}
+
+		lines := strings.Split(scanText, "\n")
 		for i, line := range lines {
-			lineNum := block.firstLine + i
-			if !block.addedLines[lineNum] {
-				continue
-			}
+			lineNum := startLine + i
 
 			if gitRebaseCmdRe.MatchString(line) {
 				key := block.file + ":" + strconv.Itoa(lineNum)

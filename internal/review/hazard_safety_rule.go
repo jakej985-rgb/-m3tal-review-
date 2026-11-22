@@ -43,14 +43,21 @@ func (r HazardSafetyRule) CheckContext(ctx context.Context, diff string) []Findi
 			continue
 		}
 
+		scanText := block.text
+		startLine := block.firstLine
+		if fullData, err := readRuleSource(r.repositoryRoot, block.file, r.workingTree); err == nil && len(fullData) > 0 {
+			scanText = string(fullData)
+			startLine = 1
+		}
+
 		// Only check files with severe physical hazard keywords.
-		if !severeHazardTerms.MatchString(block.text) {
+		if !severeHazardTerms.MatchString(scanText) {
 			continue
 		}
 
-		lines := strings.Split(block.text, "\n")
+		lines := strings.Split(scanText, "\n")
 		for i, line := range lines {
-			lineNum := block.firstLine + i
+			lineNum := startLine + i
 
 			// Check for misclassified level or false requiresParentUnlock
 			if misclassifiedLevelRe.MatchString(line) {

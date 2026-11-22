@@ -39,19 +39,23 @@ func (r SLSAProvenanceRule) CheckContext(ctx context.Context, diff string) []Fin
 			continue
 		}
 
-		if !slsaPredicateRe.MatchString(block.text) {
+		scanText := block.text
+		startLine := block.firstLine
+		if fullData, err := readRuleSource(r.repositoryRoot, block.file, r.workingTree); err == nil && len(fullData) > 0 {
+			scanText = string(fullData)
+			startLine = 1
+		}
+
+		if !slsaPredicateRe.MatchString(scanText) {
 			continue
 		}
 
 		// If the file creates an in-toto statement with builder at the top level
 		// without a predicate wrapper:
-		if topLevelBuilder.MatchString(block.text) && !predicateKeyRe.MatchString(block.text) {
-			lines := strings.Split(block.text, "\n")
+		if topLevelBuilder.MatchString(scanText) && !predicateKeyRe.MatchString(scanText) {
+			lines := strings.Split(scanText, "\n")
 			for i, line := range lines {
-				lineNum := block.firstLine + i
-				if !block.addedLines[lineNum] {
-					continue
-				}
+				lineNum := startLine + i
 
 				if slsaPredicateRe.MatchString(line) || topLevelBuilder.MatchString(line) {
 					key := block.file + ":" + strconv.Itoa(lineNum)
