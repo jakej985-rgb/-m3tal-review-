@@ -61,6 +61,11 @@ func (r SimulationPermissionsRule) CheckContext(ctx context.Context, diff string
 				continue
 			}
 
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
+				continue
+			}
+
 			if hostPermissionRe.MatchString(line) {
 				key := block.file + ":" + strconv.Itoa(lineNum)
 				if !seen[key] {
