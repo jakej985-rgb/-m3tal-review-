@@ -91,11 +91,21 @@ func isUIFile(path string) bool {
 
 func isTestFile(path string) bool {
 	lower := strings.ToLower(path)
-	return strings.HasSuffix(lower, "_test.dart") ||
+	return strings.HasSuffix(lower, "_test.go") ||
+		strings.HasSuffix(lower, "_test.dart") ||
+		strings.HasSuffix(lower, "_test.rs") ||
+		strings.HasSuffix(lower, "_test.py") ||
+		strings.HasSuffix(lower, "test.js") ||
+		strings.HasSuffix(lower, "test.ts") ||
 		strings.HasSuffix(lower, ".test.tsx") ||
 		strings.HasSuffix(lower, ".spec.tsx") ||
 		strings.HasSuffix(lower, ".test.jsx") ||
 		strings.HasSuffix(lower, ".spec.jsx") ||
+		strings.HasSuffix(lower, "_test.cpp") ||
+		strings.HasSuffix(lower, "_test.cc") ||
+		strings.HasSuffix(lower, "_test.c") ||
+		strings.HasSuffix(lower, "test.java") ||
+		strings.HasSuffix(lower, "test.kt") ||
 		strings.Contains(lower, "/test/") ||
 		strings.Contains(lower, "/tests/")
 }

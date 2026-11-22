@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
@@ -261,5 +262,12 @@ func StartDashboardServer(repoRoot string, port int) error {
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	fmt.Printf("M3TAL Review Dashboard listening on http://%s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	return srv.ListenAndServe()
 }
