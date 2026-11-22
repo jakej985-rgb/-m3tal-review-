@@ -851,6 +851,9 @@ func defaultRules(repositoryRoot string) []review.Rule {
 		review.AsyncGapRule{RepositoryRoot: repositoryRoot},
 		review.HotPathRule{RepositoryRoot: repositoryRoot},
 		review.AgentSpecRule{RepositoryRoot: repositoryRoot},
+		review.FlutterSemanticsRule{RepositoryRoot: repositoryRoot},
+		review.ScrollFocusRule{RepositoryRoot: repositoryRoot},
+		review.A11yTestGapRule{RepositoryRoot: repositoryRoot},
 	}
 	return append(rules, review.ExtraRules(repositoryRoot)...)
 }

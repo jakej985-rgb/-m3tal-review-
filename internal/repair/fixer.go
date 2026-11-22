@@ -32,6 +32,7 @@ func AllowlistedFixers() []Fixer {
 		ResourceLeakFixer{},
 		TouchTargetFixer{},
 		AgentSpecFixer{},
+		SemanticsActionFixer{},
 	}
 }
 

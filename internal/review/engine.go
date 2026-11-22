@@ -100,7 +100,7 @@ func categoryForRule(rule string) string {
 		return "drift"
 	case "code-slop-analysis-error", "repository-lint", "review-policy-config-error":
 		return "confidence"
-	case "touch-target-size", "test-viewport-chrome-contract", "design-system-spec", "stale-state-invalidation", "resource-leak-disposable", "unmounted-async-gap", "hot-path-allocation":
+	case "touch-target-size", "test-viewport-chrome-contract", "design-system-spec", "stale-state-invalidation", "resource-leak-disposable", "unmounted-async-gap", "hot-path-allocation", "flutter-semantics-action", "flutter-scroll-focus-visibility", "test-a11y-action-gap":
 		return "quality"
 	default:
 		return "review"

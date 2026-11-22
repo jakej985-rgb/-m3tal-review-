@@ -23,8 +23,12 @@
     - Scope collisions between unconditioned full repository audit mandates and narrowest mode rules.
     - Direct/standalone invocation definitions for subagents configured with `mainAgent: false`.
   - Deterministic automated repair (`AgentSpecFixer` / `agent-spec-fixer`) replacing non-compliant optional delegation with compliant specialist delegation contracts.
-  - Generates inline GitHub PR suggestions for one-click commit adoption during code reviews.
-- `auditCacheSchema` bumped to 23.
+- **Accessibility & Focus Governance Engines** (`flutter-semantics-action`, `flutter-scroll-focus-visibility`, `test-a11y-action-gap`):
+  - `FlutterSemanticsRule` (`flutter-semantics-action`): flags `Semantics` buttons that exclude descendant semantics without an explicit `onTap` activation action, preventing inoperable buttons for screen reader users.
+  - `SemanticsActionFixer` (`semantics-action-fixer`): automatically extracts child gesture tap handlers and injects `onTap: <callback>` and `excludeSemantics: true` into the outer `Semantics` widget, generating inline GitHub PR suggestions.
+  - `ScrollFocusRule` (`flutter-scroll-focus-visibility`): flags `onFocusChange` in scrollable containers that update focus state without calling `Scrollable.ensureVisible`, preventing clipped rows with invisible focus outlines during keyboard Tab navigation.
+  - `A11yTestGapRule` (`test-a11y-action-gap`): detects shallow widget test assertions (e.g., `find.byType(Tooltip)`) that count widgets without exercising semantics actions (`tester.getSemantics`, `SemanticsAction.tap`) or hover display.
+- `auditCacheSchema` bumped to 24.
 
 ## [1.1.0] - 2026-11-20
 

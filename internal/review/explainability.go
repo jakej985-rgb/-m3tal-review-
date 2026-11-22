@@ -54,6 +54,9 @@ var ruleRationales = map[string]string{
 	"unmounted-async-gap": "setState() or BuildContext called across an async gap without a mounted check, risking unmounted lifecycle exceptions.",
 	"hot-path-allocation": "Expensive object allocations or algorithmic sorting performed inside hot UI render paths, causing frame jank and GC pressure.",
 	"agent-spec-contract": "Agent specification contradicts repository governance, bypasses required domain specialists, or has conflicting scope directives.",
+	"flutter-semantics-action": "Interactive Semantics button excludes descendant semantics without providing an explicit onTap action, rendering it inoperable for screen readers.",
+	"flutter-scroll-focus-visibility": "Interactive focusable widget inside a scrollable container handles focus without ensuring visibility via Scrollable.ensureVisible, hiding focus rings during keyboard traversal.",
+	"test-a11y-action-gap": "Widget test asserts accessibility elements via shallow type queries without verifying semantic node attributes or exercising accessibility actions.",
 }
 
 // RedactExcerpt removes sensitive credential patterns and bounds excerpt size
