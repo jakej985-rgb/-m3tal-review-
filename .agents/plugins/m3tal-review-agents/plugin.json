@@ -1,0 +1,17 @@
+{
+  "name": "m3tal-review-agents",
+  "displayName": "m3tal-review Targeted Agent Team",
+  "version": "1.0.0",
+  "description": "Specialized agent and sub-agent team for m3tal-review: LangMaster, language specialists, GitHub PR reviewer, security auditor, and repair agent.",
+  "author": {
+    "name": "m3tal"
+  },
+  "keywords": [
+    "m3tal-review",
+    "langmaster",
+    "code-review",
+    "github",
+    "subagents",
+    "polyglot"
+  ]
+}

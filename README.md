@@ -15,6 +15,7 @@ and a constrained, isolated repair workflow with durable audit logging.
 - [`docs/RELEASE.md`](docs/RELEASE.md) — versioning, CI gates, and release tagging.
 - [`docs/threat-model.md`](docs/threat-model.md) — security guarantees and non-goals.
 - [`docs/fp-tuning.md`](docs/fp-tuning.md) — false-positive tuning and policy configuration.
+- [`docs/AGENTS.md`](docs/AGENTS.md) — targeted agent and sub-agent team architecture and delegation guide.
 
 ## Dual-Tier Architecture
 
@@ -98,6 +99,13 @@ m3tal-review list-rules                      # List all registered detector rule
 m3tal-review explain <rule>                  # Explain a rule with examples and remediation
 m3tal-review install-hook [--force]          # Install pre-commit hook
 m3tal-review completions bash|zsh|fish       # Generate shell completions
+
+# Pure-Code AI-Like Review System (Devin / CodeRabbit Style)
+m3tal-review pr-review                       # Generate Devin-style PR walkthrough & suggestions
+m3tal-review pr-review --interactive         # Triage and apply inline suggestions directly
+m3tal-review pr-review --base origin/main    # Review PR diff relative to base branch
+m3tal-review pr-review --post-gh             # Submit review & inline comments to GitHub PR
+m3tal-review install-github-workflow         # Install turnkey GitHub Actions PR review workflow
 
 # Opt-in Go semantic analysis
 m3tal-review review --semantic

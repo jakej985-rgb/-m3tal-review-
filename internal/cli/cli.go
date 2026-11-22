@@ -194,6 +194,12 @@ func executeWithArgs(command string, commandArgs []string) error {
 		force := len(commandArgs) > 0 && commandArgs[0] == "--force"
 		return installHook(force)
 
+	case "install-github-workflow", "install-workflow":
+		return runInstallWorkflow(commandArgs)
+
+	case "pr-review":
+		return runPRReview(commandArgs)
+
 	case "check-deps":
 		return commandCheckDeps(commandArgs)
 
@@ -269,6 +275,11 @@ func executeWithArgs(command string, commandArgs []string) error {
 		return nil
 
 	case "review":
+		for _, arg := range commandArgs {
+			if arg == "--pr-mode" {
+				return runPRReview(commandArgs)
+			}
+		}
 		options, err := parseReviewOptions(commandArgs)
 		if err != nil {
 			return err
@@ -1552,7 +1563,17 @@ func printHelp() {
 	fmt.Println("    --with-tools        Run installed gitleaks, gosec, and osv-scanner binaries")
 	fmt.Println("    --check-run        Post a GitHub Check Run with annotations")
 	fmt.Println("    --pr-comment       Comment findings on the current PR via gh")
+	fmt.Println("    --pr-mode          Delegate to Devin/CodeRabbit-style pure-code PR reviewer")
 	fmt.Println("    --jobs N           Cap rules analysed at once (default: all CPU cores; 0 = auto)")
+	fmt.Println("  pr-review           Devin/CodeRabbit-style pure-code AI-like PR reviewer")
+	fmt.Println("    --base <ref>       Diff base ref (default: origin/main, HEAD~1)")
+	fmt.Println("    --interactive, -i  Interactively review and apply suggested fixes")
+	fmt.Println("    --post-gh          Submit PR review and inline comments to GitHub")
+	fmt.Println("    --pr <number>      Target GitHub pull request number")
+	fmt.Println("    --repo <owner/repo> Target GitHub repository")
+	fmt.Println("    --comment-only     Post review comments without blocking quality gate")
+	fmt.Println("    --output <file>    Save generated review markdown to file")
+	fmt.Println("  install-github-workflow [--force] Install GitHub Actions PR review workflow")
 	fmt.Println("  check-deps [path]   Analyze Go module hygiene and license policy")
 	fmt.Println("    --format text|json|jsonl")
 	fmt.Println("    --strict          Fail on any hygiene or license finding")

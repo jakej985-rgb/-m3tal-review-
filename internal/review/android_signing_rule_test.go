@@ -58,16 +58,37 @@ func TestAndroidSigningRule(t *testing.T) {
 		}
 	})
 
-	t.Run("passes clean release signing configuration", func(t *testing.T) {
+	t.Run("flags release signing lacking execution-time packaging validation", func(t *testing.T) {
 		diff := `diff --git a/android/app/build.gradle.kts b/android/app/build.gradle.kts
 --- a/android/app/build.gradle.kts
 +++ b/android/app/build.gradle.kts
 @@ -58,6 +58,4 @@ android {
      buildTypes {
          release {
++            signingConfig = signingConfigs.getByName("release")
+         }
+     }
+ }
+`
+		findings := rule.Check(diff)
+		if len(findings) != 1 {
+			t.Fatalf("expected 1 finding for missing execution-time validation, got %d: %+v", len(findings), findings)
+		}
+	})
+
+	t.Run("passes clean release signing with bundle packaging validation", func(t *testing.T) {
+		diff := `diff --git a/android/app/build.gradle.kts b/android/app/build.gradle.kts
+--- a/android/app/build.gradle.kts
++++ b/android/app/build.gradle.kts
+@@ -58,6 +58,10 @@ android {
+     buildTypes {
+         release {
              signingConfig = signingConfigs.getByName("release")
          }
      }
++    tasks.named("validateSigningRelease") {
++        dependsOn("bundleRelease")
++    }
  }
 `
 		findings := rule.Check(diff)

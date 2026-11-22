@@ -26,6 +26,9 @@ var (
 
 	// releaseDebugFallbackRe detects assigning debug signingConfig in a release block or fallback.
 	releaseDebugFallbackRe = regexp.MustCompile(`signingConfigs\.(?:getByName\("debug"\)|debug\b)|signingConfig\s*=\s*(?:signingConfigs\.)?debug\b`)
+
+	// bundleOrPackageSigningCheckRe checks for release packaging tasks validation.
+	bundleOrPackageSigningCheckRe = regexp.MustCompile(`(?i)(?:bundleRelease|packageRelease|validateSigningRelease|allTasks\.any\s*\{[^}]*Release)`)
 )
 
 func (r AndroidSigningRule) Check(diff string) []Finding {
@@ -92,6 +95,25 @@ func (r AndroidSigningRule) CheckContext(ctx context.Context, diff string) []Fin
 						Message:     "Release buildType assigns or falls back to debug signingConfig",
 						Remediation: "Bind release signing directly to the release signingConfig; fail closed if release credentials are not configured.",
 					})
+				}
+			} else if inReleaseBlock && strings.Contains(line, "signingConfig") && !releaseDebugFallbackRe.MatchString(line) {
+				fullScanText := block.text
+				if fullData, err := readRuleSource(r.repositoryRoot, block.file, r.workingTree); err == nil && len(fullData) > 0 {
+					fullScanText = string(fullData)
+				}
+				if !bundleOrPackageSigningCheckRe.MatchString(fullScanText) {
+					key := block.file + ":" + strconv.Itoa(lineNum)
+					if !seen[key] {
+						seen[key] = true
+						findings = append(findings, Finding{
+							Rule:        "android-signing-bypass",
+							Severity:    "high",
+							File:        block.file,
+							Line:        lineNum,
+							Message:     "Release signing lacks execution-time validation on release packaging tasks (bundleRelease/packageRelease); missing keystores allow unsigned release bundles to build",
+							Remediation: "Add execution-time signing validation requiring the release keystore as a dependency of bundleRelease and packageRelease tasks.",
+						})
+					}
 				}
 			}
 		}

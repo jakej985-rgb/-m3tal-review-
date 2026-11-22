@@ -1,0 +1,54 @@
+name: m3tal-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    name: Pure-Code AI-Like Review
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@m3tal-review'))
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Install m3tal-review
+        run: |
+          go build -o /usr/local/bin/m3tal-review ./cmd/m3tal-review
+
+      - name: Run Review or Bot Command
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            m3tal-review pr-review \
+              --pr="${{ github.event.issue.number }}" \
+              --handle-comment="${{ github.event.comment.body }}" \
+              --post-gh
+          else
+            m3tal-review pr-review \
+              --base="origin/${{ github.base_ref }}" \
+              --pr="${{ github.event.pull_request.number }}" \
+              --post-gh
+          fi

@@ -672,6 +672,9 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&GhCliAssetRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&AsymmetricStorageRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&HazardSafetyRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&BackupRecoveryRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&ScopedTestDiscoveryRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&SimulationPermissionsRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 	}
 }
 
