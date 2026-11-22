@@ -109,3 +109,41 @@ new file mode 100644
 		t.Errorf("expected cancel in remediation, got %s", f.Remediation)
 	}
 }
+
+func TestResourceLeakRule_LargeDisposeAndStreamController(t *testing.T) {
+	// A dispose body > 400 characters containing multiple cleanups including StreamController.close()
+	diff := `diff --git a/lib/presentation/complex_screen.dart b/lib/presentation/complex_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/complex_screen.dart
+@@ -0,0 +1,30 @@
++class _ComplexScreenState extends State<ComplexScreen> {
++  final StreamController<String> _streamController = StreamController<String>();
++  final ScrollController _scrollController = ScrollController();
++
++  @override
++  void dispose() {
++    // Verbose comments and multiple lines that push past the legacy 400-char truncation boundary
++    // Line 1: ensuring logging is closed
++    // Line 2: ensuring animations are disposed
++    // Line 3: ensuring child subscriptions are cleaned up properly
++    // Line 4: extra padding comments to test large method bodies
++    // Line 5: extra padding comments to test large method bodies
++    // Line 6: extra padding comments to test large method bodies
++    // Line 7: extra padding comments to test large method bodies
++    // Line 8: extra padding comments to test large method bodies
++    _scrollController.dispose();
++    _streamController.close();
++    super.dispose();
++  }
++
++  @override
++  Widget build(BuildContext context) => Container();
++}
+`
+	rule := ResourceLeakRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for cleanly disposed StreamController in large dispose, got %d: %+v", len(findings), findings)
+	}
+}

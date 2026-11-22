@@ -484,6 +484,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "rust-unsafe", severity: "medium",
 			remediation: "Review unsafe blocks carefully; prefer safe abstractions.",
+			suppress:    regexp.MustCompile(`(?i)//[/!*]?\s*SAFETY\s*:`),
 			patterns: []langPattern{
 				{language.LanguageRust, regexp.MustCompile(`\bunsafe\s*\{`), "unsafe block usage"},
 			}},
@@ -675,6 +676,12 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&BackupRecoveryRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&ScopedTestDiscoveryRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&SimulationPermissionsRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&HardwareDisconnectRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&OptimisticActuationRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&RouteGuardSchemaRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&AmbiguousHardwareMatcherRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&MockTelemetryBleedRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&TransportHandleChurnRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 	}
 }
 

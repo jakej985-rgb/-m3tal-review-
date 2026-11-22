@@ -113,8 +113,12 @@ func sourceCodeMask(file, source string) []bool {
 			}
 		}
 		if hashComments && c == '#' {
-			lineComment = true
-			continue
+			if php && i+1 < len(source) && source[i+1] == '[' {
+				// PHP 8 attribute: do not treat as comment
+			} else {
+				lineComment = true
+				continue
+			}
 		}
 		if c == '"' || c == '`' || (c == '\'' && apostropheString(ext)) {
 			quote = c
@@ -137,6 +141,7 @@ func offsetInComment(file, source string, offset int) bool {
 		offset = len(source)
 	}
 	ext := strings.ToLower(path.Ext(file))
+	php := extIs(ext, ".php", ".phtml")
 	hashComments := extIs(ext, ".py", ".php", ".phtml", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env",
 		".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf", ".hcl", ".graphql", ".gql", ".fish")
 	var quote byte
@@ -186,9 +191,13 @@ func offsetInComment(file, source string, offset int) bool {
 				continue
 			}
 		}
-		if hashComments && c == '#' || extIs(ext, ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env") && c == ';' {
-			lineComment = true
-			continue
+		if (hashComments && c == '#') || (extIs(ext, ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env") && c == ';') {
+			if php && c == '#' && i+1 < offset && source[i+1] == '[' {
+				// PHP 8 attribute: do not treat as comment
+			} else {
+				lineComment = true
+				continue
+			}
 		}
 		if c == '"' || c == '`' || (c == '\'' && apostropheString(ext)) {
 			quote = c

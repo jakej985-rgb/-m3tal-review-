@@ -115,3 +115,48 @@ func TestGeneratePRReview_CommentOnly(t *testing.T) {
 		t.Errorf("expected VerdictComment under CommentOnly mode, got %s", report.Verdict)
 	}
 }
+
+func TestGeneratePRReview_FindingOutsideDiffHunk(t *testing.T) {
+	diffText := `diff --git a/pkg/auth/token.go b/pkg/auth/token.go
+--- a/pkg/auth/token.go
++++ b/pkg/auth/token.go
+@@ -10,3 +10,3 @@ package auth
+ func InsecureHandler() {
++	println("ok")
+ }
+`
+	fileDiffs, err := ParseUnifiedDiff(diffText)
+	if err != nil {
+		t.Fatalf("parse diff: %v", err)
+	}
+
+	// Line 999 is outside the hunk [10..12]
+	findings := []review.Finding{
+		{
+			Rule:     "exposed-secret",
+			Severity: "critical",
+			File:     "pkg/auth/token.go",
+			Line:     999,
+			Message:  "Hardcoded token detected outside changed hunk",
+		},
+	}
+
+	report, err := GeneratePRReview(findings, fileDiffs, FormatOptions{})
+	if err != nil {
+		t.Fatalf("GeneratePRReview: %v", err)
+	}
+
+	// Should NOT generate inline comment since line 999 is outside diff (would 422 on GitHub API)
+	if len(report.InlineComments) != 0 {
+		t.Fatalf("expected 0 inline comments for line outside diff, got %d", len(report.InlineComments))
+	}
+
+	// Finding should be in summary markdown
+	if !strings.Contains(report.SummaryMarkdown, "exposed-secret") {
+		t.Errorf("expected summary markdown to contain non-diff finding")
+	}
+	if !strings.Contains(report.SummaryMarkdown, "Additional Findings & Non-Diff Issues") {
+		t.Errorf("expected summary markdown to contain 'Additional Findings & Non-Diff Issues'")
+	}
+}
+

@@ -84,3 +84,20 @@ func BenchmarkSourceBlocksUncached(b *testing.B) {
 		_ = sourceBlocksUncached(diff, "/tmp/nonexistent-root", false)
 	}
 }
+
+func TestPHP8AttributeNotMaskedAsComment(t *testing.T) {
+	src := "<?php\n#[Route('/api/test')]\n# this is a real comment\n$x = 1;\n"
+	mask := sourceCodeMask("controller.php", src)
+
+	// In #[Route...], 'R' (offset 8) should be code (mask == true)
+	rIndex := strings.Index(src, "Route")
+	if rIndex == -1 || !mask[rIndex] {
+		t.Errorf("expected PHP 8 attribute #[Route] not to be masked as comment, mask[%d]=%v", rIndex, mask[rIndex])
+	}
+
+	// In # this is a real comment, 'this' should be masked out (mask == false)
+	commentIndex := strings.Index(src, "this")
+	if commentIndex == -1 || mask[commentIndex] {
+		t.Errorf("expected '# this...' to be masked as a comment, mask[%d]=%v", commentIndex, mask[commentIndex])
+	}
+}

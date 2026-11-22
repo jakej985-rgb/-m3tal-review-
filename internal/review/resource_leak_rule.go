@@ -36,7 +36,7 @@ var (
 
 	// Disposable field declarations in Flutter/Dart
 	disposableFieldRe = regexp.MustCompile(
-		`\b(?:final\s+|late\s+final\s+|late\s+)?(TextEditingController|AnimationController|ScrollController|TabController|PageController|FocusNode|Timer|StreamSubscription[<>\w]*)\??\s+(_[a-zA-Z0-9_]+)\s*(?:=|;)`,
+		`\b(?:final\s+|late\s+final\s+|late\s+)?(TextEditingController|AnimationController|ScrollController|TabController|PageController|FocusNode|Timer|StreamSubscription[<>\w]*|StreamController[<>\w]*|ValueNotifier[<>\w]*|ChangeNotifier)\??\s+(_[a-zA-Z0-9_]+)\s*(?:=|;)`,
 	)
 
 	// dispose() method declaration
@@ -105,11 +105,38 @@ func (r ResourceLeakRule) checkBlock(block diffSourceBlock, fileText string, see
 	if dm := disposeMethodRe.FindStringIndex(scanText); len(dm) > 0 {
 		hasDispose = true
 		disposeStart := dm[0]
-		disposeEnd := disposeStart + 400
-		if disposeEnd > len(scanText) {
-			disposeEnd = len(scanText)
+		idxOpen := strings.Index(scanText[disposeStart:], "{")
+		if idxOpen != -1 {
+			openPos := disposeStart + idxOpen
+			depth := 0
+			closePos := -1
+			for pos := openPos; pos < len(scanText); pos++ {
+				if scanText[pos] == '{' {
+					depth++
+				} else if scanText[pos] == '}' {
+					depth--
+					if depth == 0 {
+						closePos = pos
+						break
+					}
+				}
+			}
+			if closePos != -1 {
+				disposeBody = scanText[disposeStart : closePos+1]
+			} else {
+				disposeEnd := disposeStart + 2000
+				if disposeEnd > len(scanText) {
+					disposeEnd = len(scanText)
+				}
+				disposeBody = scanText[disposeStart:disposeEnd]
+			}
+		} else {
+			disposeEnd := disposeStart + 2000
+			if disposeEnd > len(scanText) {
+				disposeEnd = len(scanText)
+			}
+			disposeBody = scanText[disposeStart:disposeEnd]
 		}
-		disposeBody = scanText[disposeStart:disposeEnd]
 	}
 
 	// 3. Scan block for newly added or declared disposable fields
@@ -128,7 +155,7 @@ func (r ResourceLeakRule) checkBlock(block diffSourceBlock, fileText string, see
 			cleanedUp := false
 			if hasDispose {
 				cleanupPattern := regexp.MustCompile(
-					fmt.Sprintf(`\b%s\??\.(?:dispose|cancel)\s*\(`, regexp.QuoteMeta(fieldName)),
+					fmt.Sprintf(`\b%s\??\.(?:dispose|cancel|close)\s*\(`, regexp.QuoteMeta(fieldName)),
 				)
 				if cleanupPattern.MatchString(disposeBody) {
 					cleanedUp = true

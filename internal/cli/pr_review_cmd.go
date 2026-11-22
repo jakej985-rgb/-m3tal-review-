@@ -116,15 +116,16 @@ func runPRReview(args []string) error {
 
 	ghClient := gh.NewClient("")
 
+	owner, repo := resolveRepoOwnerAndName(opts.Repo, repositoryRoot)
+	prNum := opts.PRNumber
+	if prNum <= 0 {
+		prNum = resolveCurrentPRNumber(ctx, ghClient, owner, repo)
+	}
+
 	// Handle PR comment triggers if specified
 	if opts.HandleComment != "" {
 		botCmd := gh.ParseBotComment(opts.HandleComment)
 		if botCmd != nil && botCmd.Kind != gh.CommandReview {
-			owner, repo := resolveRepoOwnerAndName(opts.Repo, repositoryRoot)
-			prNum := opts.PRNumber
-			if prNum <= 0 {
-				prNum = resolveCurrentPRNumber(ctx, ghClient, owner, repo)
-			}
 			if owner != "" && repo != "" && prNum > 0 {
 				return gh.HandleBotComment(ctx, ghClient, owner, repo, prNum, botCmd)
 			}
@@ -132,8 +133,22 @@ func runPRReview(args []string) error {
 		}
 	}
 
+	var prMeta *gh.PRMetadata
+	if prNum > 0 && owner != "" && repo != "" {
+		prMeta, _ = ghClient.GetPRMetadata(ctx, owner, repo, prNum)
+	}
+
 	// Resolve Base Ref
 	baseRef := opts.Base
+	if baseRef == "" && prMeta != nil && prMeta.BaseRef != "" {
+		testRef := "origin/" + prMeta.BaseRef
+		cmd := exec.Command("git", "-C", repositoryRoot, "rev-parse", "--verify", testRef)
+		if cmd.Run() == nil {
+			baseRef = testRef
+		} else {
+			baseRef = prMeta.BaseRef
+		}
+	}
 	if baseRef == "" {
 		baseRef = detectDefaultBaseRef(repositoryRoot)
 	}
@@ -142,6 +157,12 @@ func runPRReview(args []string) error {
 	diff, err := getUnifiedDiff(repositoryRoot, baseRef)
 	if err != nil {
 		return fmt.Errorf("get diff: %w", err)
+	}
+	if strings.TrimSpace(diff) == "" && prNum > 0 && owner != "" && repo != "" {
+		// Fallback to fetching diff directly from GitHub API
+		if remoteDiff, err := ghClient.GetPRDiff(ctx, owner, repo, prNum); err == nil && strings.TrimSpace(remoteDiff) != "" {
+			diff = remoteDiff
+		}
 	}
 	if strings.TrimSpace(diff) == "" {
 		fmt.Println("No modifications detected to review.")
@@ -192,19 +213,18 @@ func runPRReview(args []string) error {
 
 	// Post to GitHub PR if requested
 	if opts.PostGH {
-		owner, repo := resolveRepoOwnerAndName(opts.Repo, repositoryRoot)
-		prNum := opts.PRNumber
-		if prNum <= 0 {
-			prNum = resolveCurrentPRNumber(ctx, ghClient, owner, repo)
-		}
 		if owner == "" || repo == "" || prNum <= 0 {
 			return fmt.Errorf("cannot post to GitHub: missing repository (owner/repo) or PR number; use --repo and --pr")
 		}
 
 		headSHA := ""
-		meta, err := ghClient.GetPRMetadata(ctx, owner, repo, prNum)
-		if err == nil && meta != nil {
-			headSHA = meta.HeadSHA
+		if prMeta != nil && prMeta.HeadSHA != "" {
+			headSHA = prMeta.HeadSHA
+		} else {
+			meta, err := ghClient.GetPRMetadata(ctx, owner, repo, prNum)
+			if err == nil && meta != nil {
+				headSHA = meta.HeadSHA
+			}
 		}
 
 		fmt.Printf("Submitting review to GitHub %s/%s PR #%d...\n", owner, repo, prNum)
@@ -366,9 +386,11 @@ func applyInlineSuggestion(repoDir string, comment prreview.InlineComment) error
 		return fmt.Errorf("unclosed suggestion block")
 	}
 	suggestion := comment.Body[startIdx : startIdx+endIdx]
+	suggestion = strings.ReplaceAll(suggestion, "\r\n", "\n")
 
 	// Replace the target line in file
-	lines := strings.Split(string(data), "\n")
+	contentStr := strings.ReplaceAll(string(data), "\r\n", "\n")
+	lines := strings.Split(contentStr, "\n")
 	if comment.Line <= 0 || comment.Line > len(lines) {
 		return fmt.Errorf("line %d out of bounds (1..%d)", comment.Line, len(lines))
 	}

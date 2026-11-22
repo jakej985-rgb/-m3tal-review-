@@ -142,7 +142,7 @@ func (c *RESTClient) GetPRDiff(ctx context.Context, owner, repo string, prNumber
 }
 
 func (c *RESTClient) FindSummaryComment(ctx context.Context, owner, repo string, prNumber int) (int64, error) {
-	endpoint := fmt.Sprintf("/repos/%s/%s/issues/%d/comments", owner, repo, prNumber)
+	endpoint := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100", owner, repo, prNumber)
 	raw, err := c.doRequest(ctx, http.MethodGet, endpoint, nil, nil)
 	if err != nil {
 		return 0, err
@@ -221,6 +221,12 @@ func (c *RESTClient) SubmitReview(ctx context.Context, owner, repo string, prNum
 
 	endpoint := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", owner, repo, prNumber)
 	_, err = c.doRequest(ctx, http.MethodPost, endpoint, reviewPayload, nil)
+	if err != nil && report.Verdict != prreview.VerdictComment && (strings.Contains(err.Error(), "own pull request") || strings.Contains(err.Error(), "Unprocessable Entity")) {
+		// GitHub prevents PR authors from submitting REQUEST_CHANGES / APPROVE on their own PR.
+		// Fallback to COMMENT event so inline comments and verdict still post successfully.
+		reviewPayload["event"] = string(prreview.VerdictComment)
+		_, err = c.doRequest(ctx, http.MethodPost, endpoint, reviewPayload, nil)
+	}
 	return err
 }
 
@@ -287,7 +293,7 @@ func (c *GHCLIClient) GetPRDiff(ctx context.Context, owner, repo string, prNumbe
 }
 
 func (c *GHCLIClient) FindSummaryComment(ctx context.Context, owner, repo string, prNumber int) (int64, error) {
-	endpoint := fmt.Sprintf("repos/%s/%s/issues/%d/comments", owner, repo, prNumber)
+	endpoint := fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=100", owner, repo, prNumber)
 	out, err := c.runGH(ctx, "api", endpoint)
 	if err != nil {
 		return 0, err
@@ -370,6 +376,16 @@ func (c *GHCLIClient) SubmitReview(ctx context.Context, owner, repo string, prNu
 	cmd.Stdin = bytes.NewReader(data)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if report.Verdict != prreview.VerdictComment && (strings.Contains(string(out), "own pull request") || strings.Contains(string(out), "Unprocessable Entity")) {
+			reviewPayload["event"] = string(prreview.VerdictComment)
+			if retryData, retryErr := json.Marshal(reviewPayload); retryErr == nil {
+				retryCmd := exec.CommandContext(ctx, "gh", "api", "-X", "POST", endpoint, "--input", "-")
+				retryCmd.Stdin = bytes.NewReader(retryData)
+				if _, retryErr := retryCmd.CombinedOutput(); retryErr == nil {
+					return nil
+				}
+			}
+		}
 		return fmt.Errorf("submit review via gh api: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
 	return nil

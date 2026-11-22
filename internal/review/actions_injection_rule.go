@@ -19,8 +19,8 @@ type ActionsScriptInjectionRule struct {
 func (ActionsScriptInjectionRule) Name() string { return "actions-script-injection" }
 
 var (
-	workflowFileRe = regexp.MustCompile(`(?:^|/)\.github/workflows/.*\.ya?ml$`)
-	eventInterpRe  = regexp.MustCompile(`\$\{\{\s*github\.event\.[^}]+\}\}`)
+	workflowFileRe = regexp.MustCompile(`(?:^|/)(?:\.github/workflows/.*\.ya?ml|action\.ya?ml|\.github/actions/.*/action\.ya?ml)$`)
+	eventInterpRe  = regexp.MustCompile(`\$\{\{\s*(?:github\.(?:event\.[^}]+|head_ref)|inputs\.[^}]+)\s*\}\}`)
 	// execKeyRe matches `run:` or `script:` step keys at any indent, with an
 	// optional leading `- ` list marker.
 	execKeyRe = regexp.MustCompile(`^(\s*)(?:-\s*)?(run|script)\s*:`)

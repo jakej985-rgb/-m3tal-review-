@@ -90,7 +90,7 @@ func (r CPPUnboundedBufferRule) checkBlock(block diffSourceBlock, seen map[strin
 		}
 		seen[key] = true
 
-		safeAlt := "strncpy"
+		safeAlt := "snprintf / strlcpy"
 		switch fnName {
 		case "strcat":
 			safeAlt = "strncat"

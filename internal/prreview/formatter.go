@@ -117,11 +117,19 @@ func GeneratePRReview(findings []review.Finding, fileDiffs []*FileDiff, opts For
 
 	for _, f := range findings {
 		isHighSeverity := strings.ToLower(f.Severity) == "critical" || strings.ToLower(f.Severity) == "high"
+		cleanPath := filepath.Clean(f.File)
 		fd := diffMap[f.File]
+		if fd == nil {
+			fd = diffMap[cleanPath]
+		}
 
-		// Check if finding maps to a diff line in this PR
-		if isHighSeverity && fd != nil && f.Line > 0 {
-			pos := fd.FindPositionForLine(f.Line)
+		pos := 0
+		if fd != nil && f.Line > 0 {
+			pos = fd.FindPositionForLine(f.Line)
+		}
+
+		// Check if finding maps to a diff line in this PR (pos > 0 guarantees it is within a diff hunk)
+		if isHighSeverity && pos > 0 {
 			// Generate inline comment body with suggestion if possible
 			commentBody, hasSuggestion := buildInlineCommentBody(f, opts.RepoRoot)
 			if hasSuggestion {
@@ -286,7 +294,19 @@ func buildSummaryMarkdown(report *PRReviewReport, synthesis *PRSynthesis, remain
 
 	// Collapsible Lower Severity Findings (to prevent notification spam)
 	if len(remainingFindings) > 0 {
-		fmt.Fprintf(&b, "<details>\n<summary><b>Code Quality, Style & Minor Findings (%d)</b></summary>\n\n", len(remainingFindings))
+		hasHigh := false
+		for _, rf := range remainingFindings {
+			s := strings.ToLower(rf.Severity)
+			if s == "critical" || s == "high" {
+				hasHigh = true
+				break
+			}
+		}
+		summaryTitle := fmt.Sprintf("Code Quality, Style & Minor Findings (%d)", len(remainingFindings))
+		if hasHigh {
+			summaryTitle = fmt.Sprintf("Additional Findings & Non-Diff Issues (%d)", len(remainingFindings))
+		}
+		fmt.Fprintf(&b, "<details>\n<summary><b>%s</b></summary>\n\n", summaryTitle)
 		b.WriteString("| Severity | Rule | Location | Message |\n")
 		b.WriteString("| :--- | :--- | :--- | :--- |\n")
 		for _, rf := range remainingFindings {
