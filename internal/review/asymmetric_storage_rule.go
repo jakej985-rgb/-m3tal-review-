@@ -29,6 +29,9 @@ var (
 
 	// singlePrefsCheckRe matches methods that only guard on prefs.
 	singlePrefsCheckRe = regexp.MustCompile(`if\s*\(\s*_?prefs\s*!=\s*null\s*\)`)
+
+	// storageAccessRe matches actual access or checking of the storage member.
+	storageAccessRe = regexp.MustCompile(`(?:\b_?storage\s*(?:\.|\?\.|!=|==)|\belse\s+if\b[^\n]*\b_?storage\b)`)
 )
 
 func (r AsymmetricStorageRule) Check(diff string) []Finding {
@@ -68,10 +71,10 @@ func (r AsymmetricStorageRule) CheckContext(ctx context.Context, diff string) []
 			lineNum := startLine + i
 			// Check if this line guards on prefs only
 			if singlePrefsCheckRe.MatchString(line) {
-				// Verify if the next ~10 lines have an else if for storage
+				// Verify if the next ~10 lines have an else if or access for storage
 				hasStorageBranch := false
 				for j := 1; j < 12 && i+j < len(lines); j++ {
-					if strings.Contains(lines[i+j], "_storage") || strings.Contains(lines[i+j], "storage") {
+					if storageAccessRe.MatchString(lines[i+j]) {
 						hasStorageBranch = true
 						break
 					}
