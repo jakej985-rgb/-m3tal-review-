@@ -254,7 +254,7 @@ func crossFileDuplicateFindings(fileDiffs []FileDiff) []Finding {
 	seen := make(map[string]bool)
 	var findings []Finding
 	for _, fd := range fileDiffs {
-		if fd.ChangeType == FileDeleted || len(fd.AddedLines) == 0 {
+		if fd.ChangeType == FileDeleted || len(fd.AddedLines) == 0 || isTestOrToolingFile(fd.Path) {
 			continue
 		}
 		lines := make([]int, 0, len(fd.AddedLines))

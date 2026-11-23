@@ -97,6 +97,22 @@ func getIfCondition(lines []string, j int) string {
 	return full
 }
 
+func isRejectionClauseUnconjoined(ifCond, compSnippet string) bool {
+	if !strings.Contains(ifCond, "&&") {
+		return true
+	}
+	terms := strings.Split(ifCond, "||")
+	for _, term := range terms {
+		trimmed := strings.TrimSpace(term)
+		if strings.Contains(trimmed, compSnippet) {
+			if !strings.Contains(trimmed, "&&") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func buildDebitTargetPattern(raw string) string {
 	expr := unwrapDebitOperand(raw)
 	tokens := strings.FieldsFunc(expr, func(r rune) bool {
@@ -302,9 +318,9 @@ func (r *NegativeAmountRule) CheckContext(ctx context.Context, diff string) []Fi
 								hasLower = true
 							}
 						} else if checkType == 2 {
-							// Rejection check: protects if the block exits early and is not conjoined with &&
+							// Rejection check: protects if the block exits early and the rejection clause for target is not conjoined with &&
 							ifCond := getIfCondition(lines, j)
-							if !strings.Contains(ifCond, "&&") {
+							if isRejectionClauseUnconjoined(ifCond, match[0]) {
 								if i > endBlock && blockExits(lines, j, endBlock) {
 									hasLower = true
 								} else if i <= endBlock && j == i && strings.Contains(lines[j], "return") {

@@ -69,19 +69,20 @@ func (r ImageCacheAspectRule) CheckContext(ctx context.Context, diff string) []F
 
 			if hasCacheWidth && hasCacheHeight {
 				lineNum := startLine + strings.Count(scanText[:m[0]], "\n")
-				if block.addedLines[lineNum] || r.workingTree || len(block.addedLines) > 0 {
-					key := block.file + ":" + strconv.Itoa(lineNum)
-					if !seen[key] {
-						seen[key] = true
-						findings = append(findings, Finding{
-							Rule:        "flutter-image-cache-distortion",
-							Severity:    "medium",
-							File:        block.file,
-							Line:        lineNum,
-							Message:     "Image decode specifies both cacheWidth and cacheHeight, forcing non-uniform aspect ratio decoding",
-							Remediation: "Constrain only a single dimension (cacheWidth OR cacheHeight) or compute proportional dimensions to avoid image stretching.",
-						})
-					}
+				if len(block.addedLines) > 0 && !block.addedLines[lineNum] {
+					continue
+				}
+				key := block.file + ":" + strconv.Itoa(lineNum)
+				if !seen[key] {
+					seen[key] = true
+					findings = append(findings, Finding{
+						Rule:        "flutter-image-cache-distortion",
+						Severity:    "medium",
+						File:        block.file,
+						Line:        lineNum,
+						Message:     "Image decode specifies both cacheWidth and cacheHeight, forcing non-uniform aspect ratio decoding",
+						Remediation: "Constrain only a single dimension (cacheWidth OR cacheHeight) or compute proportional dimensions to avoid image stretching.",
+					})
 				}
 			}
 		}

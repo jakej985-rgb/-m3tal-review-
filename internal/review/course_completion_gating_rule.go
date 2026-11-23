@@ -26,8 +26,11 @@ var (
 	// siblingCompletionCheckRe detects completing a course based on loaded sibling lessons
 	siblingCompletionCheckRe = regexp.MustCompile(`\b(?:siblings|loadedLessons|courseLessons)\s*\.\s*every\s*\(`)
 
-	// authoritativeCheckRe checks for authoritative course.lessonIds verification
-	authoritativeCheckRe = regexp.MustCompile(`\b\w+\.lessonIds\s*\.\s*(?:isNotEmpty|every)`)
+	// courseCreditGrantRe detects granting course completion credit or status
+	courseCreditGrantRe = regexp.MustCompile(`(?i)\b(?:markCourseComplete\w*|completeCourse\w*|awardCredit\w*|grantCredit\w*|markCompleted\w*|setCourseCompleted\w*|courseCompleted\s*=|isCourseCompleted\s*=)\b`)
+
+	// authoritativeLessonIdsEveryRe checks for authoritative progress evaluation on all required course lesson IDs
+	authoritativeLessonIdsEveryRe = regexp.MustCompile(`\b\w+\.lessonIds\s*\.\s*every\s*\(`)
 )
 
 func (r CourseCompletionGatingRule) Check(diff string) []Finding {
@@ -57,19 +60,31 @@ func (r CourseCompletionGatingRule) CheckContext(ctx context.Context, diff strin
 			continue
 		}
 
-		// If the file already verifies authoritative course.lessonIds, skip
-		if authoritativeCheckRe.MatchString(scanText) {
-			continue
-		}
-
 		lines := strings.Split(scanText, "\n")
 		for i, line := range lines {
 			lineNum := startLine + i
-			if !block.addedLines[lineNum] && !r.workingTree && len(block.addedLines) == 0 {
+			if len(block.addedLines) > 0 && !block.addedLines[lineNum] {
 				continue
 			}
 
 			if siblingCompletionCheckRe.MatchString(line) {
+				// Inspect the surrounding completion path (up to 30 lines)
+				end := i + 30
+				if end > len(lines) {
+					end = len(lines)
+				}
+				contextSlice := strings.Join(lines[i:end], "\n")
+
+				// Must grant course credit or mark completion
+				if !courseCreditGrantRe.MatchString(contextSlice) {
+					continue
+				}
+
+				// If this completion path evaluates authoritative course.lessonIds.every, it's safe
+				if authoritativeLessonIdsEveryRe.MatchString(contextSlice) {
+					continue
+				}
+
 				key := block.file + ":" + strconv.Itoa(lineNum)
 				if !seen[key] {
 					seen[key] = true

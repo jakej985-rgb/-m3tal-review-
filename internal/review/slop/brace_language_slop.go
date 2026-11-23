@@ -1004,6 +1004,10 @@ func languageUnbracedNesting(tokens []braceLanguageToken, cfg braceLanguageConfi
 }
 
 func languageStatementContinues(previous, next string) bool {
+	switch next {
+	case "if", "for", "while", "switch", "return", "break", "continue", "throw":
+		return false
+	}
 	switch previous {
 	case ".", "->", "::", ",", "=", "==", "!=", "<", ">", "+", "-", "*", "/", "&&", "||", "?", ":", "=>":
 		return true

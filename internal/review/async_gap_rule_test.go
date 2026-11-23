@@ -1118,3 +1118,46 @@ func TestFlutterRules_WorkingTreeAware(t *testing.T) {
 		t.Errorf("expected LifecycleSetStateRule.WorkingTree = true")
 	}
 }
+
+func TestAsyncGapRule_AwaitInConditionalBlockFollowedBySink(t *testing.T) {
+	diff := `diff --git a/lib/presentation/refresh_screen.dart b/lib/presentation/refresh_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/refresh_screen.dart
+@@ -0,0 +1,15 @@
++class _RefreshScreenState extends State<RefreshScreen> {
++  Future<void> refresh(bool needsReload) async {
++    if (needsReload) {
++      await reload();
++    }
++    setState(() {});
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for setState after conditional await block, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_UnrelatedContextGuardDoesNotProtectRef(t *testing.T) {
+	diff := `diff --git a/lib/presentation/user_screen.dart b/lib/presentation/user_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/user_screen.dart
+@@ -0,0 +1,15 @@
++class _UserScreenState extends ConsumerState<UserScreen> {
++  Future<void> save(BuildContext routeCtx) async {
++    await api.save();
++    if (!routeCtx.mounted) return;
++    ref.read(userProvider);
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for ref.read guarded only by route context, got %d: %+v", len(findings), findings)
+	}
+}

@@ -57,7 +57,7 @@ func (r EventLoopStarvationRule) CheckContext(ctx context.Context, diff string) 
 		lines := strings.Split(scanText, "\n")
 		for i, line := range lines {
 			lineNum := startLine + i
-			if !block.addedLines[lineNum] && !r.workingTree && len(block.addedLines) == 0 {
+			if len(block.addedLines) > 0 && !block.addedLines[lineNum] {
 				continue
 			}
 
