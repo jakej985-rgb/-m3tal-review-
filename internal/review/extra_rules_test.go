@@ -651,6 +651,18 @@ func TestNewRulesDetections(t *testing.T) {
 		if hasFinding(r.Check(extraDiff("main.go", positiveAllowCode)), "dns-rebinding-ssrf") {
 			t.Errorf("expected dns-rebinding-ssrf to ignore positive allowlist guard that returns nil on true")
 		}
+
+		// Vulnerable: error return inside private check is rejection, not allowlist
+		errorReturnRejectionCode := "package main\nfunc f(targetURL *url.URL) (*url.URL, error) {\n\tif net.ParseIP(targetURL.Hostname()).IsPrivate() {\n\t\treturn nil, fmt.Errorf(\"private IP forbidden\")\n\t}\n\treturn targetURL, nil\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", errorReturnRejectionCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to flag private IP rejection that returns nil, error")
+		}
+
+		// Vulnerable: unrelated equality comparison in guard does not negate IP check
+		unrelatedComparisonCode := "package main\nfunc f(targetURL *url.URL, allowPrivate bool) error {\n\tif net.ParseIP(targetURL.Hostname()).IsPrivate() && allowPrivate == false {\n\t\treturn errors.New(\"private\")\n\t}\n\treturn nil\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", unrelatedComparisonCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to flag private check with unrelated == false comparison")
+		}
 	})
 
 	t.Run("negative-amount-bypass", func(t *testing.T) {
@@ -713,6 +725,24 @@ func TestNewRulesDetections(t *testing.T) {
 		safeScaledCode := "package main\nfunc f(req Request, acc *Account, rate int64) {\n\tif req.Amount * rate <= 0 {\n\t\treturn\n\t}\n\tif acc.Balance < req.Amount * rate {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount * rate\n}\n"
 		if hasFinding(r.Check(extraDiff("main.go", safeScaledCode)), "negative-amount-bypass") {
 			t.Errorf("expected negative-amount-bypass to ignore scaled debit when lower bound protects scaled amount")
+		}
+
+		// Vulnerable: wrong scale factor (estimateRate != finalRate) does not protect debited amount
+		wrongScaleCode := "package main\nfunc f(req Request, acc *Account, finalRate, estimateRate int64) {\n\tif req.Amount * estimateRate <= 0 {\n\t\treturn\n\t}\n\tif acc.Balance < req.Amount * finalRate {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount * finalRate\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", wrongScaleCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag debit when lower bound protects wrong rate operand")
+		}
+
+		// Safe: positive-only debit if 0 < amount { acc.Balance -= amount }
+		positiveOnlyCode := "package main\nfunc f(acc *Account, amount int64) {\n\tif 0 < amount {\n\t\tacc.Balance -= amount\n\t}\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", positiveOnlyCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to recognize 0 < amount as positive lower bound")
+		}
+
+		// Safe: validated scaled debit with struct selector operand
+		safeStructSelectorCode := "package main\nfunc f(req Request, acc *Account, pricing Pricing) {\n\tif req.Amount * pricing.Rate <= 0 {\n\t\treturn\n\t}\n\tif acc.Balance < req.Amount * pricing.Rate {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount * pricing.Rate\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", safeStructSelectorCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to recognize lower bound for scaled debit with struct selector")
 		}
 	})
 
@@ -843,6 +873,18 @@ func TestNewRulesDetections(t *testing.T) {
 		afterReadCheck := "package main\nfunc f(dir, keyID string) ([]byte, error) {\n\tp := filepath.Join(dir, keyID)\n\tdata, err := os.ReadFile(p)\n\tif !filepath.IsLocal(keyID) {\n\t\treturn nil, errors.New(\"too late\")\n\t}\n\treturn data, err\n}\n"
 		if !hasFinding(r.Check(extraDiff("main.go", afterReadCheck)), "filepath-containment-bypass") {
 			t.Errorf("expected filepath-containment-bypass to flag when containment check runs after os.ReadFile")
+		}
+
+		// Safe: inner block declaration does not shadow package constant after block closes
+		innerBlockScopedCode := "package main\nconst filename = \"metadata.json\"\nfunc read(base string) ([]byte, error) {\n\tif true {\n\t\tfilename := \"temp.txt\"\n\t\t_ = filename\n\t}\n\tp := filepath.Join(base, filename)\n\treturn os.ReadFile(p)\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", innerBlockScopedCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to not treat inner-block variable as shadowing package constant outside block")
+		}
+
+		// Safe: package constant in separate diff hunk recognized for later function
+		multiHunkDiff := "--- a/main.go\n+++ b/main.go\n@@ -1,4 +1,5 @@\n package main\n+const filename = \"metadata.json\"\n func other() {}\n@@ -20,4 +21,7 @@\n func read(base string) ([]byte, error) {\n+\tp := filepath.Join(base, filename)\n+\treturn os.ReadFile(p)\n }\n"
+		if hasFinding(r.Check(multiHunkDiff), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to recognize package constant across diff hunks")
 		}
 	})
 }

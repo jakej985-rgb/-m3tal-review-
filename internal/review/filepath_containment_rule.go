@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/review/language"
@@ -65,6 +66,37 @@ type funcSpan struct {
 	end   int
 }
 
+func extractFuncSpans(lines []string) []funcSpan {
+	var funcSpans []funcSpan
+	curStart := -1
+	braceDepth := 0
+	for idx, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "func ") && curStart == -1 {
+			curStart = idx
+			braceDepth = 0
+		}
+		if curStart != -1 {
+			for _, ch := range line {
+				if ch == '{' {
+					braceDepth++
+				} else if ch == '}' {
+					braceDepth--
+					if braceDepth <= 0 {
+						funcSpans = append(funcSpans, funcSpan{start: curStart, end: idx})
+						curStart = -1
+						break
+					}
+				}
+			}
+		}
+	}
+	if curStart != -1 {
+		funcSpans = append(funcSpans, funcSpan{start: curStart, end: len(lines) - 1})
+	}
+	return funcSpans
+}
+
 func extractPackageConstants(rawLines []string, funcSpans []funcSpan) map[string]bool {
 	inFunc := make(map[int]bool)
 	for _, fn := range funcSpans {
@@ -81,8 +113,8 @@ func extractPackageConstants(rawLines []string, funcSpans []funcSpan) map[string
 	return extractStringConstants(strings.Join(pkgLines, "\n"))
 }
 
-func extractShadowedIdents(rawLines []string, fnStart, fnEnd int) map[string]bool {
-	shadowed := make(map[string]bool)
+func extractFuncParams(rawLines []string, fnStart, fnEnd int) map[string]bool {
+	params := make(map[string]bool)
 
 	header := ""
 	for i := fnStart; i <= fnEnd && i < len(rawLines); i++ {
@@ -119,36 +151,45 @@ func extractShadowedIdents(rawLines []string, fnStart, fnEnd int) map[string]boo
 				for _, f := range fields[:len(fields)-1] {
 					f = strings.Trim(f, " \t,")
 					if identRe.MatchString(f) {
-						shadowed[f] = true
+						params[f] = true
 					}
 				}
 			}
 		}
 	}
-
-	assignRe := regexp.MustCompile(`\b([a-zA-Z_]\w*)\s*(?::=)`)
-	varDeclRe := regexp.MustCompile(`\bvar\s+([a-zA-Z_]\w*)`)
-	for i := fnStart; i <= fnEnd && i < len(rawLines); i++ {
-		line := rawLines[i]
-		for _, m := range assignRe.FindAllStringSubmatch(line, -1) {
-			if len(m) > 1 {
-				shadowed[m[1]] = true
-			}
-		}
-		for _, m := range varDeclRe.FindAllStringSubmatch(line, -1) {
-			if len(m) > 1 {
-				shadowed[m[1]] = true
-			}
-		}
-	}
-	return shadowed
+	return params
 }
 
 func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
 
-	for _, block := range sourceBlocks(diff, r.repositoryRoot, r.workingTree) {
+	blocks := sourceBlocks(diff, r.repositoryRoot, r.workingTree)
+	filePackageConstants := make(map[string]map[string]bool)
+
+	for _, block := range blocks {
+		if IsTestOrFixtureFile(block.file) {
+			continue
+		}
+		if (language.CodeChecker{}).Language(block.file) != language.LanguageGo {
+			continue
+		}
+		code := string(maskNonCode(block.file, block.text))
+		lines := strings.Split(code, "\n")
+		rawLines := strings.Split(block.text, "\n")
+		spans := extractFuncSpans(lines)
+		pkgConsts := extractPackageConstants(rawLines, spans)
+		if filePackageConstants[block.file] == nil {
+			filePackageConstants[block.file] = make(map[string]bool)
+		}
+		for k, v := range pkgConsts {
+			if v {
+				filePackageConstants[block.file][k] = true
+			}
+		}
+	}
+
+	for _, block := range blocks {
 		if err := ctx.Err(); err != nil {
 			return findings
 		}
@@ -163,42 +204,14 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 		lines := strings.Split(code, "\n")
 		rawLines := strings.Split(block.text, "\n")
 
-		// Group lines into functions
-		var funcSpans []funcSpan
-		curStart := -1
-		braceDepth := 0
-		for idx, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "func ") && curStart == -1 {
-				curStart = idx
-				braceDepth = 0
-			}
-			if curStart != -1 {
-				for _, ch := range line {
-					if ch == '{' {
-						braceDepth++
-					} else if ch == '}' {
-						braceDepth--
-						if braceDepth <= 0 {
-							funcSpans = append(funcSpans, funcSpan{start: curStart, end: idx})
-							curStart = -1
-							break
-						}
-					}
-				}
-			}
-		}
-		if curStart != -1 {
-			funcSpans = append(funcSpans, funcSpan{start: curStart, end: len(lines) - 1})
-		}
-
-		packageConstants := extractPackageConstants(rawLines, funcSpans)
+		funcSpans := extractFuncSpans(lines)
+		packageConstants := filePackageConstants[block.file]
 
 		for _, fn := range funcSpans {
 			fnLines := lines[fn.start : fn.end+1]
 			fnRawLines := rawLines[fn.start : fn.end+1]
 			fnLocalConstants := extractStringConstants(strings.Join(fnRawLines, "\n"))
-			shadowed := extractShadowedIdents(rawLines, fn.start, fn.end)
+			params := extractFuncParams(rawLines, fn.start, fn.end)
 
 			type joinInfo struct {
 				pathVars    []string // all aliases, including cleaned
@@ -207,40 +220,142 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 			}
 			var joins []joinInfo
 
-			// Pass 1: detect joins with untrusted/non-literal segments
+			type scopedVar struct {
+				name  string
+				depth int
+			}
+			var scopedVars []scopedVar
+			curDepth := 0
+
+			assignRe := regexp.MustCompile(`\b([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*)\s*:=`)
+			varDeclRe := regexp.MustCompile(`\bvar\s+([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*)`)
+
+			type lineEvent struct {
+				pos      int
+				kind     int // 1: '{', 2: '}', 3: decl, 4: join call
+				idents   []string
+				joinCall []string
+			}
+
+			// Pass 1: detect joins with untrusted/non-literal segments tracking lexical scope
 			for idx, line := range fnLines {
-				m := filepathJoinCallRe.FindStringSubmatch(line)
-				if len(m) > 2 {
-					assignedVar := m[1]
-					argsStr := m[2]
+				var events []lineEvent
 
-					// Split join arguments
-					args := splitCallArgs(argsStr)
-					if len(args) < 2 {
-						continue
+				for i, ch := range line {
+					if ch == '{' {
+						events = append(events, lineEvent{pos: i, kind: 1})
+					} else if ch == '}' {
+						events = append(events, lineEvent{pos: i, kind: 2})
 					}
+				}
 
-					// Check if any element after base dir is non-literal
-					var dynamicKeys []string
-					for _, seg := range args[1:] {
-						seg = strings.TrimSpace(seg)
-						// Ignore string constants like "config.json", static paths, ".", empty (masked string),
-						// or scoped constants (local constant, or unshadowed package constant)
-						isConstant := seg == "" || isStringLiteral(seg) || seg == "." || seg == `""` ||
-							fnLocalConstants[seg] || (packageConstants[seg] && !shadowed[seg])
-						if isConstant {
-							continue
+				for _, loc := range assignRe.FindAllStringSubmatchIndex(line, -1) {
+					pos := loc[0]
+					matched := line[loc[2]:loc[3]]
+					var ids []string
+					for _, part := range strings.Split(matched, ",") {
+						part = strings.TrimSpace(part)
+						if part != "" && part != "_" {
+							ids = append(ids, part)
 						}
-						dynamicKeys = append(dynamicKeys, seg)
 					}
+					if len(ids) > 0 {
+						events = append(events, lineEvent{pos: pos, kind: 3, idents: ids})
+					}
+				}
 
-					if len(dynamicKeys) > 0 {
-						if assignedVar != "" {
-							joins = append(joins, joinInfo{
-								pathVars:    []string{assignedVar},
-								dynamicKeys: dynamicKeys,
-								lineIdx:     fn.start + idx,
-							})
+				for _, loc := range varDeclRe.FindAllStringSubmatchIndex(line, -1) {
+					pos := loc[0]
+					matched := line[loc[2]:loc[3]]
+					var ids []string
+					for _, part := range strings.Split(matched, ",") {
+						part = strings.TrimSpace(part)
+						if part != "" && part != "_" {
+							ids = append(ids, part)
+						}
+					}
+					if len(ids) > 0 {
+						events = append(events, lineEvent{pos: pos, kind: 3, idents: ids})
+					}
+				}
+
+				for _, loc := range filepathJoinCallRe.FindAllStringSubmatchIndex(line, -1) {
+					pos := loc[0]
+					var submatches []string
+					for k := 0; k < len(loc); k += 2 {
+						if loc[k] >= 0 && loc[k+1] >= 0 {
+							submatches = append(submatches, line[loc[k]:loc[k+1]])
+						} else {
+							submatches = append(submatches, "")
+						}
+					}
+					events = append(events, lineEvent{pos: pos, kind: 4, joinCall: submatches})
+				}
+
+				sort.SliceStable(events, func(a, b int) bool {
+					if events[a].pos != events[b].pos {
+						return events[a].pos < events[b].pos
+					}
+					return events[a].kind < events[b].kind
+				})
+
+				for _, ev := range events {
+					switch ev.kind {
+					case 1:
+						curDepth++
+					case 2:
+						curDepth--
+						var remaining []scopedVar
+						for _, sv := range scopedVars {
+							if sv.depth <= curDepth {
+								remaining = append(remaining, sv)
+							}
+						}
+						scopedVars = remaining
+					case 3:
+						for _, id := range ev.idents {
+							scopedVars = append(scopedVars, scopedVar{name: id, depth: curDepth})
+						}
+					case 4:
+						m := ev.joinCall
+						if len(m) > 2 {
+							assignedVar := m[1]
+							argsStr := m[2]
+							args := splitCallArgs(argsStr)
+							if len(args) < 2 {
+								continue
+							}
+
+							isShadowed := func(seg string) bool {
+								if params[seg] {
+									return true
+								}
+								for _, sv := range scopedVars {
+									if sv.name == seg {
+										return true
+									}
+								}
+								return false
+							}
+
+							var dynamicKeys []string
+							for _, seg := range args[1:] {
+								seg = strings.TrimSpace(seg)
+								isConstant := seg == "" || isStringLiteral(seg) || seg == "." || seg == `""` ||
+									fnLocalConstants[seg] || (packageConstants[seg] && !isShadowed(seg))
+								if isConstant {
+									continue
+								}
+								dynamicKeys = append(dynamicKeys, seg)
+							}
+
+							if len(dynamicKeys) > 0 && assignedVar != "" {
+								joins = append(joins, joinInfo{
+									pathVars:    []string{assignedVar},
+									dynamicKeys: dynamicKeys,
+									lineIdx:     fn.start + idx,
+								})
+							}
 						}
 					}
 				}

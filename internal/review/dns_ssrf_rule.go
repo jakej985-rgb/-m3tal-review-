@@ -29,32 +29,48 @@ func (r *DNSRebindingRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
 }
 
+var (
+	negatedCheckRe = regexp.MustCompile(
+		`(?:\b!\s*(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\(|!\s*\([^)]*\.Is[A-Z]\w*\s*\(|\b(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\([^)]*\)\s*==\s*false|\b(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\([^)]*\)\s*!=\s*true)`,
+	)
+	returnPredicateRe = regexp.MustCompile(
+		`\breturn\s+(?:[^;\n]*\b)?(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\(`,
+	)
+	rejectReturnRe = regexp.MustCompile(
+		`(?:\breturn\s+(?:nil\s*,\s*|[^;\n,]+\s*,\s*)*(?:errors\.|fmt\.Errorf|err\b|[a-zA-Z0-9_]*err[a-zA-Z0-9_]*\b|false\b)|http\.Error\b|\bpanic\s*\()`,
+	)
+	acceptReturnRe = regexp.MustCompile(
+		`(?:\breturn\s+nil\s*(?:;.*)?$|\breturn\s+true\s*(?:;.*)?$|\breturn\s+[^;\n,]+\s*,\s*nil\s*(?:;.*)?$)`,
+	)
+)
+
 func isAllowlistContext(line string, lines []string, idx int) bool {
+	// 1. Returning the check as a boolean predicate (e.g. return net.ParseIP(...).IsLoopback())
+	if returnPredicateRe.MatchString(line) {
+		return true
+	}
+
+	// 2. Negated check applied directly to the IP predicate:
+	// e.g. if !net.ParseIP(u.Hostname()).IsLoopback() or if net.ParseIP(...).IsLoopback() == false
+	// These require the IP property to be true, rejecting non-matching hosts (domain names).
+	if negatedCheckRe.MatchString(line) {
+		return true
+	}
+
+	// 3. Positive if guard: inspect whether the guarded block accepts or rejects.
 	trimmed := strings.TrimSpace(line)
-
-	// Return expressions: returning the check as a boolean predicate (e.g. return net.ParseIP(...).IsLoopback())
-	if strings.Contains(line, "return ") || strings.Contains(line, "return\t") || strings.HasPrefix(trimmed, "return") {
-		return true
-	}
-
-	// Negated checks: !net.ParseIP(...).IsLoopback(), == false, != true
-	// These require the property to be true, rejecting on false (domain names return false and are rejected)
-	if strings.Contains(line, "!net.ParseIP") || strings.Contains(line, "! net.ParseIP") ||
-		strings.Contains(line, "==") && strings.Contains(line, "false") ||
-		strings.Contains(line, "!=") && strings.Contains(line, "true") {
-		return true
-	}
-
-	// Check if this is an allowlist guard where true accepts (e.g. return nil / return true)
 	if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "if(") {
 		for k := idx; k < len(lines) && k < idx+6; k++ {
 			bodyLine := strings.TrimSpace(lines[k])
-			if strings.Contains(bodyLine, "return nil") || strings.Contains(bodyLine, "return true") {
-				return true
-			}
-			if strings.Contains(bodyLine, "return errors.") || strings.Contains(bodyLine, "return err") ||
-				strings.Contains(bodyLine, "http.Error") || strings.Contains(bodyLine, "return false") {
+			if rejectReturnRe.MatchString(bodyLine) {
+				// The branch rejects the host (e.g. return nil, fmt.Errorf(...) or http.Error).
+				// This is a denylist guard where non-matching domain names bypass it.
 				return false
+			}
+			if acceptReturnRe.MatchString(bodyLine) {
+				// The branch accepts the host (e.g. bare return nil or return true).
+				// This is an allowlist guard.
+				return true
 			}
 			if strings.Contains(bodyLine, "}") && k > idx {
 				break
