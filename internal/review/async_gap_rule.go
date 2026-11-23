@@ -57,7 +57,7 @@ var (
 	// Calls requiring mounted context
 	setStateRe   = regexp.MustCompile(`\bsetState\s*\(`)
 	contextUseRe = regexp.MustCompile(
-		`\b(?:Navigator\.(?:of|pop|push|maybePop|pushNamed|pushReplacement|popUntil)|ScaffoldMessenger\.of|Scaffold\.of|Theme\.of|MediaQuery\.(?:of|sizeOf|orientationOf|paddingOf|viewInsetsOf|platformBrightnessOf|textScalerOf)|FocusScope\.of|DefaultTabController\.of|BlocProvider\.of(?:\s*<[^;\n()]+>)?|context\.(?:go|push|pop|read|watch|select)|ref\.(?:read|watch)|showDialog|showModalBottomSheet|showBottomSheet|showMenu|showDatePicker|showTimePicker|showSearch)\b`,
+		`\b(?:Navigator\.(?:of|pop|push|maybePop|pushNamed|pushReplacement|popUntil|pushAndRemoveUntil|replace|removeRoute)|ScaffoldMessenger\.of|Scaffold\.of|Theme\.of|MediaQuery\.(?:of|sizeOf|orientationOf|paddingOf|viewInsetsOf|platformBrightnessOf|textScalerOf)|FocusScope\.of|DefaultTabController\.of|BlocProvider\.of(?:\s*<[^;\n()]+>)?|context\.(?:go|push|pop|read|watch|select)|ref\.(?:read|watch)|showDialog|showModalBottomSheet|showBottomSheet|showMenu|showDatePicker|showTimePicker|showSearch)\b`,
 	)
 	controllerRe = regexp.MustCompile(
 		`(?i:\b\w*(?:controller|node|animation)\w*)\s*\.\s*(?:forward|reverse|reset|animateTo|jumpTo|jumpToPage|requestFocus)\s*\(`,
@@ -112,12 +112,8 @@ func isSafePositiveMountedGuard(line string) (bool, map[string]bool) {
 	return impliesMounted(cond)
 }
 
-func impliesMounted(expr string) (bool, map[string]bool) {
+func stripEnclosingParens(expr string) string {
 	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return false, nil
-	}
-
 	for strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
 		depth := 0
 		enclosesAll := true
@@ -137,6 +133,14 @@ func impliesMounted(expr string) (bool, map[string]bool) {
 		} else {
 			break
 		}
+	}
+	return expr
+}
+
+func impliesMounted(expr string) (bool, map[string]bool) {
+	expr = stripEnclosingParens(expr)
+	if expr == "" {
+		return false, nil
 	}
 
 	// In Dart, conditional operator (? :) has lower precedence than ??, &&, ||.
@@ -320,7 +324,7 @@ func isCallProtectedByReceivers(line string, activeReceivers map[string]bool) bo
 
 	if m := regexp.MustCompile(`\b([a-zA-Z0-9_]+)\.(?:go|push|pop|read|watch|select)\b`).FindStringSubmatch(line); len(m) > 1 {
 		recv := m[1]
-		if (recv == "context" || recv == "this") && hasStateMounted {
+		if (recv == "context" || recv == "this" || recv == "ref") && hasStateMounted {
 			return true
 		}
 		return activeReceivers[recv]
@@ -503,58 +507,108 @@ func (r AsyncGapRule) checkConditionSinks(currLine string, currLineNum, awaitLin
 	}
 	cond := currLine[parenStart+1 : parenEnd]
 
-	andTerms := splitTopLevelOp(cond, "&&")
 	condReceivers := make(map[string]bool, len(activeReceivers))
 	for k, v := range activeReceivers {
 		condReceivers[k] = v
 	}
 
-	for _, term := range andTerms {
-		term = strings.TrimSpace(term)
-		matchedOp := ""
-		if setStateRe.MatchString(term) {
-			matchedOp = "setState()"
-		} else if m := contextUseRe.FindString(term); m != "" {
-			matchedOp = m
-		} else if m := controllerRe.FindString(term); m != "" {
-			matchedOp = strings.TrimSuffix(m, "(")
-		}
+	return r.checkExprSinks(cond, currLine, currLineNum, awaitLineNum, block, condReceivers, seen)
+}
 
-		if matchedOp != "" && !isCallProtectedByReceivers(term, condReceivers) {
-			if block.addedLines[currLineNum] || block.addedLines[awaitLineNum] {
-				key := fmt.Sprintf("%s:%d:%s", block.file, currLineNum, matchedOp)
-				if !seen[key] {
-					seen[key] = true
-					msg := fmt.Sprintf(
-						"%s called across async gap (after await on line %d) without checking if (!mounted) or if (!context.mounted); throws if widget unmounts during async operation",
-						matchedOp, awaitLineNum,
-					)
-					remediation := "Add 'if (!mounted) return;' (or 'if (!context.mounted) return;') immediately after the await statement."
-					return &Finding{
-						Rule:        "unmounted-async-gap",
-						Severity:    "high",
-						Category:    "quality",
-						File:        block.file,
-						Line:        currLineNum,
-						Message:     msg,
-						Remediation: remediation,
-						Confidence:  "High",
-						Snippet:     strings.TrimSpace(currLine),
-						Explanation: &model.FindingExplanation{
-							RuleRationale:   "Calling setState, BuildContext, or controllers after an asynchronous operation when the widget has been unmounted causes runtime exceptions.",
-							EvidenceSummary: fmt.Sprintf("%s invoked across async boundary without mounted guard.", matchedOp),
-							EvidenceKind:    "async-lifecycle",
-						},
+func (r AsyncGapRule) checkExprSinks(
+	expr string,
+	currLine string,
+	currLineNum int,
+	awaitLineNum int,
+	block diffSourceBlock,
+	condReceivers map[string]bool,
+	seen map[string]bool,
+) *Finding {
+	expr = stripEnclosingParens(expr)
+	if expr == "" {
+		return nil
+	}
+
+	// In Dart, logical OR (||) has lower precedence than &&.
+	// In a || b, if a evaluates to false, b runs without assuming a's facts.
+	orTerms := splitTopLevelOp(expr, "||")
+	if len(orTerms) > 1 {
+		for _, orTerm := range orTerms {
+			branchReceivers := make(map[string]bool, len(condReceivers))
+			for k, v := range condReceivers {
+				branchReceivers[k] = v
+			}
+			if f := r.checkExprSinks(orTerm, currLine, currLineNum, awaitLineNum, block, branchReceivers, seen); f != nil {
+				return f
+			}
+		}
+		return nil
+	}
+
+	// In Dart, logical AND (&&) has left-to-right short-circuit evaluation.
+	// Facts established by earlier operands flow into subsequent operands.
+	andTerms := splitTopLevelOp(expr, "&&")
+	if len(andTerms) > 1 {
+		for _, term := range andTerms {
+			if f := r.checkExprSinks(term, currLine, currLineNum, awaitLineNum, block, condReceivers, seen); f != nil {
+				return f
+			}
+			if safe, recs := impliesMounted(term); safe {
+				for k, v := range recs {
+					if v {
+						condReceivers[k] = true
 					}
 				}
 			}
 		}
+		return nil
+	}
 
-		if safe, recs := impliesMounted(term); safe {
-			for k, v := range recs {
-				if v {
-					condReceivers[k] = true
+	// Leaf term: check for unguarded sink invocation
+	term := expr
+	matchedOp := ""
+	if setStateRe.MatchString(term) {
+		matchedOp = "setState()"
+	} else if m := contextUseRe.FindString(term); m != "" {
+		matchedOp = m
+	} else if m := controllerRe.FindString(term); m != "" {
+		matchedOp = strings.TrimSuffix(m, "(")
+	}
+
+	if matchedOp != "" && !isCallProtectedByReceivers(term, condReceivers) {
+		if block.addedLines[currLineNum] || block.addedLines[awaitLineNum] {
+			key := fmt.Sprintf("%s:%d:%s", block.file, currLineNum, matchedOp)
+			if !seen[key] {
+				seen[key] = true
+				msg := fmt.Sprintf(
+					"%s called across async gap (after await on line %d) without checking if (!mounted) or if (!context.mounted); throws if widget unmounts during async operation",
+					matchedOp, awaitLineNum,
+				)
+				remediation := "Add 'if (!mounted) return;' (or 'if (!context.mounted) return;') immediately after the await statement."
+				return &Finding{
+					Rule:        "unmounted-async-gap",
+					Severity:    "high",
+					Category:    "quality",
+					File:        block.file,
+					Line:        currLineNum,
+					Message:     msg,
+					Remediation: remediation,
+					Confidence:  "High",
+					Snippet:     strings.TrimSpace(currLine),
+					Explanation: &model.FindingExplanation{
+						RuleRationale:   "Calling setState, BuildContext, or controllers after an asynchronous operation when the widget has been unmounted causes runtime exceptions.",
+						EvidenceSummary: fmt.Sprintf("%s invoked across async boundary without mounted guard.", matchedOp),
+						EvidenceKind:    "async-lifecycle",
+					},
 				}
+			}
+		}
+	}
+
+	if safe, recs := impliesMounted(term); safe {
+		for k, v := range recs {
+			if v {
+				condReceivers[k] = true
 			}
 		}
 	}

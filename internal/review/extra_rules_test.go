@@ -734,6 +734,12 @@ func TestNewRulesDetections(t *testing.T) {
 		if hasFinding(r.Check(extraDiff("main.go", safePermCode)), "idor-unverified-access") {
 			t.Errorf("expected idor-unverified-access to ignore handler with permission.CanRead check")
 		}
+
+		// Safe: alias assigned from OwnerID and verified
+		aliasOwnerCode := "package main\nfunc f(w http.ResponseWriter, r *http.Request) {\n\tid := r.URL.Query().Get(\"id\")\n\trec := store[id]\n\tif !ok {\n\t\treturn\n\t}\n\trecordOwnerID := rec.OwnerID\n\tif recordOwnerID != session.ID {\n\t\thttp.Error(w, \"forbidden\", http.StatusForbidden)\n\t\treturn\n\t}\n\tjson.NewEncoder(w).Encode(rec)\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", aliasOwnerCode)), "idor-unverified-access") {
+			t.Errorf("expected idor-unverified-access to ignore handler with recordOwnerID alias check")
+		}
 	})
 
 	t.Run("filepath-containment-bypass", func(t *testing.T) {
@@ -741,6 +747,12 @@ func TestNewRulesDetections(t *testing.T) {
 		code := "package main\nfunc f(dir, keyID string) ([]byte, error) {\n\tp := filepath.Join(dir, keyID)\n\treturn os.ReadFile(p)\n}\n"
 		if !hasFinding(r.Check(extraDiff("main.go", code)), "filepath-containment-bypass") {
 			t.Errorf("expected filepath-containment-bypass to flag unvalidated filepath.Join read")
+		}
+
+		// Safe: join with named string constant
+		constJoinCode := "package main\nconst metadataFilename = \"metadata.json\"\nfunc f(dir, group string) ([]byte, error) {\n\tif !filepath.IsLocal(group) {\n\t\treturn nil, errors.New(\"bad group\")\n\t}\n\tp := filepath.Join(dir, group, metadataFilename)\n\treturn os.ReadFile(p)\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", constJoinCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to ignore join with named string constant")
 		}
 
 		// Safe: fixed filename literal does not allow directory traversal

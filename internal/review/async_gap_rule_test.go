@@ -987,6 +987,112 @@ new file mode 100644
 	}
 }
 
+func TestAsyncGapRule_RiverpodGuardedRef(t *testing.T) {
+	// Guarded by State mounted
+	guardedDiff := `diff --git a/lib/presentation/riverpod_screen.dart b/lib/presentation/riverpod_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/riverpod_screen.dart
+@@ -0,0 +1,15 @@
++class _RiverpodScreenState extends ConsumerState<RiverpodScreen> {
++  Future<void> _fetch() async {
++    await api.fetch();
++    if (!mounted) return;
++    ref.read(counterProvider.notifier).increment();
++  }
++}
++`
+	rule := AsyncGapRule{}
+	if findings := rule.Check(guardedDiff); len(findings) != 0 {
+		t.Fatalf("expected 0 findings for mounted-guarded ref.read in ConsumerState, got %d: %+v", len(findings), findings)
+	}
+
+	// Unguarded ref.read after await
+	unguardedDiff := `diff --git a/lib/presentation/riverpod_screen.dart b/lib/presentation/riverpod_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/riverpod_screen.dart
+@@ -0,0 +1,14 @@
++class _RiverpodScreenState extends ConsumerState<RiverpodScreen> {
++  Future<void> _fetch() async {
++    await api.fetch();
++    ref.read(counterProvider.notifier).increment();
++  }
++}
++`
+	if findings := rule.Check(unguardedDiff); len(findings) != 1 {
+		t.Fatalf("expected 1 finding for unguarded ref.read after await, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_ParenthesizedMountedGuard(t *testing.T) {
+	diff := `diff --git a/lib/presentation/paren_screen.dart b/lib/presentation/paren_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/paren_screen.dart
+@@ -0,0 +1,14 @@
++class _ParenScreenState extends State<ParenScreen> {
++  Future<void> _handlePop() async {
++    await api.fetch();
++    if ((mounted && Navigator.of(context).canPop())) {
++      Navigator.of(context).pop();
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	if findings := rule.Check(diff); len(findings) != 0 {
+		t.Fatalf("expected 0 findings for parenthesized ((mounted && Navigator...)) condition, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_ExtendedNavigatorMethods(t *testing.T) {
+	unguardedDiff := `diff --git a/lib/presentation/nav_methods.dart b/lib/presentation/nav_methods.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/nav_methods.dart
+@@ -0,0 +1,24 @@
++class _NavMethodsState extends State<NavMethods> {
++  Future<void> _nav1() async {
++    await api.fetch();
++    Navigator.pushAndRemoveUntil(context, route, (r) => false);
++  }
++  Future<void> _nav2() async {
++    await api.fetch();
++    Navigator.replace(context, oldRoute: r1, newRoute: r2);
++  }
++  Future<void> _nav3() async {
++    await api.fetch();
++    Navigator.removeRoute(context, r1);
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(unguardedDiff)
+	if len(findings) != 3 {
+		t.Fatalf("expected 3 findings for unguarded pushAndRemoveUntil, replace, removeRoute, got %d: %+v", len(findings), findings)
+	}
+
+	guardedDiff := `diff --git a/lib/presentation/nav_methods.dart b/lib/presentation/nav_methods.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/nav_methods.dart
+@@ -0,0 +1,17 @@
++class _NavMethodsState extends State<NavMethods> {
++  Future<void> _navigate() async {
++    await api.fetch();
++    if (!mounted) return;
++    Navigator.pushAndRemoveUntil(context, route, (r) => false);
++    Navigator.replace(context, oldRoute: r1, newRoute: r2);
++    Navigator.removeRoute(context, r1);
++  }
++}
++`
+	if findings := rule.Check(guardedDiff); len(findings) != 0 {
+		t.Fatalf("expected 0 findings when guarded by if (!mounted) return, got %d: %+v", len(findings), findings)
+	}
+}
+
 func TestFlutterRules_WorkingTreeAware(t *testing.T) {
 	asyncGap := &AsyncGapRule{}
 	asyncGap.EnableWorkingTree()

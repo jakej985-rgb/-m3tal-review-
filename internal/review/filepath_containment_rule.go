@@ -34,6 +34,32 @@ func isStringLiteral(s string) bool {
 		(strings.HasPrefix(s, "`") && strings.HasSuffix(s, "`"))
 }
 
+func extractStringConstants(rawText string) map[string]bool {
+	consts := make(map[string]bool)
+
+	// Single const: const Name [type] = "..."
+	singleRe := regexp.MustCompile(`\bconst\s+([a-zA-Z0-9_]+)(?:\s+[a-zA-Z0-9_]+)?\s*=\s*(?:"[^"\n]*"|` + "`[^`]*`" + `)`)
+	for _, m := range singleRe.FindAllStringSubmatch(rawText, -1) {
+		if len(m) > 1 {
+			consts[m[1]] = true
+		}
+	}
+
+	// Const blocks: const ( ... )
+	blockRe := regexp.MustCompile(`(?s)\bconst\s*\((.*?)\)`)
+	itemRe := regexp.MustCompile(`\b([a-zA-Z0-9_]+)(?:\s+[a-zA-Z0-9_]+)?\s*=\s*(?:"[^"\n]*"|` + "`[^`]*`" + `)`)
+	for _, b := range blockRe.FindAllStringSubmatch(rawText, -1) {
+		if len(b) > 1 {
+			for _, m := range itemRe.FindAllStringSubmatch(b[1], -1) {
+				if len(m) > 1 {
+					consts[m[1]] = true
+				}
+			}
+		}
+	}
+	return consts
+}
+
 func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
@@ -49,6 +75,7 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 			continue
 		}
 
+		stringConstants := extractStringConstants(block.text)
 		code := string(maskNonCode(block.file, block.text))
 		lines := strings.Split(code, "\n")
 		rawLines := strings.Split(block.text, "\n")
@@ -113,8 +140,8 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 					var dynamicKeys []string
 					for _, seg := range args[1:] {
 						seg = strings.TrimSpace(seg)
-						// Ignore string constants like "config.json", static paths, ".", empty (masked string)
-						if seg == "" || isStringLiteral(seg) || seg == "." || seg == `""` {
+						// Ignore string constants like "config.json", static paths, ".", empty (masked string), or declared string constants
+						if seg == "" || isStringLiteral(seg) || seg == "." || seg == `""` || stringConstants[seg] {
 							continue
 						}
 						dynamicKeys = append(dynamicKeys, seg)
