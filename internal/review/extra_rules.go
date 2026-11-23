@@ -22,6 +22,18 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageTypeScript, regexp.MustCompile(`\b(?:fetch|axios\.(?:get|post|request)|got)\s*\(\s*[^)]{0,160}?(?:req\.(?:query|params|body|url)|request\.)`), "HTTP client call uses request-controlled URL data"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "dns-rebinding-ssrf", severity: "high", raw: true,
+			remediation: "Ensure hostnames are resolved to IPs at dial time and validated against private CIDRs; net.ParseIP returns nil for domain names and allows DNS rebinding.",
+			patterns: []langPattern{
+				{language.LanguageGo, regexp.MustCompile(`net\.ParseIP\s*\([^)]*Hostname\(\)[^)]*\)\s*!=?\s*nil[^\n]*\.(?:IsLoopback|IsPrivate)\s*\(|net\.ParseIP[^\n]*\n[^\n]*\.(?:IsLoopback|IsPrivate)`), "net.ParseIP on URL hostname misses domain names (nil return); vulnerable to DNS rebinding SSRF"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "negative-amount-bypass", severity: "high", raw: true,
+			remediation: "Verify numeric amounts are strictly positive (e.g. amount <= 0 check) in financial and payment transactions to prevent fund drain and credit balance inversion.",
+			patterns: []langPattern{
+				{language.LanguageGo, regexp.MustCompile(`(?i)\b(?:amount|balance|cents|payment|transfer)\b[^\n]{0,60}>\s*\d+[^\n]*\n(?:[^\n]*\n){0,30}?[^\n]*?(?:Balance|balance)\s*[-+]=`), "Upper-bound check on transaction amount without visible non-negative check before balance modification"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "command-injection", severity: "high",
 			remediation: "Avoid building shell commands from untrusted input; pass arguments as separate parameters or use an allowlist.",
 			patterns: []langPattern{

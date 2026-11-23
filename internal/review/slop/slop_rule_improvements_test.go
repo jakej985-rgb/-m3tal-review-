@@ -166,3 +166,54 @@ func spawn(wg *sync.WaitGroup) {
 		t.Errorf("expected 'sync.WaitGroup.Add called inside spawned goroutine', got %v", got)
 	}
 }
+
+func TestSlopTypedNilError(t *testing.T) {
+	src := `package main
+
+type CustomErr struct{}
+
+func (e *CustomErr) Error() string { return "custom" }
+
+func validate(name string) error {
+	var err *CustomErr = nil
+	if name == "" {
+		err = &CustomErr{}
+	}
+	return err
+}
+`
+	got := slopMessages(t, src)
+	found := false
+	for _, msg := range got {
+		if strings.Contains(msg, "Concrete pointer returned as error interface") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'Concrete pointer returned as error interface', got %v", got)
+	}
+}
+
+func TestSlopSubsliceRetention(t *testing.T) {
+	src := `package main
+
+var store = make(map[string][]byte)
+
+func process(buf []byte) {
+	sub := buf[:16]
+	store["token"] = sub
+}
+`
+	got := slopMessages(t, src)
+	found := false
+	for _, msg := range got {
+		if strings.Contains(msg, "Subslice stored directly in map") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'Subslice stored directly in map retains underlying allocation buffer', got %v", got)
+	}
+}
