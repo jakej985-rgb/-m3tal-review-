@@ -869,6 +869,124 @@ new file mode 100644
 	}
 }
 
+func TestAsyncGapRule_NullCoalescingGuardDoesNotHideUnmountedUpdate(t *testing.T) {
+	diff := `diff --git a/lib/presentation/coalesce.dart b/lib/presentation/coalesce.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/coalesce.dart
+@@ -0,0 +1,12 @@
++class _CoalesceState extends State<Coalesce> {
++  Future<void> _update(bool? overrideReady, bool isReady) async {
++    await api.sync();
++    if (overrideReady ?? isReady && mounted) {
++      setState(() {});
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for unmounted update inside null-coalescing guard, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_StaticNavigatorPopGuarded(t *testing.T) {
+	diff := `diff --git a/lib/presentation/nav.dart b/lib/presentation/nav.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/nav.dart
+@@ -0,0 +1,11 @@
++class _NavState extends State<Nav> {
++  Future<void> _update(BuildContext ctx) async {
++    await api.sync();
++    if (!ctx.mounted) return;
++    Navigator.pop(ctx);
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for Navigator.pop(ctx) guarded by if (!ctx.mounted), got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_StaticNavigatorPopOtherContext(t *testing.T) {
+	diff := `diff --git a/lib/presentation/nav_other.dart b/lib/presentation/nav_other.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/nav_other.dart
+@@ -0,0 +1,11 @@
++class _NavOtherState extends State<NavOther> {
++  Future<void> _update(BuildContext ctx, BuildContext otherCtx) async {
++    await api.sync();
++    if (!ctx.mounted) return;
++    Navigator.pop(otherCtx);
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for Navigator.pop(otherCtx), got %d: %+v", len(findings), findings)
+	}
+	if findings[0].Line != 5 {
+		t.Errorf("expected finding on line 5, got %d", findings[0].Line)
+	}
+}
+
+func TestAsyncGapRule_NestedGuardConditionWithUnprotectedContext(t *testing.T) {
+	diff := `diff --git a/lib/presentation/nested_cond.dart b/lib/presentation/nested_cond.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/nested_cond.dart
+@@ -0,0 +1,16 @@
++class _NestedCondState extends State<NestedCond> {
++  Future<void> _update(BuildContext ctx, BuildContext otherCtx) async {
++    await api.sync();
++    if (ctx.mounted) {
++      if (mounted && Navigator.of(otherCtx).canPop()) {
++        setState(() {});
++      }
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for Navigator.of(otherCtx) in nested if condition, got %d: %+v", len(findings), findings)
+	}
+	if findings[0].Line != 5 {
+		t.Errorf("expected finding on line 5, got %d", findings[0].Line)
+	}
+}
+
+func TestAsyncGapRule_NestedGuardConditionWithProtectedContext(t *testing.T) {
+	diff := `diff --git a/lib/presentation/nested_safe.dart b/lib/presentation/nested_safe.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/nested_safe.dart
+@@ -0,0 +1,16 @@
++class _NestedSafeState extends State<NestedSafe> {
++  Future<void> _update(BuildContext ctx) async {
++    await api.sync();
++    if (ctx.mounted) {
++      if (mounted && Navigator.of(ctx).canPop()) {
++        setState(() {});
++      }
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings when nested if condition checks protected ctx, got %d: %+v", len(findings), findings)
+	}
+}
+
 func TestFlutterRules_WorkingTreeAware(t *testing.T) {
 	asyncGap := &AsyncGapRule{}
 	asyncGap.EnableWorkingTree()

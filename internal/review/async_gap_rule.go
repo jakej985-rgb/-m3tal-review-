@@ -139,10 +139,39 @@ func impliesMounted(expr string) (bool, map[string]bool) {
 		}
 	}
 
-	// In Dart, conditional operator (? :) has lower precedence than && and ||.
+	// In Dart, conditional operator (? :) has lower precedence than ??, &&, ||.
 	// Conservatively reject unsupported top-level conditional expressions before splitting at logical operators.
 	if hasTopLevelTernary(expr) {
 		return false, nil
+	}
+
+	// In Dart, null-coalescing (??) has lower precedence than && and ||.
+	// Both alternatives must guarantee mountedness for the whole expression to imply mountedness.
+	coalesceTerms := splitTopLevelOp(expr, "??")
+	if len(coalesceTerms) > 1 {
+		var commonReceivers map[string]bool
+		for i, term := range coalesceTerms {
+			safe, recs := impliesMounted(term)
+			if !safe || len(recs) == 0 {
+				return false, nil
+			}
+			if i == 0 {
+				commonReceivers = make(map[string]bool, len(recs))
+				for k, v := range recs {
+					commonReceivers[k] = v
+				}
+			} else {
+				for k := range commonReceivers {
+					if !recs[k] {
+						delete(commonReceivers, k)
+					}
+				}
+				if len(commonReceivers) == 0 {
+					return false, nil
+				}
+			}
+		}
+		return true, commonReceivers
 	}
 
 	// 1. Top-level disjunction (||): every term must guarantee mountedness.
@@ -224,14 +253,34 @@ func splitTopLevelOp(expr string, op string) []string {
 	parenDepth := 0
 	lastIdx := 0
 	opLen := len(op)
+	inQuote := false
+	var quoteChar byte
 
 	for i := 0; i <= len(expr)-opLen; i++ {
 		ch := expr[i]
-		if ch == '(' {
+		if inQuote {
+			if ch == '\\' {
+				i++
+				continue
+			}
+			if ch == quoteChar {
+				inQuote = false
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			inQuote = true
+			quoteChar = ch
+			continue
+		}
+		if ch == '(' || ch == '[' || ch == '{' {
 			parenDepth++
-		} else if ch == ')' {
+		} else if ch == ')' || ch == ']' || ch == '}' {
 			parenDepth--
 		} else if parenDepth == 0 && expr[i:i+opLen] == op {
+			if op == "??" && i+opLen < len(expr) && expr[i+opLen] == '=' {
+				continue
+			}
 			parts = append(parts, expr[lastIdx:i])
 			lastIdx = i + opLen
 			i += opLen - 1
@@ -244,7 +293,8 @@ func splitTopLevelOp(expr string, op string) []string {
 }
 
 var (
-	atomicMountedRe = regexp.MustCompile(`^(?:(this|context|[a-zA-Z0-9_]+)\.)?mounted(?:\s*==\s*true|\s*!=\s*false)?$`)
+	atomicMountedRe   = regexp.MustCompile(`^(?:(this|context|[a-zA-Z0-9_]+)\.)?mounted(?:\s*==\s*true|\s*!=\s*false)?$`)
+	staticNavigatorRe = regexp.MustCompile(`\bNavigator\.(?:pop|push|maybePop|pushNamed|pushReplacement|popUntil|pushAndRemoveUntil|replace|removeRoute)\s*\(\s*([a-zA-Z0-9_]+)`)
 )
 
 func isCallProtectedByReceivers(line string, activeReceivers map[string]bool) bool {
@@ -260,9 +310,17 @@ func isCallProtectedByReceivers(line string, activeReceivers map[string]bool) bo
 		return hasStateMounted
 	}
 
+	if m := staticNavigatorRe.FindStringSubmatch(line); len(m) > 1 {
+		arg := m[1]
+		if (arg == "context" || arg == "this") && hasStateMounted {
+			return true
+		}
+		return activeReceivers[arg]
+	}
+
 	if m := regexp.MustCompile(`\b([a-zA-Z0-9_]+)\.(?:go|push|pop|read|watch|select)\b`).FindStringSubmatch(line); len(m) > 1 {
 		recv := m[1]
-		if hasStateMounted {
+		if (recv == "context" || recv == "this") && hasStateMounted {
 			return true
 		}
 		return activeReceivers[recv]
@@ -270,14 +328,14 @@ func isCallProtectedByReceivers(line string, activeReceivers map[string]bool) bo
 
 	if m := regexp.MustCompile(`\b(?:of|Of)\s*\(\s*([a-zA-Z0-9_]+)`).FindStringSubmatch(line); len(m) > 1 {
 		arg := m[1]
-		if hasStateMounted {
+		if (arg == "context" || arg == "this") && hasStateMounted {
 			return true
 		}
 		return activeReceivers[arg]
 	}
 	if m := regexp.MustCompile(`\bcontext\s*:\s*([a-zA-Z0-9_]+)`).FindStringSubmatch(line); len(m) > 1 {
 		arg := m[1]
-		if hasStateMounted {
+		if (arg == "context" || arg == "this") && hasStateMounted {
 			return true
 		}
 		return activeReceivers[arg]
@@ -395,6 +453,114 @@ func (r AsyncGapRule) CheckContext(ctx context.Context, diff string) []Finding {
 	return findings
 }
 
+type guardScope struct {
+	braceDepth int
+	receivers  map[string]bool
+}
+
+func getActiveReceivers(cumulativeProvenReceivers map[string]bool, guardStack []guardScope) map[string]bool {
+	activeReceivers := make(map[string]bool, len(cumulativeProvenReceivers))
+	for k, v := range cumulativeProvenReceivers {
+		if v {
+			activeReceivers[k] = true
+		}
+	}
+	for _, scope := range guardStack {
+		for k, v := range scope.receivers {
+			if v {
+				activeReceivers[k] = true
+			}
+		}
+	}
+	return activeReceivers
+}
+
+func (r AsyncGapRule) checkConditionSinks(currLine string, currLineNum, awaitLineNum int, activeReceivers map[string]bool, block diffSourceBlock, seen map[string]bool) *Finding {
+	openIdx := strings.Index(currLine, "if")
+	if openIdx < 0 {
+		return nil
+	}
+	parenStart := strings.Index(currLine[openIdx:], "(")
+	if parenStart < 0 {
+		return nil
+	}
+	parenStart += openIdx
+	parenDepth := 0
+	parenEnd := -1
+	for idx := parenStart; idx < len(currLine); idx++ {
+		if currLine[idx] == '(' {
+			parenDepth++
+		} else if currLine[idx] == ')' {
+			parenDepth--
+			if parenDepth == 0 {
+				parenEnd = idx
+				break
+			}
+		}
+	}
+	if parenEnd == -1 {
+		return nil
+	}
+	cond := currLine[parenStart+1 : parenEnd]
+
+	andTerms := splitTopLevelOp(cond, "&&")
+	condReceivers := make(map[string]bool, len(activeReceivers))
+	for k, v := range activeReceivers {
+		condReceivers[k] = v
+	}
+
+	for _, term := range andTerms {
+		term = strings.TrimSpace(term)
+		matchedOp := ""
+		if setStateRe.MatchString(term) {
+			matchedOp = "setState()"
+		} else if m := contextUseRe.FindString(term); m != "" {
+			matchedOp = m
+		} else if m := controllerRe.FindString(term); m != "" {
+			matchedOp = strings.TrimSuffix(m, "(")
+		}
+
+		if matchedOp != "" && !isCallProtectedByReceivers(term, condReceivers) {
+			if block.addedLines[currLineNum] || block.addedLines[awaitLineNum] {
+				key := fmt.Sprintf("%s:%d:%s", block.file, currLineNum, matchedOp)
+				if !seen[key] {
+					seen[key] = true
+					msg := fmt.Sprintf(
+						"%s called across async gap (after await on line %d) without checking if (!mounted) or if (!context.mounted); throws if widget unmounts during async operation",
+						matchedOp, awaitLineNum,
+					)
+					remediation := "Add 'if (!mounted) return;' (or 'if (!context.mounted) return;') immediately after the await statement."
+					return &Finding{
+						Rule:        "unmounted-async-gap",
+						Severity:    "high",
+						Category:    "quality",
+						File:        block.file,
+						Line:        currLineNum,
+						Message:     msg,
+						Remediation: remediation,
+						Confidence:  "High",
+						Snippet:     strings.TrimSpace(currLine),
+						Explanation: &model.FindingExplanation{
+							RuleRationale:   "Calling setState, BuildContext, or controllers after an asynchronous operation when the widget has been unmounted causes runtime exceptions.",
+							EvidenceSummary: fmt.Sprintf("%s invoked across async boundary without mounted guard.", matchedOp),
+							EvidenceKind:    "async-lifecycle",
+						},
+					}
+				}
+			}
+		}
+
+		if safe, recs := impliesMounted(term); safe {
+			for k, v := range recs {
+				if v {
+					condReceivers[k] = true
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []Finding {
 	var findings []Finding
 	lines := strings.Split(block.text, "\n")
@@ -452,10 +618,6 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 			end = len(lines)
 		}
 
-		type guardScope struct {
-			braceDepth int
-			receivers  map[string]bool
-		}
 		var guardStack []guardScope
 		cumulativeProvenReceivers := make(map[string]bool)
 		scopeBraceDepth := 0
@@ -483,6 +645,10 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 
 			// Check for entering positive guard branch: if (mounted && ...) {
 			if safe, recs := isSafePositiveMountedGuard(currLine); safe && strings.Contains(currLine, "{") {
+				currentActive := getActiveReceivers(cumulativeProvenReceivers, guardStack)
+				if f := r.checkConditionSinks(currLine, currLineNum, lineNum, currentActive, block, seen); f != nil {
+					findings = append(findings, *f)
+				}
 				scopeBraceDepth++
 				guardStack = append(guardStack, guardScope{braceDepth: scopeBraceDepth, receivers: recs})
 				for _, ch := range currLine[strings.Index(currLine, "{")+1:] {
@@ -510,19 +676,7 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 			}
 
 			// Active receivers is union of proven receivers and active guard scopes
-			activeReceivers := make(map[string]bool, len(cumulativeProvenReceivers))
-			for k, v := range cumulativeProvenReceivers {
-				if v {
-					activeReceivers[k] = true
-				}
-			}
-			for _, scope := range guardStack {
-				for k, v := range scope.receivers {
-					if v {
-						activeReceivers[k] = true
-					}
-				}
-			}
+			activeReceivers := getActiveReceivers(cumulativeProvenReceivers, guardStack)
 
 			if isCallProtectedByReceivers(currLine, activeReceivers) {
 				continue

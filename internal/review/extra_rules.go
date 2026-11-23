@@ -26,7 +26,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "idor-unverified-access", severity: "high", raw: true,
 			remediation: "Verify that the authenticated user owns or is authorized to access the requested entity ID (e.g. record.OwnerID == caller.ID) before serializing or returning data.",
-			matchAbsent: regexp.MustCompile(`(?i)(?:if\s+[^;{\n]*\b(?:owner|tenant|user_?id|account_?id|caller|subject|principal|record)\w*\s*(?:!=|==)|if\s+[^;{\n]*(?:!=|==)\s*[^;{\n]*\b(?:owner|tenant|user_?id|account_?id|caller|subject|principal|record)\b|if\s+!\s*[^;{\n]*\b(?:auth|permiss\w*|allow\w*|isOwner|can\w*|has\w*|authorized)\b|\b(?:authorize|checkAccess|checkPermission|requireOwner|assertAuthorized)\s*\()`),
+			matchAbsent: regexp.MustCompile(`(?i)(?:if\s+[^;{\n]*\b(?:owner|tenant|user_?id|account_?id|caller|subject|principal)\w*\s*(?:!=|==)|if\s+[^;{\n]*(?:!=|==)\s*[^;{\n]*\b(?:owner|tenant|user_?id|account_?id|caller|subject|principal)\b|if\s+!\s*[^;{\n]*\b(?:auth|permiss\w*|allow\w*|isOwner|can\w*|has\w*|authorized)\b|\b(?:authorize|checkAccess|checkPermission|requireOwner|assertAuthorized)\s*\()`),
 			patterns: []langPattern{
 				{language.LanguageGo, regexp.MustCompile(`(?s)r\.URL\.Query\(\)\.Get\s*\(\s*["']id["']\s*\).*?\[\w+\]\s*\n\s*(?:s\.\w+Mu\.RUnlock\(\)\s*\n\s*)?(?:if\s+!ok|\w+\s*==\s*nil).*?Encode\(\w+\)`), "Entity retrieved by query ID and returned without visible ownership or tenant authorization check"},
 			}},

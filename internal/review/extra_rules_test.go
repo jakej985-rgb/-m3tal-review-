@@ -633,6 +633,18 @@ func TestNewRulesDetections(t *testing.T) {
 		if !hasFinding(r.Check(extraDiff("main.go", inlineParseCode)), "dns-rebinding-ssrf") {
 			t.Errorf("expected dns-rebinding-ssrf to flag inline net.ParseIP(targetURL.Hostname()) without nil check")
 		}
+
+		// Safe: allowlist predicate returning net.ParseIP(u.Hostname()).IsLoopback()
+		returnLoopbackCode := "package main\nfunc isLocal(targetURL *url.URL) bool {\n\treturn net.ParseIP(targetURL.Hostname()).IsLoopback()\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", returnLoopbackCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to ignore allowlist return predicate net.ParseIP(targetURL.Hostname()).IsLoopback()")
+		}
+
+		// Safe: negated allowlist check if !net.ParseIP(u.Hostname()).IsLoopback() { return errors.New("must be local") }
+		negatedLoopbackCode := "package main\nfunc f(targetURL *url.URL) error {\n\tif !net.ParseIP(targetURL.Hostname()).IsLoopback() {\n\t\treturn errors.New(\"must be loopback\")\n\t}\n\treturn nil\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", negatedLoopbackCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to ignore negated allowlist check")
+		}
 	})
 
 	t.Run("negative-amount-bypass", func(t *testing.T) {
@@ -699,10 +711,16 @@ func TestNewRulesDetections(t *testing.T) {
 			t.Errorf("expected idor-unverified-access to flag lookup when variable is named owner without actual check")
 		}
 
-		// Vulnerable: unrelated feature gate returns StatusForbidden, but entity lookup has no ownership check
-		unrelatedGateCode := "package main\nfunc f(w http.ResponseWriter, r *http.Request) {\n\tif !featureEnabled {\n\t\thttp.Error(w, \"forbidden\", http.StatusForbidden)\n\t\treturn\n\t}\n\tid := r.URL.Query().Get(\"id\")\n\trec := store[id]\n\tif !ok {\n\t\treturn\n\t}\n\tjson.NewEncoder(w).Encode(rec)\n}\n"
+		// Vulnerable: unrelated feature gate returns StatusForbidden between lookup and encode, but entity lookup has no ownership check
+		unrelatedGateCode := "package main\nfunc f(w http.ResponseWriter, r *http.Request) {\n\tid := r.URL.Query().Get(\"id\")\n\trec := store[id]\n\tif !ok {\n\t\treturn\n\t}\n\tif !featureEnabled {\n\t\thttp.Error(w, \"forbidden\", http.StatusForbidden)\n\t\treturn\n\t}\n\tjson.NewEncoder(w).Encode(rec)\n}\n"
 		if !hasFinding(r.Check(extraDiff("main.go", unrelatedGateCode)), "idor-unverified-access") {
 			t.Errorf("expected idor-unverified-access to flag lookup even if unrelated feature gate uses StatusForbidden")
+		}
+
+		// Vulnerable: missing record check (record == nil) does not supply authorization
+		nilRecordCode := "package main\nfunc f(w http.ResponseWriter, r *http.Request) {\n\tid := r.URL.Query().Get(\"id\")\n\trecord := store[id]\n\tif !ok || record == nil {\n\t\treturn\n\t}\n\tjson.NewEncoder(w).Encode(record)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", nilRecordCode)), "idor-unverified-access") {
+			t.Errorf("expected idor-unverified-access to flag lookup when check is only missing-record (!ok || record == nil)")
 		}
 
 		// Safe: record owner check prevents IDOR
@@ -729,6 +747,24 @@ func TestNewRulesDetections(t *testing.T) {
 		fixedFileCode := "package main\nfunc f(dir string) ([]byte, error) {\n\tp := filepath.Join(dir, \"config.json\")\n\treturn os.ReadFile(p)\n}\n"
 		if hasFinding(r.Check(extraDiff("main.go", fixedFileCode)), "filepath-containment-bypass") {
 			t.Errorf("expected filepath-containment-bypass to ignore join with fixed string literal")
+		}
+
+		// Vulnerable: literal subdirectory with dynamic key filepath.Join(dir, "uploads", key)
+		literalSubdirCode := "package main\nfunc f(dir, key string) ([]byte, error) {\n\tp := filepath.Join(dir, \"uploads\", key)\n\treturn os.ReadFile(p)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", literalSubdirCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag join with literal subdirectory and dynamic key")
+		}
+
+		// Vulnerable: multiple dynamic segments filepath.Join(dir, group, name) where only group is checked
+		partialValidationCode := "package main\nfunc f(dir, group, name string) ([]byte, error) {\n\tif !filepath.IsLocal(group) {\n\t\treturn nil, errors.New(\"bad group\")\n\t}\n\tp := filepath.Join(dir, group, name)\n\treturn os.ReadFile(p)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", partialValidationCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag join when only one of multiple dynamic segments is validated")
+		}
+
+		// Safe: multiple dynamic segments where all dynamic segments are validated
+		fullValidationCode := "package main\nfunc f(dir, group, name string) ([]byte, error) {\n\tif !filepath.IsLocal(group) || !filepath.IsLocal(name) {\n\t\treturn nil, errors.New(\"bad path\")\n\t}\n\tp := filepath.Join(dir, group, name)\n\treturn os.ReadFile(p)\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", fullValidationCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to ignore join when all dynamic segments are validated")
 		}
 
 		// Vulnerable: selector argument req.KeyID

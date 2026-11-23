@@ -105,7 +105,8 @@ func (r *DNSRebindingRule) CheckContext(ctx context.Context, diff string) []Find
 					hasNilGuard := false
 
 					for k := i; k < end; k++ {
-						if k > i && strings.HasPrefix(strings.TrimSpace(lines[k]), "func ") {
+						checkTrimmed := strings.TrimSpace(lines[k])
+						if k > i && strings.HasPrefix(checkTrimmed, "func ") {
 							break
 						}
 						// Check if nil is safely guarded before or alongside IsLoopback/IsPrivate
@@ -113,6 +114,12 @@ func (r *DNSRebindingRule) CheckContext(ctx context.Context, diff string) []Find
 							hasNilGuard = true
 						}
 						if ipCheckRe.MatchString(lines[k]) {
+							if strings.HasPrefix(checkTrimmed, "return ") || strings.HasPrefix(checkTrimmed, "return\t") {
+								continue
+							}
+							if strings.Contains(lines[k], "!"+ipVar+".") || strings.Contains(lines[k], "! "+ipVar+".") {
+								continue
+							}
 							hasIPCheck = true
 							checkLine = block.firstLine + k
 							break
@@ -157,6 +164,13 @@ func (r *DNSRebindingRule) CheckContext(ctx context.Context, diff string) []Find
 
 			// Check for inline check: net.ParseIP(u.Hostname()).IsPrivate() or net.ParseIP(host).IsLoopback()
 			if m := inlineNetParseIPCheckRe.FindStringSubmatch(line); len(m) > 1 {
+				trimmedLine := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmedLine, "return ") || strings.HasPrefix(trimmedLine, "return\t") {
+					continue
+				}
+				if strings.Contains(line, "!"+m[0]) || strings.Contains(line, "! "+m[0]) || strings.Contains(line, "!net.ParseIP") || strings.Contains(line, "! net.ParseIP") {
+					continue
+				}
 				arg := strings.TrimSpace(m[1])
 				isHostnameParse := false
 				if strings.Contains(arg, ".Hostname") {
