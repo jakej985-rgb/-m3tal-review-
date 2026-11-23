@@ -598,17 +598,49 @@ func TestNewRulesDetections(t *testing.T) {
 
 	t.Run("dns-rebinding-ssrf", func(t *testing.T) {
 		r := rulesByName(t, "dns-rebinding-ssrf")[0]
+		// Vulnerable: net.ParseIP hostname check where nil can bypass
 		code := "package main\nfunc f(u *url.URL) {\n\tip := net.ParseIP(u.Hostname())\n\tif ip != nil && ip.IsLoopback() {\n\t\treturn\n\t}\n}\n"
 		if !hasFinding(r.Check(extraDiff("main.go", code)), "dns-rebinding-ssrf") {
 			t.Errorf("expected dns-rebinding-ssrf to flag naive net.ParseIP check on Hostname")
+		}
+
+		// Safe: ip == nil is explicitly checked and returns error
+		safeCode := "package main\nfunc f(u *url.URL) error {\n\tip := net.ParseIP(u.Hostname())\n\tif ip == nil {\n\t\treturn errors.New(\"invalid ip\")\n\t}\n\tif ip.IsLoopback() {\n\t\treturn errors.New(\"loopback\")\n\t}\n\treturn nil\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", safeCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to ignore safe ip == nil guard")
+		}
+
+		// Safe: comment mentioning net.ParseIP must not flag
+		commentCode := "package main\n// net.ParseIP(u.Hostname()) and ip.IsLoopback() in comment\nfunc f() {}\n"
+		if hasFinding(r.Check(extraDiff("main.go", commentCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to ignore comment")
 		}
 	})
 
 	t.Run("negative-amount-bypass", func(t *testing.T) {
 		r := rulesByName(t, "negative-amount-bypass")[0]
+		// Vulnerable: upper bound without non-negative check
 		code := "package main\nfunc f(req Request, acc *Account) {\n\tif req.AmountCents > 10000 {\n\t\treturn\n\t}\n\tacc.Balance -= req.AmountCents\n}\n"
 		if !hasFinding(r.Check(extraDiff("main.go", code)), "negative-amount-bypass") {
 			t.Errorf("expected negative-amount-bypass to flag upper bound check without non-negative check")
+		}
+
+		// Vulnerable: balance-based limit like amount > acc.Balance
+		balanceLimitCode := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount > acc.Balance {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", balanceLimitCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag amount > acc.Balance check without non-negative check")
+		}
+
+		// Safe: lower bound validated on same line
+		safeSameLine := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount <= 0 || req.Amount > 10000 {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", safeSameLine)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to ignore validated lower bound on same line")
+		}
+
+		// Safe: lower bound validated on preceding line
+		safePreceding := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount <= 0 {\n\t\treturn\n\t}\n\tif req.Amount > acc.Balance {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", safePreceding)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to ignore validated lower bound on preceding line")
 		}
 	})
 

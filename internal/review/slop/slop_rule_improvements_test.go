@@ -291,3 +291,116 @@ func (s *Svc) Hash(data []byte) []byte {
 		t.Fatalf("expected 'Stateful hash.Hash field reset and reused in method without synchronization', got %v", got)
 	}
 }
+
+func TestSlopTypedNilError_GroupedReturnsNotFlagged(t *testing.T) {
+	src := `package main
+type CustomErr struct{}
+func (e *CustomErr) Error() string { return "custom" }
+
+func multiReturn() (a, b *CustomErr, err error) {
+	var p *CustomErr
+	return p, p, nil
+}
+`
+	got := slopMessages(t, src)
+	for _, msg := range got {
+		if strings.Contains(msg, "Concrete pointer returned as error interface") {
+			t.Fatalf("grouped return multiReturn should not flag concrete pointers returned in non-error slots, got %v", got)
+		}
+	}
+}
+
+func TestSlopTypedNilError_InnerClosureReturnNotFlagged(t *testing.T) {
+	src := `package main
+type CustomErr struct{}
+func (e *CustomErr) Error() string { return "custom" }
+
+func outerFunc() (*CustomErr, error) {
+	f := func() *CustomErr {
+		var p *CustomErr
+		return p
+	}
+	_ = f
+	return nil, nil
+}
+`
+	got := slopMessages(t, src)
+	for _, msg := range got {
+		if strings.Contains(msg, "Concrete pointer returned as error interface") {
+			t.Fatalf("inner closure return should not be checked against outer signature, got %v", got)
+		}
+	}
+}
+
+func TestSlopTypedNilError_GuardedNonNilNotFlagged(t *testing.T) {
+	src := `package main
+type CustomErr struct{}
+func (e *CustomErr) Error() string { return "custom" }
+
+func guardedCheck(name string) error {
+	var err *CustomErr
+	if name == "" {
+		err = &CustomErr{}
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func earlyNilExit(name string) error {
+	var err *CustomErr
+	if err == nil {
+		return nil
+	}
+	return err
+}
+`
+	got := slopMessages(t, src)
+	for _, msg := range got {
+		if strings.Contains(msg, "Concrete pointer returned as error interface") {
+			t.Fatalf("guarded return should not flag when error is checked against nil, got %v", got)
+		}
+	}
+}
+
+func TestSlopSubsliceRetention_ClonedSliceNotFlagged(t *testing.T) {
+	src := `package main
+import "bytes"
+
+var store = make(map[string][]byte)
+
+func processCloned(buf []byte) {
+	sub := buf[:16]
+	sub = bytes.Clone(sub)
+	store["token"] = sub
+}
+
+func processDirectClone(buf []byte) {
+	store["token"] = bytes.Clone(buf[:16])
+}
+`
+	got := slopMessages(t, src)
+	for _, msg := range got {
+		if strings.Contains(msg, "Subslice stored directly in map") {
+			t.Fatalf("cloned slice should not be flagged as subslice retention, got %v", got)
+		}
+	}
+}
+
+func TestSlopSubsliceRetention_LocalBufferNotFlagged(t *testing.T) {
+	src := `package main
+
+func processLocal(buf []byte) {
+	var localArr [4]byte
+	sub := buf[:2]
+	localArr[0] = sub[0]
+}
+`
+	got := slopMessages(t, src)
+	for _, msg := range got {
+		if strings.Contains(msg, "Subslice stored directly in map") {
+			t.Fatalf("local buffer index assignment should not be flagged, got %v", got)
+		}
+	}
+}

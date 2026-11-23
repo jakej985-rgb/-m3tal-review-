@@ -441,10 +441,18 @@ func (v *slopInspector) checkTypedNilError(fn *ast.FuncDecl) {
 		return
 	}
 	errorIndices := make(map[int]bool)
-	for i, field := range fn.Type.Results.List {
-		if id, ok := field.Type.(*ast.Ident); ok && id.Name == "error" {
-			errorIndices[i] = true
+	slot := 0
+	for _, field := range fn.Type.Results.List {
+		count := len(field.Names)
+		if count == 0 {
+			count = 1
 		}
+		if id, ok := field.Type.(*ast.Ident); ok && id.Name == "error" {
+			for s := 0; s < count; s++ {
+				errorIndices[slot+s] = true
+			}
+		}
+		slot += count
 	}
 	if len(errorIndices) == 0 {
 		return
@@ -452,6 +460,9 @@ func (v *slopInspector) checkTypedNilError(fn *ast.FuncDecl) {
 
 	pointerVars := make(map[string]bool)
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if _, ok := n.(*ast.FuncLit); ok {
+			return false
+		}
 		switch stmt := n.(type) {
 		case *ast.DeclStmt:
 			if gen, ok := stmt.Decl.(*ast.GenDecl); ok && gen.Tok == token.VAR {
@@ -484,6 +495,9 @@ func (v *slopInspector) checkTypedNilError(fn *ast.FuncDecl) {
 	}
 
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if _, ok := n.(*ast.FuncLit); ok {
+			return false // Do not inspect return statements inside inner closures
+		}
 		ret, ok := n.(*ast.ReturnStmt)
 		if !ok {
 			return true
@@ -493,6 +507,9 @@ func (v *slopInspector) checkTypedNilError(fn *ast.FuncDecl) {
 				continue
 			}
 			if id, ok := res.(*ast.Ident); ok && pointerVars[id.Name] {
+				if isGuardedNonNil(fn.Body, ret, id.Name) {
+					continue
+				}
 				v.addFindingPos(ret.Pos(),
 					"Concrete pointer returned as error interface",
 					"Returning a concrete pointer variable as an error interface creates a typed-nil trap where `err != nil` evaluates to true; return nil explicitly or declare the variable as error.")
@@ -500,6 +517,147 @@ func (v *slopInspector) checkTypedNilError(fn *ast.FuncDecl) {
 		}
 		return true
 	})
+}
+
+func isNodeDescendant(root, target ast.Node) bool {
+	if root == nil || target == nil {
+		return false
+	}
+	found := false
+	ast.Inspect(root, func(n ast.Node) bool {
+		if n == target {
+			found = true
+			return false
+		}
+		return !found
+	})
+	return found
+}
+
+func isVarNotNilCond(cond ast.Expr, varName string) bool {
+	if bin, ok := cond.(*ast.BinaryExpr); ok {
+		if bin.Op == token.NEQ {
+			if id, ok := bin.X.(*ast.Ident); ok && id.Name == varName {
+				if id2, ok := bin.Y.(*ast.Ident); ok && id2.Name == "nil" {
+					return true
+				}
+			}
+			if id, ok := bin.Y.(*ast.Ident); ok && id.Name == varName {
+				if id2, ok := bin.X.(*ast.Ident); ok && id2.Name == "nil" {
+					return true
+				}
+			}
+		}
+		if bin.Op == token.LAND {
+			return isVarNotNilCond(bin.X, varName) || isVarNotNilCond(bin.Y, varName)
+		}
+	}
+	return false
+}
+
+func isVarNilCond(cond ast.Expr, varName string) bool {
+	if bin, ok := cond.(*ast.BinaryExpr); ok {
+		if bin.Op == token.EQL {
+			if id, ok := bin.X.(*ast.Ident); ok && id.Name == varName {
+				if id2, ok := bin.Y.(*ast.Ident); ok && id2.Name == "nil" {
+					return true
+				}
+			}
+			if id, ok := bin.Y.(*ast.Ident); ok && id.Name == varName {
+				if id2, ok := bin.X.(*ast.Ident); ok && id2.Name == "nil" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func blockExits(b *ast.BlockStmt) bool {
+	if b == nil || len(b.List) == 0 {
+		return false
+	}
+	last := b.List[len(b.List)-1]
+	switch last.(type) {
+	case *ast.ReturnStmt:
+		return true
+	}
+	return false
+}
+
+func isGuardedNonNil(body *ast.BlockStmt, targetRet *ast.ReturnStmt, varName string) bool {
+	var checkBlock func(b *ast.BlockStmt, guardedInParent bool) bool
+	checkBlock = func(b *ast.BlockStmt, guardedInParent bool) bool {
+		if b == nil {
+			return false
+		}
+		guardedInCurrent := guardedInParent
+		for _, stmt := range b.List {
+			if stmt == targetRet {
+				return guardedInCurrent
+			}
+
+			if ifStmt, ok := stmt.(*ast.IfStmt); ok {
+				if isNodeDescendant(ifStmt.Body, targetRet) {
+					isNonNilBranch := isVarNotNilCond(ifStmt.Cond, varName)
+					return checkBlock(ifStmt.Body, guardedInCurrent || isNonNilBranch)
+				}
+				if ifStmt.Else != nil && isNodeDescendant(ifStmt.Else, targetRet) {
+					isNilBranch := isVarNilCond(ifStmt.Cond, varName)
+					if elseBlock, ok := ifStmt.Else.(*ast.BlockStmt); ok {
+						return checkBlock(elseBlock, guardedInCurrent || isNilBranch)
+					}
+				}
+				if isVarNilCond(ifStmt.Cond, varName) && blockExits(ifStmt.Body) {
+					guardedInCurrent = true
+				}
+			} else if forStmt, ok := stmt.(*ast.ForStmt); ok {
+				if isNodeDescendant(forStmt.Body, targetRet) {
+					return checkBlock(forStmt.Body, guardedInCurrent)
+				}
+			} else if rangeStmt, ok := stmt.(*ast.RangeStmt); ok {
+				if isNodeDescendant(rangeStmt.Body, targetRet) {
+					return checkBlock(rangeStmt.Body, guardedInCurrent)
+				}
+			} else if blockStmt, ok := stmt.(*ast.BlockStmt); ok {
+				if isNodeDescendant(blockStmt, targetRet) {
+					return checkBlock(blockStmt, guardedInCurrent)
+				}
+			}
+		}
+		return false
+	}
+	return checkBlock(body, false)
+}
+
+func isCloningExpr(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.CallExpr:
+		name := callName(e)
+		switch name {
+		case "bytes.Clone", "strings.Clone", "slices.Clone":
+			return true
+		case "append":
+			return true
+		}
+	}
+	return false
+}
+
+func isLongLivedStoreTarget(expr ast.Expr) bool {
+	if _, ok := expr.(*ast.SelectorExpr); ok {
+		return true // struct field (e.g. s.cache, c.store)
+	}
+	if id, ok := expr.(*ast.Ident); ok {
+		lower := strings.ToLower(id.Name)
+		keywords := []string{"cache", "store", "storage", "registry", "pool", "session", "persist", "history", "items", "entries", "records", "table", "index"}
+		for _, kw := range keywords {
+			if strings.Contains(lower, kw) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // checkSubsliceRetention detects storing subslices directly in maps or long-lived state,
@@ -510,30 +668,44 @@ func (v *slopInspector) checkSubsliceRetention(fn *ast.FuncDecl) {
 	}
 	subsliceVars := make(map[string]bool)
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		as, ok := n.(*ast.AssignStmt)
-		if !ok {
-			return true
-		}
-		for i, rhs := range as.Rhs {
-			if _, ok := rhs.(*ast.SliceExpr); ok && i < len(as.Lhs) {
-				if id, ok := as.Lhs[i].(*ast.Ident); ok {
-					subsliceVars[id.Name] = true
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			for i, rhs := range node.Rhs {
+				if i >= len(node.Lhs) {
+					continue
+				}
+				lhsId, isId := node.Lhs[i].(*ast.Ident)
+				if !isId {
+					continue
+				}
+				if _, ok := rhs.(*ast.SliceExpr); ok {
+					subsliceVars[lhsId.Name] = true
+				} else if isCloningExpr(rhs) {
+					delete(subsliceVars, lhsId.Name)
 				}
 			}
-		}
-		// Check assignment to map index
-		if len(as.Lhs) == 1 && len(as.Rhs) == 1 {
-			if _, ok := as.Lhs[0].(*ast.IndexExpr); ok {
-				isSub := false
-				if _, ok := as.Rhs[0].(*ast.SliceExpr); ok {
-					isSub = true
-				} else if id, ok := as.Rhs[0].(*ast.Ident); ok && subsliceVars[id.Name] {
-					isSub = true
+			// Check assignment to map index
+			if len(node.Lhs) == 1 && len(node.Rhs) == 1 {
+				if idxExpr, ok := node.Lhs[0].(*ast.IndexExpr); ok {
+					if isLongLivedStoreTarget(idxExpr.X) && !isCloningExpr(node.Rhs[0]) {
+						isSub := false
+						if _, ok := node.Rhs[0].(*ast.SliceExpr); ok {
+							isSub = true
+						} else if id, ok := node.Rhs[0].(*ast.Ident); ok && subsliceVars[id.Name] {
+							isSub = true
+						}
+						if isSub {
+							v.addFindingPos(node.Pos(),
+								"Subslice stored directly in map retains underlying allocation buffer",
+								"Copy the subslice data with append([]byte(nil), sub...) or strings.Clone to prevent memory buffer pinning leaks.")
+						}
+					}
 				}
-				if isSub {
-					v.addFindingPos(as.Pos(),
-						"Subslice stored directly in map retains underlying allocation buffer",
-						"Copy the subslice data with append([]byte(nil), sub...) or strings.Clone to prevent memory buffer pinning leaks.")
+			}
+		case *ast.CallExpr:
+			if callName(node) == "copy" && len(node.Args) > 0 {
+				if id, ok := node.Args[0].(*ast.Ident); ok {
+					delete(subsliceVars, id.Name)
 				}
 			}
 		}

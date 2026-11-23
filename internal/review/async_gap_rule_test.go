@@ -159,7 +159,7 @@ new file mode 100644
 +  }
 +}
 +`
-	rule := AsyncGapRule{}
+	rule := LifecycleSetStateRule{}
 	findings := rule.Check(diff)
 	if len(findings) != 2 {
 		t.Fatalf("expected 2 findings for setState in initState and dispose, got %d: %+v", len(findings), findings)
@@ -329,7 +329,7 @@ new file mode 100644
 +  }
 +}
 +`
-	rule := AsyncGapRule{}
+	rule := DeactivatedContextRule{}
 	findings := rule.Check(diff)
 	if len(findings) != 2 {
 		t.Fatalf("expected 2 findings for deactivated context lookups in dispose, got %d: %+v", len(findings), findings)
@@ -360,7 +360,7 @@ new file mode 100644
 +  }
 +}
 +`
-	rule := AsyncGapRule{}
+	rule := WatchOutsideBuildRule{}
 	findings := rule.Check(diff)
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding for context.watch outside build, got %d: %+v", len(findings), findings)
@@ -455,7 +455,7 @@ new file mode 100644
 +  }
 +}
 +`
-	rule := AsyncGapRule{}
+	rule := DeactivatedContextRule{}
 	findings := rule.Check(diff)
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding for Provider.of<User>(context) in dispose, got %d: %+v", len(findings), findings)
@@ -483,7 +483,7 @@ new file mode 100644
 +  }
 +}
 +`
-	rule := AsyncGapRule{}
+	rule := WatchOutsideBuildRule{}
 	findings := rule.Check(diff)
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding for context.watch inside onPressed callback, got %d: %+v", len(findings), findings)
@@ -547,7 +547,7 @@ new file mode 100644
 +  }
 +}
 +`
-	rule := AsyncGapRule{}
+	rule := WatchOutsideBuildRule{}
 	findings := rule.Check(diff)
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings for ref.watch inside Riverpod String build(), got %d: %+v", len(findings), findings)
@@ -562,9 +562,107 @@ func TestAsyncGapRule_DoesNotFlagWatchWhenEnclosingMethodUnknown(t *testing.T) {
 +    final settings = context.watch<Settings>();
 +    return Text(settings.title);
 `
-	rule := AsyncGapRule{}
+	rule := WatchOutsideBuildRule{}
 	findings := rule.Check(diff)
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings for body-only hunk with unknown enclosing method, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_DisjunctionMountedGuardNotAccepted(t *testing.T) {
+	diff := `diff --git a/lib/presentation/disjunction_screen.dart b/lib/presentation/disjunction_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/disjunction_screen.dart
+@@ -0,0 +1,14 @@
++class _DisjunctionState extends State<DisjunctionScreen> {
++  Future<void> _update(bool force) async {
++    await api.sync();
++    if (mounted || force) {
++      setState(() {});
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding because disjunction 'mounted || force' cannot guarantee mounted, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_FalseMountedGuardNotAccepted(t *testing.T) {
+	diff := `diff --git a/lib/presentation/false_screen.dart b/lib/presentation/false_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/false_screen.dart
+@@ -0,0 +1,14 @@
++class _FalseState extends State<FalseScreen> {
++  Future<void> _update() async {
++    await api.sync();
++    if (mounted == false) {
++      setState(() {});
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding because 'mounted == false' indicates unmounted, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestWatchOutsideBuild_SingleLineCallbackDoesNotContaminateFollowingCode(t *testing.T) {
+	diff := `diff --git a/lib/presentation/single_line_screen.dart b/lib/presentation/single_line_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/single_line_screen.dart
+@@ -0,0 +1,17 @@
++class _SingleLineState extends State<SingleLineScreen> {
++  @override
++  Widget build(BuildContext context) {
++    return Column(
++      children: [
++        ElevatedButton(onPressed: () {}, child: Text('OK')),
++        Builder(builder: (context) {
++          final data = context.watch<Data>();
++          return Text(data.title);
++        }),
++      ],
++    );
++  }
++}
++`
+	rule := WatchOutsideBuildRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings because single-line callback does not contaminate subsequent lines, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestFlutterRules_WorkingTreeAware(t *testing.T) {
+	asyncGap := &AsyncGapRule{}
+	asyncGap.EnableWorkingTree()
+	if !asyncGap.WorkingTree {
+		t.Errorf("expected AsyncGapRule.WorkingTree = true")
+	}
+
+	deactivated := &DeactivatedContextRule{}
+	deactivated.EnableWorkingTree()
+	if !deactivated.WorkingTree {
+		t.Errorf("expected DeactivatedContextRule.WorkingTree = true")
+	}
+
+	watchOutside := &WatchOutsideBuildRule{}
+	watchOutside.EnableWorkingTree()
+	if !watchOutside.WorkingTree {
+		t.Errorf("expected WatchOutsideBuildRule.WorkingTree = true")
+	}
+
+	lifecycleSetState := &LifecycleSetStateRule{}
+	lifecycleSetState.EnableWorkingTree()
+	if !lifecycleSetState.WorkingTree {
+		t.Errorf("expected LifecycleSetStateRule.WorkingTree = true")
 	}
 }
