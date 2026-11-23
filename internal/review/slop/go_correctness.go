@@ -434,6 +434,113 @@ func (v *slopInspector) addFindingPos(pos token.Pos, message, remediation string
 	}
 }
 
+// checkTypedNilError detects functions returning a concrete pointer variable
+// as an error interface, which results in a typed nil (err != nil evaluates to true).
+func (v *slopInspector) checkTypedNilError(fn *ast.FuncDecl) {
+	if fn == nil || fn.Type == nil || fn.Type.Results == nil || fn.Body == nil {
+		return
+	}
+	errorIndices := make(map[int]bool)
+	for i, field := range fn.Type.Results.List {
+		if id, ok := field.Type.(*ast.Ident); ok && id.Name == "error" {
+			errorIndices[i] = true
+		}
+	}
+	if len(errorIndices) == 0 {
+		return
+	}
+
+	pointerVars := make(map[string]bool)
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		switch stmt := n.(type) {
+		case *ast.DeclStmt:
+			if gen, ok := stmt.Decl.(*ast.GenDecl); ok && gen.Tok == token.VAR {
+				for _, spec := range gen.Specs {
+					if vspec, ok := spec.(*ast.ValueSpec); ok {
+						if _, ok := vspec.Type.(*ast.StarExpr); ok {
+							for _, name := range vspec.Names {
+								pointerVars[name.Name] = true
+							}
+						}
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			for i, rhs := range stmt.Rhs {
+				if call, ok := rhs.(*ast.CallExpr); ok {
+					if _, ok := call.Fun.(*ast.StarExpr); ok && i < len(stmt.Lhs) {
+						if id, ok := stmt.Lhs[i].(*ast.Ident); ok {
+							pointerVars[id.Name] = true
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	if len(pointerVars) == 0 {
+		return
+	}
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		ret, ok := n.(*ast.ReturnStmt)
+		if !ok {
+			return true
+		}
+		for i, res := range ret.Results {
+			if !errorIndices[i] {
+				continue
+			}
+			if id, ok := res.(*ast.Ident); ok && pointerVars[id.Name] {
+				v.addFindingPos(ret.Pos(),
+					"Concrete pointer returned as error interface",
+					"Returning a concrete pointer variable as an error interface creates a typed-nil trap where `err != nil` evaluates to true; return nil explicitly or declare the variable as error.")
+			}
+		}
+		return true
+	})
+}
+
+// checkSubsliceRetention detects storing subslices directly in maps or long-lived state,
+// which pins large backing buffers in memory and causes memory leaks.
+func (v *slopInspector) checkSubsliceRetention(fn *ast.FuncDecl) {
+	if fn == nil || fn.Body == nil {
+		return
+	}
+	subsliceVars := make(map[string]bool)
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for i, rhs := range as.Rhs {
+			if _, ok := rhs.(*ast.SliceExpr); ok && i < len(as.Lhs) {
+				if id, ok := as.Lhs[i].(*ast.Ident); ok {
+					subsliceVars[id.Name] = true
+				}
+			}
+		}
+		// Check assignment to map index
+		if len(as.Lhs) == 1 && len(as.Rhs) == 1 {
+			if _, ok := as.Lhs[0].(*ast.IndexExpr); ok {
+				isSub := false
+				if _, ok := as.Rhs[0].(*ast.SliceExpr); ok {
+					isSub = true
+				} else if id, ok := as.Rhs[0].(*ast.Ident); ok && subsliceVars[id.Name] {
+					isSub = true
+				}
+				if isSub {
+					v.addFindingPos(as.Pos(),
+						"Subslice stored directly in map retains underlying allocation buffer",
+						"Copy the subslice data with append([]byte(nil), sub...) or strings.Clone to prevent memory buffer pinning leaks.")
+				}
+			}
+		}
+		return true
+	})
+}
+
 // enclosingFuncDecl returns the innermost function declaration on the
 // inspector's ancestor stack, or nil at package level.
 func (v *slopInspector) enclosingFuncDecl() *ast.FuncDecl {
