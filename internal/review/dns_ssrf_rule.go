@@ -31,7 +31,7 @@ func (r *DNSRebindingRule) Check(diff string) []Finding {
 
 var (
 	rejectReturnRe = regexp.MustCompile(
-		`(?:\breturn\s+(?:nil\s*,\s*|[^;\n,]+\s*,\s*)*(?:errors\.|fmt\.Errorf|err\b|[a-zA-Z0-9_]*err[a-zA-Z0-9_]*\b|false\b)|http\.Error\b|\bpanic\s*\()`,
+		`(?:\breturn\s+(?:nil\s*,\s*|[^;\n,]+\s*,\s*)*(?:errors\.|fmt\.Errorf|err\b|[a-zA-Z0-9_]*err[a-zA-Z0-9_]*\b|\bErr[A-Z]\w*\b|false\b)|http\.Error\b|\bpanic\s*\()`,
 	)
 	acceptReturnRe = regexp.MustCompile(
 		`(?:\breturn\s+nil\s*(?:;.*)?$|\breturn\s+true\s*(?:;.*)?$|\breturn\s+[^;\n,]+\s*,\s*nil\s*(?:;.*)?$)`,
@@ -104,7 +104,7 @@ func hasRejectingElse(lines []string, endIfLine int) bool {
 	return false
 }
 
-func isReturnIPPredicate(line string) bool {
+func isReturnIPPredicate(line string, targetIPVar string) bool {
 	trimmed := strings.TrimSpace(line)
 	if !strings.HasPrefix(trimmed, "return ") && !strings.HasPrefix(trimmed, "return\t") {
 		return false
@@ -115,11 +115,26 @@ func isReturnIPPredicate(line string) bool {
 		expr = expr[:semi]
 	}
 	expr = unwrapParens(expr)
-	ipCallRe := regexp.MustCompile(`^(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\([^()]*\)$`)
-	return ipCallRe.MatchString(expr)
+
+	targetPattern := `(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)`
+	if targetIPVar != "" {
+		targetPattern = regexp.QuoteMeta(targetIPVar)
+	}
+	ipCallRe := regexp.MustCompile(`^` + targetPattern + `\s*\.\s*Is[A-Z]\w*\s*\([^()]*\)$`)
+
+	// Support single predicate or disjunction of IP predicates:
+	// e.g. return ip.IsLoopback() || ip.IsPrivate()
+	terms := strings.Split(expr, "||")
+	for _, term := range terms {
+		unwrapped := unwrapParens(strings.TrimSpace(term))
+		if !ipCallRe.MatchString(unwrapped) {
+			return false
+		}
+	}
+	return len(terms) > 0
 }
 
-func isNegatedIPPredicate(line string) bool {
+func isNegatedIPPredicate(line string, targetIPVar string) bool {
 	cond := strings.TrimSpace(line)
 	if strings.HasPrefix(cond, "if ") {
 		cond = strings.TrimPrefix(cond, "if ")
@@ -131,9 +146,14 @@ func isNegatedIPPredicate(line string) bool {
 	}
 	cond = strings.TrimSpace(cond)
 
+	targetPattern := `(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)`
+	if targetIPVar != "" {
+		targetPattern = regexp.QuoteMeta(targetIPVar)
+	}
+
 	// Direct negation check: !ip.IsLoopback(), !(ip.IsLoopback()), (!ip.IsLoopback())
 	if strings.Contains(cond, "!") {
-		negRe := regexp.MustCompile(`!\s*\(+\s*(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\(|\b!\s*(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\(`)
+		negRe := regexp.MustCompile(`!\s*\(+\s*` + targetPattern + `\s*\.\s*Is[A-Z]\w*\s*\(|\b!\s*` + targetPattern + `\s*\.\s*Is[A-Z]\w*\s*\(`)
 		if negRe.MatchString(cond) {
 			return true
 		}
@@ -147,24 +167,38 @@ func isNegatedIPPredicate(line string) bool {
 			prefix = strings.TrimSpace(prefix[idx+1:])
 		}
 		prefix = unwrapParens(prefix)
-		ipCallRe := regexp.MustCompile(`^(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\([^()]*\)$`)
+		ipCallRe := regexp.MustCompile(`^` + targetPattern + `\s*\.\s*Is[A-Z]\w*\s*\([^()]*\)$`)
 		if ipCallRe.MatchString(prefix) {
+			return true
+		}
+	}
+
+	// Reversed comparison: false == ip.IsLoopback() or true != ip.IsLoopback()
+	cmpReRev := regexp.MustCompile(`(?:false\s*==|true\s*!=)\s*`)
+	for _, loc := range cmpReRev.FindAllStringIndex(cond, -1) {
+		suffix := strings.TrimSpace(cond[loc[1]:])
+		if idx := strings.IndexAny(suffix, "&|"); idx != -1 {
+			suffix = strings.TrimSpace(suffix[:idx])
+		}
+		suffix = unwrapParens(suffix)
+		ipCallRe := regexp.MustCompile(`^` + targetPattern + `\s*\.\s*Is[A-Z]\w*\s*\([^()]*\)$`)
+		if ipCallRe.MatchString(suffix) {
 			return true
 		}
 	}
 	return false
 }
 
-func isAllowlistContext(line string, lines []string, idx int) bool {
+func isAllowlistContext(line string, lines []string, idx int, targetIPVar string) bool {
 	// 1. Returning the check as a boolean predicate (e.g. return net.ParseIP(...).IsLoopback())
-	if isReturnIPPredicate(line) {
+	if isReturnIPPredicate(line, targetIPVar) {
 		return true
 	}
 
 	// 2. Negated check applied directly to the IP predicate:
 	// e.g. if !net.ParseIP(u.Hostname()).IsLoopback() or if (ip.IsLoopback()) == false
 	// These require the IP property to be true, rejecting non-matching hosts (domain names).
-	if isNegatedIPPredicate(line) {
+	if isNegatedIPPredicate(line, targetIPVar) {
 		return true
 	}
 
@@ -292,7 +326,7 @@ func (r *DNSRebindingRule) CheckContext(ctx context.Context, diff string) []Find
 							hasNilGuard = true
 						}
 						if ipCheckRe.MatchString(lines[k]) {
-							if isAllowlistContext(lines[k], lines, k) {
+							if isAllowlistContext(lines[k], lines, k, ipVar) {
 								continue
 							}
 							if strings.Contains(lines[k], "!"+ipVar+".") || strings.Contains(lines[k], "! "+ipVar+".") {
@@ -342,7 +376,7 @@ func (r *DNSRebindingRule) CheckContext(ctx context.Context, diff string) []Find
 
 			// Check for inline check: net.ParseIP(u.Hostname()).IsPrivate() or net.ParseIP(host).IsLoopback()
 			if m := inlineNetParseIPCheckRe.FindStringSubmatch(line); len(m) > 1 {
-				if isAllowlistContext(line, lines, i) {
+				if isAllowlistContext(line, lines, i, "") {
 					continue
 				}
 				if strings.Contains(line, "!"+m[0]) || strings.Contains(line, "! "+m[0]) {

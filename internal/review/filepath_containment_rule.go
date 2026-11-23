@@ -221,8 +221,10 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 			var joins []joinInfo
 
 			type scopedVar struct {
-				name  string
-				depth int
+				name      string
+				depth     int
+				isIfInit  bool
+				stmtDepth int
 			}
 			var scopedVars []scopedVar
 			curDepth := 0
@@ -299,27 +301,57 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 					return events[a].kind < events[b].kind
 				})
 
+				isElseFollows := func(lineIdx, charPos int) bool {
+					rest := line[charPos+1:]
+					if regexp.MustCompile(`\belse\b`).MatchString(rest) {
+						return true
+					}
+					for k := lineIdx + 1; k < len(fnLines); k++ {
+						trimmed := strings.TrimSpace(fnLines[k])
+						if trimmed == "" {
+							continue
+						}
+						return regexp.MustCompile(`^else(?:\s|\{|$|\b)`).MatchString(trimmed)
+					}
+					return false
+				}
+
 				for _, ev := range events {
 					switch ev.kind {
 					case 1:
 						curDepth++
 					case 2:
 						curDepth--
+						elseFollows := isElseFollows(idx, ev.pos)
 						var remaining []scopedVar
 						for _, sv := range scopedVars {
-							if sv.depth <= curDepth {
-								remaining = append(remaining, sv)
+							if sv.isIfInit {
+								if curDepth > sv.stmtDepth || (curDepth == sv.stmtDepth && elseFollows) {
+									remaining = append(remaining, sv)
+								}
+							} else {
+								if sv.depth <= curDepth {
+									remaining = append(remaining, sv)
+								}
 							}
 						}
 						scopedVars = remaining
 					case 3:
 						declDepth := curDepth
 						prefix := line[:ev.pos]
-						if regexp.MustCompile(`\b(?:if|for|switch)\b[^{]*$`).MatchString(prefix) {
-							declDepth = curDepth + 1
-						}
-						for _, id := range ev.idents {
-							scopedVars = append(scopedVars, scopedVar{name: id, depth: declDepth})
+						isIf := regexp.MustCompile(`\bif\b[^{]*$`).MatchString(prefix)
+						isForSwitch := regexp.MustCompile(`\b(?:for|switch)\b[^{]*$`).MatchString(prefix)
+						if isIf {
+							for _, id := range ev.idents {
+								scopedVars = append(scopedVars, scopedVar{name: id, depth: curDepth + 1, isIfInit: true, stmtDepth: curDepth})
+							}
+						} else {
+							if isForSwitch {
+								declDepth = curDepth + 1
+							}
+							for _, id := range ev.idents {
+								scopedVars = append(scopedVars, scopedVar{name: id, depth: declDepth})
+							}
 						}
 					case 4:
 						m := ev.joinCall
@@ -337,7 +369,13 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 								}
 								for _, sv := range scopedVars {
 									if sv.name == seg {
-										return true
+										if sv.isIfInit {
+											if curDepth > sv.stmtDepth {
+												return true
+											}
+										} else {
+											return true
+										}
 									}
 								}
 								return false

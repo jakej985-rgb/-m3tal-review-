@@ -79,6 +79,9 @@ var (
 	watchOutsideBuildRe = regexp.MustCompile(
 		`\b(?:context|ref)\.watch\s*(?:<[^;\n()]+>)?\s*\(`,
 	)
+	topLevelDeclRe = regexp.MustCompile(
+		`^(?:final|const|var|class|enum)\s+[a-zA-Z0-9_<>]+\s*=?`,
+	)
 )
 
 func isSafePositiveMountedGuard(line string) (bool, map[string]bool) {
@@ -324,7 +327,7 @@ func isCallProtectedByReceivers(line string, activeReceivers map[string]bool) bo
 
 	if m := regexp.MustCompile(`\b([a-zA-Z0-9_]+)\.(?:go|push|pop|read|watch|select)\b`).FindStringSubmatch(line); len(m) > 1 {
 		recv := m[1]
-		if (recv == "context" || recv == "this" || recv == "ref") && hasStateMounted {
+		if (recv == "context" || recv == "this" || recv == "ref") && (hasStateMounted || activeReceivers["context"]) {
 			return true
 		}
 		return activeReceivers[recv]
@@ -680,8 +683,8 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 			currLine := lines[j]
 			currLineNum := block.firstLine + j
 
-			// If a new method declaration begins, break
-			if methodDeclRe.MatchString(currLine) {
+			// If a new method or top-level declaration begins, break
+			if methodDeclRe.MatchString(currLine) || topLevelDeclRe.MatchString(currLine) {
 				break
 			}
 
@@ -727,6 +730,10 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 						guardStack = guardStack[:len(guardStack)-1]
 					}
 				}
+			}
+
+			if scopeBraceDepth < 0 {
+				break
 			}
 
 			// Active receivers is union of proven receivers and active guard scopes

@@ -709,6 +709,11 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&UnboundedBufferRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&UnparentedLauncherRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&UnflaggedTransportRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&FlutterKeepAliveRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&EventLoopStarvationRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&RiverpodProviderInvalidationRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&CourseCompletionGatingRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&ImageCacheAspectRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 	}
 }
 

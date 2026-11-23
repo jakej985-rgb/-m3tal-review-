@@ -45,8 +45,7 @@ func blockExits(lines []string, start, end int) bool {
 	for k := start; k <= end && k < len(lines); k++ {
 		trimmed := strings.TrimSpace(lines[k])
 		if strings.HasPrefix(trimmed, "return") ||
-			strings.HasPrefix(trimmed, "panic(") ||
-			strings.Contains(trimmed, "http.Error(") {
+			strings.HasPrefix(trimmed, "panic(") {
 			return true
 		}
 	}
@@ -68,6 +67,36 @@ func hasExitingElse(lines []string, endIfLine int) bool {
 	return blockExits(lines, elseStart, elseEnd)
 }
 
+func getIfCondition(lines []string, j int) string {
+	start := j
+	for k := j; k >= 0 && k >= j-5; k-- {
+		if strings.Contains(lines[k], "if ") || strings.Contains(lines[k], "if(") {
+			start = k
+			break
+		}
+	}
+	var condParts []string
+	for k := start; k < len(lines) && k <= start+5; k++ {
+		condParts = append(condParts, lines[k])
+		if strings.Contains(lines[k], "{") {
+			break
+		}
+	}
+	full := strings.Join(condParts, " ")
+	if idx := strings.Index(full, "if "); idx != -1 {
+		full = full[idx+3:]
+	} else if idx := strings.Index(full, "if("); idx != -1 {
+		full = full[idx+2:]
+	}
+	if semi := strings.LastIndex(full, ";"); semi != -1 {
+		full = full[semi+1:]
+	}
+	if idx := strings.Index(full, "{"); idx != -1 {
+		full = full[:idx]
+	}
+	return full
+}
+
 func buildDebitTargetPattern(raw string) string {
 	expr := unwrapDebitOperand(raw)
 	tokens := strings.FieldsFunc(expr, func(r rune) bool {
@@ -80,6 +109,20 @@ func buildDebitTargetPattern(raw string) string {
 		if isIdentOrSelector(t) || isNumericLiteral(t) {
 			cleanTokens = append(cleanTokens, t)
 		}
+	}
+
+	hasIdent := false
+	var identToken string
+	for _, tok := range cleanTokens {
+		if isIdentOrSelector(tok) && !isNumericLiteral(tok) {
+			if !hasIdent {
+				identToken = tok
+				hasIdent = true
+			}
+		}
+	}
+	if !hasIdent {
+		return ""
 	}
 
 	buildIdentPattern := func(ident string) string {
@@ -96,9 +139,8 @@ func buildDebitTargetPattern(raw string) string {
 		return `(?:` + pat + `)`
 	}
 
-	if len(cleanTokens) == 0 {
-		return ""
-	}
+	fallbackPat := buildIdentPattern(identToken)
+
 	if len(cleanTokens) == 1 {
 		p := buildIdentPattern(cleanTokens[0])
 		return `(?:\b` + p + `\b)`
@@ -107,14 +149,14 @@ func buildDebitTargetPattern(raw string) string {
 		p1 := buildIdentPattern(cleanTokens[0])
 		p2 := buildIdentPattern(cleanTokens[1])
 		scaled := `(?:` + p1 + `\s*[*x/]\s*` + p2 + `|` + p2 + `\s*[*x/]\s*` + p1 + `)`
-		return `(?:\b` + scaled + `\b|\(` + scaled + `\)|\b` + p1 + `\b)`
+		return `(?:\b` + scaled + `\b|\(` + scaled + `\)|\b` + fallbackPat + `\b)`
 	}
 
 	var parts []string
 	for _, tok := range cleanTokens {
 		parts = append(parts, buildIdentPattern(tok))
 	}
-	return `(?:\b(?:` + strings.Join(parts, `\s*[*x/]\s*`) + `)\b|\b` + parts[0] + `\b)`
+	return `(?:\b(?:` + strings.Join(parts, `\s*[*x/]\s*`) + `)\b|\b` + fallbackPat + `\b)`
 }
 
 func unwrapDebitOperand(raw string) string {
@@ -260,12 +302,15 @@ func (r *NegativeAmountRule) CheckContext(ctx context.Context, diff string) []Fi
 								hasLower = true
 							}
 						} else if checkType == 2 {
-							// Rejection check: protects if the block exits early
-							if i > endBlock && blockExits(lines, j, endBlock) {
-								hasLower = true
-							} else if i <= endBlock && j == i && strings.Contains(lines[j], "return") {
-								// Same-line guard: if amount <= 0 { return }
-								hasLower = true
+							// Rejection check: protects if the block exits early and is not conjoined with &&
+							ifCond := getIfCondition(lines, j)
+							if !strings.Contains(ifCond, "&&") {
+								if i > endBlock && blockExits(lines, j, endBlock) {
+									hasLower = true
+								} else if i <= endBlock && j == i && strings.Contains(lines[j], "return") {
+									// Same-line guard: if amount <= 0 { return }
+									hasLower = true
+								}
 							}
 						}
 					}

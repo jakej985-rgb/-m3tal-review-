@@ -676,9 +676,33 @@ func TestNewRulesDetections(t *testing.T) {
 			t.Errorf("expected dns-rebinding-ssrf to recognize parenthesized IP comparison to false")
 		}
 
-		parenthesizedVarAllowCode := "package main\nfunc f(ip net.IP) error {\n\tif (ip.IsLoopback()) == false {\n\t\treturn errors.New(\"must be loopback\")\n\t}\n\treturn nil\n}\n"
+		parenthesizedVarAllowCode := "package main\nfunc f(targetURL *url.URL) error {\n\tip := net.ParseIP(targetURL.Hostname())\n\tif (ip.IsLoopback()) == false {\n\t\treturn errors.New(\"must be loopback\")\n\t}\n\treturn nil\n}\n"
 		if hasFinding(r.Check(extraDiff("main.go", parenthesizedVarAllowCode)), "dns-rebinding-ssrf") {
 			t.Errorf("expected dns-rebinding-ssrf to recognize parenthesized var IP comparison to false")
+		}
+
+		// Vulnerable: unrelated IP comparison to false does not protect target IP
+		unrelatedIPNegationCode := "package main\nfunc f(targetURL *url.URL, proxyIP net.IP) error {\n\tip := net.ParseIP(targetURL.Hostname())\n\tif ip.IsPrivate() && (proxyIP.IsLoopback()) == false {\n\t\treturn errors.New(\"private\")\n\t}\n\treturn nil\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", unrelatedIPNegationCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to flag hostname check when negation is on an unrelated IP variable")
+		}
+
+		// Safe: combined return IP allowlist
+		combinedReturnAllowCode := "package main\nfunc isAllowed(targetURL *url.URL) bool {\n\tip := net.ParseIP(targetURL.Hostname())\n\treturn ip.IsLoopback() || ip.IsPrivate()\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", combinedReturnAllowCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to recognize combined IP allowlist in return statement")
+		}
+
+		// Vulnerable: private-IP rejection returning sentinel error with unchecked fallthrough
+		sentinelErrorAllowCode := "package main\nvar ErrInvalidHost = errors.New(\"invalid host\")\nfunc validate(targetURL *url.URL) (*url.URL, error) {\n\tif net.ParseIP(targetURL.Hostname()).IsPrivate() {\n\t\treturn nil, ErrInvalidHost\n\t}\n\treturn targetURL, nil\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", sentinelErrorAllowCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to flag private-IP block when rejection returns ErrInvalidHost and fallthrough succeeds")
+		}
+
+		// Safe: sentinel error return in allowlist
+		sentinelSafeAllowCode := "package main\nvar ErrInvalidHost = errors.New(\"invalid host\")\nfunc validate(targetURL *url.URL) (*url.URL, error) {\n\tif (net.ParseIP(targetURL.Hostname()).IsLoopback()) == false {\n\t\treturn nil, ErrInvalidHost\n\t}\n\treturn targetURL, nil\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", sentinelSafeAllowCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to recognize safe allowlist returning sentinel ErrInvalidHost")
 		}
 	})
 
@@ -778,6 +802,30 @@ func TestNewRulesDetections(t *testing.T) {
 		decimalZeroCode := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount <= 0.0 {\n\t\treturn\n\t}\n\tif req.Amount > acc.Balance {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount\n}\n"
 		if hasFinding(r.Check(extraDiff("main.go", decimalZeroCode)), "negative-amount-bypass") {
 			t.Errorf("expected negative-amount-bypass to recognize 0.0 as safe lower bound threshold")
+		}
+
+		// Safe: fixed fee debit like acc.Balance -= 100 with upper limit acc.Balance < 100
+		fixedFeeCode := "package main\nfunc f(acc *Account) {\n\tif acc.Balance < 100 {\n\t\treturn\n\t}\n\tacc.Balance -= 100\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", fixedFeeCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to ignore fixed constant debits")
+		}
+
+		// Vulnerable: leading multiplier debit acc.Balance -= 100 * amount
+		leadingMultiplierCode := "package main\nfunc f(acc *Account, amount int64) {\n\tif amount > acc.Balance / 100 {\n\t\treturn\n\t}\n\tacc.Balance -= 100 * amount\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", leadingMultiplierCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag leading multiplier debit with only upper bound check")
+		}
+
+		// Vulnerable: http.Error without return does not terminate execution
+		httpErrorNoExitCode := "package main\nfunc f(w http.ResponseWriter, r *http.Request, acc *Account, amount int64) {\n\tif amount <= 0 {\n\t\thttp.Error(w, \"invalid\", 400)\n\t}\n\tif amount > acc.Balance {\n\t\treturn\n\t}\n\tacc.Balance -= amount\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", httpErrorNoExitCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag debit when lower bound uses http.Error without return")
+		}
+
+		// Vulnerable: conditional lower bound conjoined with &&
+		conditionalLowerBoundCode := "package main\nfunc f(acc *Account, amount int64, strict bool) {\n\tif amount <= 0 && strict {\n\t\treturn\n\t}\n\tif amount > acc.Balance {\n\t\treturn\n\t}\n\tacc.Balance -= amount\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", conditionalLowerBoundCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag debit when lower bound is conjoined with &&")
 		}
 	})
 
@@ -926,6 +974,12 @@ func TestNewRulesDetections(t *testing.T) {
 		ifInitScopeCode := "package main\nconst filename = \"metadata.json\"\nfunc read(base string) ([]byte, error) {\n\tif filename := getTemp(); filename != \"\" {\n\t\t_ = filename\n\t}\n\tp := filepath.Join(base, filename)\n\treturn os.ReadFile(p)\n}\n"
 		if hasFinding(r.Check(extraDiff("main.go", ifInitScopeCode)), "filepath-containment-bypass") {
 			t.Errorf("expected filepath-containment-bypass to not treat if initializer variable as shadowing package constant outside if statement")
+		}
+
+		// Vulnerable: if statement initializer shadows package constant inside else branch
+		ifInitElseCode := "package main\nconst filename = \"metadata.json\"\nfunc read(r *http.Request, base string) ([]byte, error) {\n\tif filename := requestedName(r); filename == \"\" {\n\t\treturn nil, errors.New(\"empty\")\n\t} else {\n\t\tp := filepath.Join(base, filename)\n\t\treturn os.ReadFile(p)\n\t}\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", ifInitElseCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag join when if initializer shadows package constant inside else branch")
 		}
 	})
 }
