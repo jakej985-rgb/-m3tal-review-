@@ -627,6 +627,12 @@ func TestNewRulesDetections(t *testing.T) {
 		if hasFinding(r.Check(extraDiff("main.go", unrelatedCode)), "dns-rebinding-ssrf") {
 			t.Errorf("expected dns-rebinding-ssrf to ignore unrelated net.ParseIP on proxyIP")
 		}
+
+		// Vulnerable: inline net.ParseIP(targetURL.Hostname()).IsPrivate() without nil check
+		inlineParseCode := "package main\nfunc f(targetURL *url.URL) error {\n\tif net.ParseIP(targetURL.Hostname()).IsPrivate() {\n\t\treturn errors.New(\"private\")\n\t}\n\treturn nil\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", inlineParseCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to flag inline net.ParseIP(targetURL.Hostname()) without nil check")
+		}
 	})
 
 	t.Run("negative-amount-bypass", func(t *testing.T) {
@@ -641,6 +647,12 @@ func TestNewRulesDetections(t *testing.T) {
 		balanceLimitCode := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount > acc.Balance {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount\n}\n"
 		if !hasFinding(r.Check(extraDiff("main.go", balanceLimitCode)), "negative-amount-bypass") {
 			t.Errorf("expected negative-amount-bypass to flag amount > acc.Balance check without non-negative check")
+		}
+
+		// Vulnerable: scaled debit acc.Balance -= req.Amount * rate
+		scaledDebitCode := "package main\nfunc f(req Request, acc *Account, rate int64) {\n\tif req.Amount > 1000 {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount * rate\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", scaledDebitCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag scaled debit with only upper bound check")
 		}
 
 		// Safe: lower bound validated on same line
@@ -687,10 +699,22 @@ func TestNewRulesDetections(t *testing.T) {
 			t.Errorf("expected idor-unverified-access to flag lookup when variable is named owner without actual check")
 		}
 
+		// Vulnerable: unrelated feature gate returns StatusForbidden, but entity lookup has no ownership check
+		unrelatedGateCode := "package main\nfunc f(w http.ResponseWriter, r *http.Request) {\n\tif !featureEnabled {\n\t\thttp.Error(w, \"forbidden\", http.StatusForbidden)\n\t\treturn\n\t}\n\tid := r.URL.Query().Get(\"id\")\n\trec := store[id]\n\tif !ok {\n\t\treturn\n\t}\n\tjson.NewEncoder(w).Encode(rec)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", unrelatedGateCode)), "idor-unverified-access") {
+			t.Errorf("expected idor-unverified-access to flag lookup even if unrelated feature gate uses StatusForbidden")
+		}
+
 		// Safe: record owner check prevents IDOR
 		safeOwnerCode := "package main\nfunc f(w http.ResponseWriter, r *http.Request) {\n\tid := r.URL.Query().Get(\"id\")\n\trec := store[id]\n\tif !ok {\n\t\treturn\n\t}\n\tif rec.OwnerID != callerID {\n\t\thttp.Error(w, \"forbidden\", http.StatusForbidden)\n\t\treturn\n\t}\n\tjson.NewEncoder(w).Encode(rec)\n}\n"
 		if hasFinding(r.Check(extraDiff("main.go", safeOwnerCode)), "idor-unverified-access") {
 			t.Errorf("expected idor-unverified-access to ignore handler with ownership check")
+		}
+
+		// Safe: permission check protects entity
+		safePermCode := "package main\nfunc f(w http.ResponseWriter, r *http.Request) {\n\tid := r.URL.Query().Get(\"id\")\n\trec := store[id]\n\tif !ok {\n\t\treturn\n\t}\n\tif !permission.CanRead(principal, rec) {\n\t\treturn\n\t}\n\tjson.NewEncoder(w).Encode(rec)\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", safePermCode)), "idor-unverified-access") {
+			t.Errorf("expected idor-unverified-access to ignore handler with permission.CanRead check")
 		}
 	})
 
@@ -699,6 +723,24 @@ func TestNewRulesDetections(t *testing.T) {
 		code := "package main\nfunc f(dir, keyID string) ([]byte, error) {\n\tp := filepath.Join(dir, keyID)\n\treturn os.ReadFile(p)\n}\n"
 		if !hasFinding(r.Check(extraDiff("main.go", code)), "filepath-containment-bypass") {
 			t.Errorf("expected filepath-containment-bypass to flag unvalidated filepath.Join read")
+		}
+
+		// Safe: fixed filename literal does not allow directory traversal
+		fixedFileCode := "package main\nfunc f(dir string) ([]byte, error) {\n\tp := filepath.Join(dir, \"config.json\")\n\treturn os.ReadFile(p)\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", fixedFileCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to ignore join with fixed string literal")
+		}
+
+		// Vulnerable: selector argument req.KeyID
+		reqFieldCode := "package main\nfunc f(dir string, req Request) ([]byte, error) {\n\tp := filepath.Join(dir, req.KeyID)\n\treturn os.ReadFile(p)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", reqFieldCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag join with struct selector")
+		}
+
+		// Vulnerable: read wrapped in filepath.Clean(p)
+		cleanWrapCode := "package main\nfunc f(dir, keyID string) ([]byte, error) {\n\tp := filepath.Join(dir, keyID)\n\treturn os.ReadFile(filepath.Clean(p))\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", cleanWrapCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag read through filepath.Clean")
 		}
 
 		// Safe: filepath.IsLocal validates key before join

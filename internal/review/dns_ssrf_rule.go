@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	hostnameAssignRe = regexp.MustCompile(`\b([a-zA-Z0-9_]+)\s*(?::=|=)\s*([a-zA-Z0-9_.]+)\.Hostname\(\)`)
-	netParseIPRe     = regexp.MustCompile(`\b([a-zA-Z0-9_]+)\s*(?::=|=)\s*net\.ParseIP\s*\(\s*([^)\n]+)\s*\)`)
-	ipNilGuardRe     = regexp.MustCompile(`(?i)(?:==\s*nil|nil\s*==|!\s*[a-zA-Z0-9_]+)`)
+	hostnameAssignRe        = regexp.MustCompile(`\b([a-zA-Z0-9_]+)\s*(?::=|=)\s*([a-zA-Z0-9_.]+)\.Hostname\(\)`)
+	netParseIPRe            = regexp.MustCompile(`\b([a-zA-Z0-9_]+)\s*(?::=|=)\s*net\.ParseIP\s*\(\s*([^)\n]+)\s*\)`)
+	inlineNetParseIPCheckRe = regexp.MustCompile(`\bnet\.ParseIP\s*\(\s*([^)\n]+(?:\.[a-zA-Z0-9_]+\(\))?)\s*\)\s*\.\s*(?:IsLoopback|IsPrivate|IsGlobalUnicast|IsInterfaceLocalMulticast|IsLinkLocalMulticast|IsLinkLocalUnicast|IsMulticast|IsUnspecified)\s*\(`)
+	ipNilGuardRe            = regexp.MustCompile(`(?i)(?:==\s*nil|nil\s*==|!\s*[a-zA-Z0-9_]+)`)
 )
 
 // DNSRebindingRule detects naive net.ParseIP validation on URL hostnames that allows
@@ -147,6 +148,49 @@ func (r *DNSRebindingRule) CheckContext(ctx context.Context, diff string) []Find
 							Explanation: &model.FindingExplanation{
 								RuleRationale:   "net.ParseIP returns nil for domain names. Checking IsLoopback() or IsPrivate() on a parsed hostname bypasses validation for public domain names, leaving the service vulnerable to DNS rebinding SSRF.",
 								EvidenceSummary: fmt.Sprintf("Hostname parsed with net.ParseIP and checked for loopback/private IP without nil validation on line %d.", lineNum),
+								EvidenceKind:    "security-defect",
+							},
+						})
+					}
+				}
+			}
+
+			// Check for inline check: net.ParseIP(u.Hostname()).IsPrivate() or net.ParseIP(host).IsLoopback()
+			if m := inlineNetParseIPCheckRe.FindStringSubmatch(line); len(m) > 1 {
+				arg := strings.TrimSpace(m[1])
+				isHostnameParse := false
+				if strings.Contains(arg, ".Hostname") {
+					isHostnameParse = true
+				} else {
+					for _, h := range currentHosts {
+						if arg == h.varName {
+							isHostnameParse = true
+							break
+						}
+					}
+				}
+
+				if isHostnameParse && block.addedLines[lineNum] {
+					key := fmt.Sprintf("%s:%d:dns-rebinding-ssrf", block.file, lineNum)
+					if !seen[key] {
+						seen[key] = true
+						snippet := ""
+						if i < len(rawLines) {
+							snippet = fmt.Sprintf("[%s:%d] (go)\n> %s\n", block.file, lineNum, strings.TrimSpace(rawLines[i]))
+						}
+						findings = append(findings, Finding{
+							Rule:        "dns-rebinding-ssrf",
+							Severity:    "high",
+							Category:    "security",
+							File:        block.file,
+							Line:        lineNum,
+							Message:     "net.ParseIP on URL hostname misses domain names (nil return); vulnerable to DNS rebinding SSRF",
+							Remediation: "Ensure hostnames are resolved to IPs at dial time and validated against private CIDRs; net.ParseIP returns nil for domain names and allows DNS rebinding.",
+							Confidence:  "High",
+							Snippet:     snippet,
+							Explanation: &model.FindingExplanation{
+								RuleRationale:   "net.ParseIP returns nil for domain names. Calling IsLoopback() or IsPrivate() directly on net.ParseIP result misses domain names and allows DNS rebinding SSRF.",
+								EvidenceSummary: fmt.Sprintf("Inline net.ParseIP check on hostname without nil validation on line %d.", lineNum),
 								EvidenceKind:    "security-defect",
 							},
 						})

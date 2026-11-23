@@ -787,6 +787,86 @@ new file mode 100644
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding for Navigator.of(otherCtx) inside if (ctx.mounted), got %d: %+v", len(findings), findings)
 	}
+	if findings[0].Line != 9 {
+		t.Errorf("expected finding on line 9 for otherCtx, got line %d", findings[0].Line)
+	}
+	if !strings.Contains(findings[0].Snippet, "otherCtx") {
+		t.Errorf("expected finding snippet to mention otherCtx, got %q", findings[0].Snippet)
+	}
+}
+
+func TestAsyncGapRule_EarlyExitCtxDoesNotProtectOtherContext(t *testing.T) {
+	diff := `diff --git a/lib/presentation/early_exit.dart b/lib/presentation/early_exit.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/early_exit.dart
+@@ -0,0 +1,12 @@
++class _EarlyExitState extends State<EarlyExit> {
++  Future<void> _update(BuildContext ctx, BuildContext otherCtx) async {
++    await api.sync();
++    if (!ctx.mounted) return;
++    Navigator.of(ctx).pop();
++    Navigator.of(otherCtx).pop();
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for unproven otherCtx after early return on !ctx.mounted, got %d: %+v", len(findings), findings)
+	}
+	if findings[0].Line != 6 {
+		t.Errorf("expected finding on line 6 for otherCtx, got line %d", findings[0].Line)
+	}
+	if !strings.Contains(findings[0].Snippet, "otherCtx") {
+		t.Errorf("expected snippet to reference otherCtx, got %q", findings[0].Snippet)
+	}
+}
+
+func TestAsyncGapRule_NestedMountedGuard(t *testing.T) {
+	diff := `diff --git a/lib/presentation/nested.dart b/lib/presentation/nested.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/nested.dart
+@@ -0,0 +1,14 @@
++class _NestedState extends State<Nested> {
++  Future<void> _update(BuildContext ctx) async {
++    await api.sync();
++    if (ctx.mounted) {
++      if (mounted) {
++        setState(() {});
++      }
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for nested mounted guard, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_NullAwareDoesNotTriggerTernary(t *testing.T) {
+	diff := `diff --git a/lib/presentation/null_aware.dart b/lib/presentation/null_aware.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/null_aware.dart
+@@ -0,0 +1,12 @@
++class _NullAwareState extends State<NullAware> {
++  Future<void> _update(Config? config) async {
++    await api.sync();
++    if (mounted && config?.ready == true) {
++      setState(() {});
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for null-aware condition without ternary, got %d: %+v", len(findings), findings)
+	}
 }
 
 func TestFlutterRules_WorkingTreeAware(t *testing.T) {

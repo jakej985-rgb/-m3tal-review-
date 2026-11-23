@@ -141,7 +141,7 @@ func impliesMounted(expr string) (bool, map[string]bool) {
 
 	// In Dart, conditional operator (? :) has lower precedence than && and ||.
 	// Conservatively reject unsupported top-level conditional expressions before splitting at logical operators.
-	if len(splitTopLevelOp(expr, "?")) > 1 {
+	if hasTopLevelTernary(expr) {
 		return false, nil
 	}
 
@@ -293,12 +293,45 @@ func isCallProtectedByReceivers(line string, activeReceivers map[string]bool) bo
 	return hasStateMounted
 }
 
-func isUnconditionalEarlyExit(lines []string, j int) bool {
-	line := lines[j]
-	if mountedEarlyExitRe.MatchString(line) {
-		return true
+func hasTopLevelTernary(expr string) bool {
+	parenDepth := 0
+	hasQuestion := false
+	for i := 0; i < len(expr); i++ {
+		ch := expr[i]
+		if ch == '(' {
+			parenDepth++
+			continue
+		}
+		if ch == ')' {
+			parenDepth--
+			continue
+		}
+		if parenDepth == 0 {
+			if ch == '?' {
+				// Ignore Dart null-aware ?. and null-coalescing ?? or ??=
+				if i+1 < len(expr) && (expr[i+1] == '.' || expr[i+1] == '?') {
+					continue
+				}
+				if i > 0 && expr[i-1] == '?' {
+					continue
+				}
+				hasQuestion = true
+			} else if ch == ':' && hasQuestion {
+				return true
+			}
+		}
 	}
-	if mountedIfNegativeBlockRe.MatchString(line) {
+	return false
+}
+
+var mountedExitExtractRe = regexp.MustCompile(`\bif\s*\([^)]*!(?:((?:this|context|[a-zA-Z0-9_]+))\.)?mounted[^)]*\)`)
+
+func getUnconditionalEarlyExitReceivers(lines []string, j int) (bool, map[string]bool) {
+	line := lines[j]
+	isExit := false
+	if mountedEarlyExitRe.MatchString(line) {
+		isExit = true
+	} else if mountedIfNegativeBlockRe.MatchString(line) {
 		maxK := j + 4
 		if maxK > len(lines) {
 			maxK = len(lines)
@@ -308,17 +341,27 @@ func isUnconditionalEarlyExit(lines []string, j int) bool {
 			if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
 				continue
 			}
-			// If unconditional return/throw/rethrow at block level
 			if unconditionalExitRe.MatchString(trimmed) {
-				return true
+				isExit = true
+				break
 			}
-			// If nested if or closing brace before an unconditional return, it is NOT guaranteed
 			if strings.HasPrefix(trimmed, "if") || strings.Contains(trimmed, "}") {
-				return false
+				break
 			}
 		}
 	}
-	return false
+	if !isExit {
+		return false, nil
+	}
+	m := mountedExitExtractRe.FindStringSubmatch(line)
+	if len(m) > 1 {
+		rec := m[1]
+		if rec == "" || rec == "this" {
+			return true, map[string]bool{"this": true, "context": true}
+		}
+		return true, map[string]bool{rec: true}
+	}
+	return true, map[string]bool{"this": true, "context": true}
 }
 
 func (r AsyncGapRule) CheckContext(ctx context.Context, diff string) []Finding {
@@ -409,9 +452,13 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 			end = len(lines)
 		}
 
-		inPositiveGuardBlock := false
-		positiveGuardBraceDepth := 0
-		var activeReceivers map[string]bool
+		type guardScope struct {
+			braceDepth int
+			receivers  map[string]bool
+		}
+		var guardStack []guardScope
+		cumulativeProvenReceivers := make(map[string]bool)
+		scopeBraceDepth := 0
 
 		for j := stmtEnd + 1; j < end; j++ {
 			currLine := lines[j]
@@ -423,53 +470,62 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 			}
 
 			// Check for unconditional early exit of unmounted path
-			if isUnconditionalEarlyExit(lines, j) {
-				break
+			if isExit, proven := getUnconditionalEarlyExitReceivers(lines, j); isExit {
+				for k, v := range proven {
+					if v {
+						cumulativeProvenReceivers[k] = true
+					}
+				}
+				if cumulativeProvenReceivers["this"] {
+					break
+				}
 			}
 
 			// Check for entering positive guard branch: if (mounted && ...) {
-			if !inPositiveGuardBlock {
-				if safe, recs := isSafePositiveMountedGuard(currLine); safe && strings.Contains(currLine, "{") {
-					inPositiveGuardBlock = true
-					activeReceivers = recs
-					positiveGuardBraceDepth = 1
-					// Count any closing braces on the same line after {
-					for _, ch := range currLine[strings.Index(currLine, "{")+1:] {
-						if ch == '{' {
-							positiveGuardBraceDepth++
-						} else if ch == '}' {
-							positiveGuardBraceDepth--
+			if safe, recs := isSafePositiveMountedGuard(currLine); safe && strings.Contains(currLine, "{") {
+				scopeBraceDepth++
+				guardStack = append(guardStack, guardScope{braceDepth: scopeBraceDepth, receivers: recs})
+				for _, ch := range currLine[strings.Index(currLine, "{")+1:] {
+					if ch == '{' {
+						scopeBraceDepth++
+					} else if ch == '}' {
+						scopeBraceDepth--
+						for len(guardStack) > 0 && scopeBraceDepth < guardStack[len(guardStack)-1].braceDepth {
+							guardStack = guardStack[:len(guardStack)-1]
 						}
 					}
-					if positiveGuardBraceDepth <= 0 {
-						inPositiveGuardBlock = false
-						activeReceivers = nil
+				}
+				continue
+			}
+
+			for _, ch := range currLine {
+				if ch == '{' {
+					scopeBraceDepth++
+				} else if ch == '}' {
+					scopeBraceDepth--
+					for len(guardStack) > 0 && scopeBraceDepth < guardStack[len(guardStack)-1].braceDepth {
+						guardStack = guardStack[:len(guardStack)-1]
 					}
-					continue
 				}
 			}
 
-			if inPositiveGuardBlock {
-				for _, ch := range currLine {
-					if ch == '{' {
-						positiveGuardBraceDepth++
-					} else if ch == '}' {
-						positiveGuardBraceDepth--
+			// Active receivers is union of proven receivers and active guard scopes
+			activeReceivers := make(map[string]bool, len(cumulativeProvenReceivers))
+			for k, v := range cumulativeProvenReceivers {
+				if v {
+					activeReceivers[k] = true
+				}
+			}
+			for _, scope := range guardStack {
+				for k, v := range scope.receivers {
+					if v {
+						activeReceivers[k] = true
 					}
 				}
-				wasInPositiveGuard := inPositiveGuardBlock
-				if positiveGuardBraceDepth <= 0 {
-					inPositiveGuardBlock = false
-				}
-				if wasInPositiveGuard && isCallProtectedByReceivers(currLine, activeReceivers) {
-					if !inPositiveGuardBlock {
-						activeReceivers = nil
-					}
-					continue
-				}
-				if !inPositiveGuardBlock {
-					activeReceivers = nil
-				}
+			}
+
+			if isCallProtectedByReceivers(currLine, activeReceivers) {
+				continue
 			}
 
 			// Single-line ternary guard: mounted ? ... : ...
@@ -510,6 +566,7 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 						Message:     msg,
 						Remediation: remediation,
 						Confidence:  "High",
+						Snippet:     strings.TrimSpace(currLine),
 						Explanation: &model.FindingExplanation{
 							RuleRationale:   "Calling setState, BuildContext, or controllers after an asynchronous operation when the widget has been unmounted causes runtime exceptions.",
 							EvidenceSummary: fmt.Sprintf("%s invoked across async boundary without mounted guard.", matchedOp),

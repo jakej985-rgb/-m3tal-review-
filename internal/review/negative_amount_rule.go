@@ -10,8 +10,39 @@ import (
 )
 
 var (
-	balanceDebitRe = regexp.MustCompile(`(?i)\b(?:Balance|balance)\w*\s*(?:[-+]=|=(?:[^\n=;]+[-+]))\s*([^\n;]+)`)
+	balanceDebitRe    = regexp.MustCompile(`(?i)\b(?:Balance|balance)\w*\s*(?:[-+]=|=(?:[^\n=;]+[-+]))\s*([^\n;]+)`)
+	identOrSelectorRe = regexp.MustCompile(`^[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*$`)
 )
+
+func isIdentOrSelector(s string) bool {
+	return identOrSelectorRe.MatchString(s)
+}
+
+func extractDebitFactors(raw string) []string {
+	expr := unwrapDebitOperand(raw)
+	tokens := strings.FieldsFunc(expr, func(r rune) bool {
+		return r == '*' || r == '/'
+	})
+	var factors []string
+	seen := make(map[string]bool)
+	add := func(s string) {
+		s = unwrapDebitOperand(s)
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		if isIdentOrSelector(s) {
+			seen[s] = true
+			factors = append(factors, s)
+		}
+	}
+
+	add(expr)
+	for _, tok := range tokens {
+		add(tok)
+	}
+	return factors
+}
 
 func unwrapDebitOperand(raw string) string {
 	raw = strings.TrimSpace(raw)
@@ -77,65 +108,68 @@ func (r *NegativeAmountRule) CheckContext(ctx context.Context, diff string) []Fi
 				continue
 			}
 
-			targetExpr := unwrapDebitOperand(m[1])
-			parts := strings.Split(targetExpr, ".")
-			shortName := parts[len(parts)-1]
+			factors := extractDebitFactors(m[1])
+			for _, targetExpr := range factors {
+				parts := strings.Split(targetExpr, ".")
+				shortName := parts[len(parts)-1]
 
-			targetPattern := regexp.QuoteMeta(targetExpr)
-			if shortName != "" && shortName != targetExpr {
-				targetPattern += "|" + regexp.QuoteMeta(shortName)
-			}
+				targetPattern := regexp.QuoteMeta(targetExpr)
+				if shortName != "" && shortName != targetExpr {
+					targetPattern += "|" + regexp.QuoteMeta(shortName)
+				}
 
-			upperCheckRe := regexp.MustCompile(`(?i)\b(?:` + targetPattern + `)\b\s*>\s*(?:[0-9]+|\w+(?:\.\w+)*)`)
-			lowerCheckRe := regexp.MustCompile(`(?i)\b(?:` + targetPattern + `)\b\s*(?:<=|<)\s*(?:[01]\b|zero\b)|\b(?:[01]\b|zero\b)\s*(?:>=|>)\s*(?:` + targetPattern + `)\b`)
+				upperCheckRe := regexp.MustCompile(`(?i)\b(?:` + targetPattern + `)\b\s*>\s*(?:[0-9]+|\w+(?:\.\w+)*)`)
+				lowerCheckRe := regexp.MustCompile(`(?i)\b(?:` + targetPattern + `)\b\s*(?:<=|<)\s*(?:[01]\b|zero\b)|\b(?:[01]\b|zero\b)\s*(?:>=|>)\s*(?:` + targetPattern + `)\b`)
 
-			hasUpper := false
-			hasLower := false
-			upperLine := 0
+				hasUpper := false
+				hasLower := false
+				upperLine := 0
 
-			start := i - 30
-			if start < 0 {
-				start = 0
-			}
-			for j := start; j <= i; j++ {
-				if lowerCheckRe.MatchString(lines[j]) {
-					hasLower = true
+				start := i - 30
+				if start < 0 {
+					start = 0
+				}
+				for j := start; j <= i; j++ {
+					if lowerCheckRe.MatchString(lines[j]) {
+						hasLower = true
+						break
+					}
+					if !hasUpper && upperCheckRe.MatchString(lines[j]) {
+						hasUpper = true
+						upperLine = block.firstLine + j
+					}
+				}
+
+				if hasUpper && !hasLower {
+					touchesAdded := block.addedLines[lineNum] || (upperLine > 0 && block.addedLines[upperLine])
+					if !touchesAdded {
+						continue
+					}
+					key := fmt.Sprintf("%s:%d", block.file, upperLine)
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+
+					lineContent := ""
+					idx := upperLine - block.firstLine
+					if idx >= 0 && idx < len(rawLines) {
+						lineContent = strings.TrimSpace(rawLines[idx])
+					}
+
+					findings = append(findings, Finding{
+						Rule:        "negative-amount-bypass",
+						Severity:    "high",
+						Category:    "security",
+						File:        block.file,
+						Line:        upperLine,
+						Snippet:     lineContent,
+						Message:     "Upper-bound check on transaction amount without visible non-negative check before balance modification",
+						Remediation: "Verify numeric amounts are strictly positive (e.g. amount <= 0 check) in financial and payment transactions to prevent fund drain and credit balance inversion.",
+						Confidence:  "High",
+					})
 					break
 				}
-				if !hasUpper && upperCheckRe.MatchString(lines[j]) {
-					hasUpper = true
-					upperLine = block.firstLine + j
-				}
-			}
-
-			if hasUpper && !hasLower {
-				touchesAdded := block.addedLines[lineNum] || (upperLine > 0 && block.addedLines[upperLine])
-				if !touchesAdded {
-					continue
-				}
-				key := fmt.Sprintf("%s:%d", block.file, upperLine)
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-
-				lineContent := ""
-				idx := upperLine - block.firstLine
-				if idx >= 0 && idx < len(rawLines) {
-					lineContent = strings.TrimSpace(rawLines[idx])
-				}
-
-				findings = append(findings, Finding{
-					Rule:        "negative-amount-bypass",
-					Severity:    "high",
-					Category:    "security",
-					File:        block.file,
-					Line:        upperLine,
-					Snippet:     lineContent,
-					Message:     "Upper-bound check on transaction amount without visible non-negative check before balance modification",
-					Remediation: "Verify numeric amounts are strictly positive (e.g. amount <= 0 check) in financial and payment transactions to prevent fund drain and credit balance inversion.",
-					Confidence:  "High",
-				})
 			}
 		}
 	}

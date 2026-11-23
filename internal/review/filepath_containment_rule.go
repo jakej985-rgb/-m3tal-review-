@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	filepathJoinRe = regexp.MustCompile(`\b([a-zA-Z0-9_]+)\s*(?::=|=)\s*filepath\.Join\s*\([^)\n]+,\s*([a-zA-Z0-9_]+)\s*\)`)
-	fileReadRe     = regexp.MustCompile(`\b(?:os\.(?:ReadFile|Open|OpenFile|ReadDir)|ioutil\.ReadFile)\s*\(\s*([a-zA-Z0-9_]+)\s*\)`)
+	filepathJoinCallRe = regexp.MustCompile(`\b(?:([a-zA-Z0-9_]+)\s*(?::=|=)\s*)?(?:filepath\.Clean\s*\(\s*)?filepath\.Join\s*\(([^;\n]+)\)`)
+	filepathCleanRe    = regexp.MustCompile(`\b([a-zA-Z0-9_]+)\s*(?::=|=)\s*filepath\.Clean\s*\(\s*([a-zA-Z0-9_]+)\s*\)`)
+	fileReadCallRe     = regexp.MustCompile(`\b(?:os\.(?:ReadFile|Open|OpenFile|ReadDir)|ioutil\.ReadFile)\s*\(\s*(?:filepath\.Clean\s*\(\s*)?([a-zA-Z0-9_]+)\s*\)?\s*\)`)
 )
 
 // FilepathContainmentRule detects filepath.Join calls with untrusted key/path parameters
@@ -25,6 +26,12 @@ func (r *FilepathContainmentRule) Name() string { return "filepath-containment-b
 
 func (r *FilepathContainmentRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
+}
+
+func isStringLiteral(s string) bool {
+	s = strings.TrimSpace(s)
+	return (strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`)) ||
+		(strings.HasPrefix(s, "`") && strings.HasSuffix(s, "`"))
 }
 
 func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string) []Finding {
@@ -83,18 +90,46 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 			fnLines := lines[fn.start : fn.end+1]
 
 			type joinInfo struct {
-				pathVar string
-				keyVar  string
-				lineIdx int
+				pathVars []string // all aliases, including cleaned
+				keyExpr  string
+				lineIdx  int
 			}
 			var joins []joinInfo
 
+			// Pass 1: detect joins with untrusted/non-literal segments
 			for idx, line := range fnLines {
-				if m := filepathJoinRe.FindStringSubmatch(line); len(m) > 2 {
-					pathVar := m[1]
-					keyVar := m[2]
-					if keyVar != "" && keyVar != "." && keyVar != "dir" && keyVar != "base" {
-						joins = append(joins, joinInfo{pathVar: pathVar, keyVar: keyVar, lineIdx: fn.start + idx})
+				m := filepathJoinCallRe.FindStringSubmatch(line)
+				if len(m) > 2 {
+					assignedVar := m[1]
+					argsStr := m[2]
+
+					// Split join arguments
+					args := splitCallArgs(argsStr)
+					if len(args) < 2 {
+						continue
+					}
+
+					// Check if any element after base dir is non-literal
+					var dynamicKey string
+					for _, seg := range args[1:] {
+						seg = strings.TrimSpace(seg)
+						// Ignore string constants like "config.json", static paths, "."
+						if isStringLiteral(seg) || seg == "." || seg == `""` {
+							continue
+						}
+						// If identifier or selector (keyID, req.keyID, r.URL.Query().Get(...))
+						dynamicKey = seg
+						break
+					}
+
+					if dynamicKey != "" {
+						if assignedVar != "" {
+							joins = append(joins, joinInfo{
+								pathVars: []string{assignedVar},
+								keyExpr:  dynamicKey,
+								lineIdx:  fn.start + idx,
+							})
+						}
 					}
 				}
 			}
@@ -103,27 +138,64 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 				continue
 			}
 
+			// Pass 2: track aliases via filepath.Clean(p)
+			for _, line := range fnLines {
+				if m := filepathCleanRe.FindStringSubmatch(line); len(m) > 2 {
+					cleanVar := m[1]
+					origVar := m[2]
+					for i := range joins {
+						hasOrig := false
+						for _, pv := range joins[i].pathVars {
+							if pv == origVar {
+								hasOrig = true
+								break
+							}
+						}
+						if hasOrig {
+							joins[i].pathVars = append(joins[i].pathVars, cleanVar)
+						}
+					}
+				}
+			}
+
+			// Pass 3: match file reads
 			for idx, line := range fnLines {
 				absLine := fn.start + idx
-				m := fileReadRe.FindStringSubmatch(line)
+				m := fileReadCallRe.FindStringSubmatch(line)
 				if len(m) < 2 {
 					continue
 				}
 				readArg := m[1]
 
-				// Match with join
 				for _, j := range joins {
-					if j.pathVar != readArg || j.lineIdx >= absLine {
+					isMatchingPath := false
+					for _, pv := range j.pathVars {
+						if pv == readArg {
+							isMatchingPath = true
+							break
+						}
+					}
+					if !isMatchingPath || j.lineIdx >= absLine {
 						continue
 					}
 
 					// Verify containment checks BEFORE this read in this same function
-					keyPattern := regexp.QuoteMeta(j.keyVar)
-					pathPattern := regexp.QuoteMeta(j.pathVar)
+					keyPattern := regexp.QuoteMeta(j.keyExpr)
+					parts := strings.Split(j.keyExpr, ".")
+					shortKey := parts[len(parts)-1]
+					if shortKey != "" && shortKey != j.keyExpr {
+						keyPattern += "|" + regexp.QuoteMeta(shortKey)
+					}
 
-					isLocalRe := regexp.MustCompile(`\bfilepath\.IsLocal\s*\(\s*` + keyPattern + `\s*\)`)
-					hasPrefixRe := regexp.MustCompile(`\bstrings\.HasPrefix\s*\([^,]+,\s*` + pathPattern + `\b|\bstrings\.HasPrefix\s*\([^)]*` + pathPattern + `[^,]*,`)
-					relRe := regexp.MustCompile(`\bfilepath\.Rel\s*\([^,]+,\s*` + pathPattern + `\s*\)`)
+					var pathPatterns []string
+					for _, pv := range j.pathVars {
+						pathPatterns = append(pathPatterns, regexp.QuoteMeta(pv))
+					}
+					pathUnion := strings.Join(pathPatterns, "|")
+
+					isLocalRe := regexp.MustCompile(`\bfilepath\.IsLocal\s*\(\s*(?:` + keyPattern + `)\s*\)`)
+					hasPrefixRe := regexp.MustCompile(`\bstrings\.HasPrefix\s*\([^,]+,\s*(?:` + pathUnion + `)\b|\bstrings\.HasPrefix\s*\([^)]*(?:` + pathUnion + `)[^,]*,`)
+					relRe := regexp.MustCompile(`\bfilepath\.Rel\s*\([^,]+,\s*(?:` + pathUnion + `)\s*\)`)
 
 					isProtected := false
 					for k := fn.start; k < absLine; k++ {
@@ -162,7 +234,7 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 							Snippet:     snippet,
 							Explanation: &model.FindingExplanation{
 								RuleRationale:   "filepath.Join cleans paths but does not prevent escaping the base directory when relative segments (../) or absolute paths are provided. Input must be validated using filepath.IsLocal or prefix matching before opening or reading.",
-								EvidenceSummary: fmt.Sprintf("Path %s joined from parameter %s and read on line %d without containment validation.", j.pathVar, j.keyVar, block.firstLine+absLine),
+								EvidenceSummary: fmt.Sprintf("Path %v joined from parameter %s and read on line %d without containment validation.", j.pathVars, j.keyExpr, block.firstLine+absLine),
 								EvidenceKind:    "security-defect",
 							},
 						})
@@ -172,4 +244,42 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 		}
 	}
 	return findings
+}
+
+func splitCallArgs(s string) []string {
+	var args []string
+	parenDepth := 0
+	inQuote := false
+	var quoteChar rune
+	start := 0
+
+	for i, ch := range s {
+		if inQuote {
+			if ch == quoteChar {
+				inQuote = false
+			}
+			continue
+		}
+		if ch == '"' || ch == '`' || ch == '\'' {
+			inQuote = true
+			quoteChar = ch
+			continue
+		}
+		if ch == '(' || ch == '[' || ch == '{' {
+			parenDepth++
+			continue
+		}
+		if ch == ')' || ch == ']' || ch == '}' {
+			parenDepth--
+			continue
+		}
+		if ch == ',' && parenDepth == 0 {
+			args = append(args, strings.TrimSpace(s[start:i]))
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		args = append(args, strings.TrimSpace(s[start:]))
+	}
+	return args
 }
