@@ -313,8 +313,13 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 						}
 						scopedVars = remaining
 					case 3:
+						declDepth := curDepth
+						prefix := line[:ev.pos]
+						if regexp.MustCompile(`\b(?:if|for|switch)\b[^{]*$`).MatchString(prefix) {
+							declDepth = curDepth + 1
+						}
 						for _, id := range ev.idents {
-							scopedVars = append(scopedVars, scopedVar{name: id, depth: curDepth})
+							scopedVars = append(scopedVars, scopedVar{name: id, depth: declDepth})
 						}
 					case 4:
 						m := ev.joinCall

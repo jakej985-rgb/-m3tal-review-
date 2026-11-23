@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/review/language"
@@ -18,6 +19,55 @@ func isIdentOrSelector(s string) bool {
 	return identOrSelectorRe.MatchString(s)
 }
 
+func isNumericLiteral(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	_, err := strconv.ParseFloat(s, 64)
+	return err == nil
+}
+
+func isZeroOrOneThreshold(s string) bool {
+	s = strings.TrimSpace(s)
+	if strings.EqualFold(s, "zero") {
+		return true
+	}
+	if val, err := strconv.ParseFloat(s, 64); err == nil {
+		if val == 0.0 || val == 1.0 {
+			return true
+		}
+	}
+	return false
+}
+
+func blockExits(lines []string, start, end int) bool {
+	for k := start; k <= end && k < len(lines); k++ {
+		trimmed := strings.TrimSpace(lines[k])
+		if strings.HasPrefix(trimmed, "return") ||
+			strings.HasPrefix(trimmed, "panic(") ||
+			strings.Contains(trimmed, "http.Error(") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasExitingElse(lines []string, endIfLine int) bool {
+	elseStart := -1
+	for k := endIfLine; k < len(lines) && k <= endIfLine+2; k++ {
+		if strings.Contains(lines[k], "else") {
+			elseStart = k
+			break
+		}
+	}
+	if elseStart == -1 {
+		return false
+	}
+	elseEnd := findIfBlockEnd(lines, elseStart)
+	return blockExits(lines, elseStart, elseEnd)
+}
+
 func buildDebitTargetPattern(raw string) string {
 	expr := unwrapDebitOperand(raw)
 	tokens := strings.FieldsFunc(expr, func(r rune) bool {
@@ -27,12 +77,16 @@ func buildDebitTargetPattern(raw string) string {
 	for _, tok := range tokens {
 		t := unwrapDebitOperand(tok)
 		t = strings.TrimSpace(t)
-		if isIdentOrSelector(t) {
+		if isIdentOrSelector(t) || isNumericLiteral(t) {
 			cleanTokens = append(cleanTokens, t)
 		}
 	}
 
 	buildIdentPattern := func(ident string) string {
+		if isNumericLiteral(ident) {
+			base := strings.TrimSuffix(ident, ".0")
+			return `(?:` + regexp.QuoteMeta(ident) + `|` + regexp.QuoteMeta(base) + `(?:\.0+)?)`
+		}
 		parts := strings.Split(ident, ".")
 		short := parts[len(parts)-1]
 		pat := regexp.QuoteMeta(ident)
@@ -146,42 +200,72 @@ func (r *NegativeAmountRule) CheckContext(ctx context.Context, diff string) []Fi
 				matches := compRe.FindAllStringSubmatch(lines[j], -1)
 				for _, match := range matches {
 					var op, operand string
+					var isLeftTarget bool
 					if match[1] != "" {
 						op = match[1]
 						operand = match[2]
-						isZero := operand == "0" || operand == "1" || strings.EqualFold(operand, "zero")
-						if op == ">" || op == ">=" {
-							if isZero {
-								hasLower = true
-							} else if !hasUpper {
-								hasUpper = true
-								upperLine = block.firstLine + j
-							}
-						} else if op == "<" || op == "<=" {
-							if isZero {
-								hasLower = true
-							} else if !hasUpper {
-								hasUpper = true
-								upperLine = block.firstLine + j
-							}
-						}
+						isLeftTarget = true
 					} else if match[4] != "" {
 						operand = match[3]
 						op = match[4]
-						isZero := operand == "0" || operand == "1" || strings.EqualFold(operand, "zero")
+						isLeftTarget = false
+					} else {
+						continue
+					}
+
+					isZero := isZeroOrOneThreshold(operand)
+					var checkType int // 0: upper check, 1: positive check, 2: rejection check
+
+					if isLeftTarget {
+						if op == ">" || op == ">=" {
+							if isZero {
+								checkType = 1 // target > 0
+							} else {
+								checkType = 0 // target > balance
+							}
+						} else if op == "<" || op == "<=" {
+							if isZero {
+								checkType = 2 // target <= 0
+							} else {
+								checkType = 0 // target < balance
+							}
+						}
+					} else { // operand OP target
 						if op == "<" || op == "<=" {
 							if isZero {
-								hasLower = true
-							} else if !hasUpper {
-								hasUpper = true
-								upperLine = block.firstLine + j
+								checkType = 1 // 0 < target
+							} else {
+								checkType = 0 // balance < target
 							}
 						} else if op == ">" || op == ">=" {
 							if isZero {
+								checkType = 2 // 0 >= target
+							} else {
+								checkType = 0 // balance > target
+							}
+						}
+					}
+
+					if checkType == 0 {
+						if !hasUpper {
+							hasUpper = true
+							upperLine = block.firstLine + j
+						}
+					} else {
+						endBlock := findIfBlockEnd(lines, j)
+						if checkType == 1 {
+							// Positive check: protects only if debit is inside the branch
+							// or an else branch exits before the debit
+							if i <= endBlock || hasExitingElse(lines, endBlock) {
 								hasLower = true
-							} else if !hasUpper {
-								hasUpper = true
-								upperLine = block.firstLine + j
+							}
+						} else if checkType == 2 {
+							// Rejection check: protects if the block exits early
+							if i > endBlock && blockExits(lines, j, endBlock) {
+								hasLower = true
+							} else if i <= endBlock && j == i && strings.Contains(lines[j], "return") {
+								// Same-line guard: if amount <= 0 { return }
+								hasLower = true
 							}
 						}
 					}

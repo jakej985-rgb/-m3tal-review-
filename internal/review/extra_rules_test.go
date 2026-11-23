@@ -663,6 +663,23 @@ func TestNewRulesDetections(t *testing.T) {
 		if !hasFinding(r.Check(extraDiff("main.go", unrelatedComparisonCode)), "dns-rebinding-ssrf") {
 			t.Errorf("expected dns-rebinding-ssrf to flag private check with unrelated == false comparison")
 		}
+
+		// Vulnerable: positive branch success does not protect unchecked fallthrough
+		proxySuccessCode := "package main\nfunc f(targetURL *url.URL, proxyURL *url.URL) (*url.URL, error) {\n\tif net.ParseIP(targetURL.Hostname()).IsPrivate() {\n\t\treturn proxyURL, nil\n\t}\n\treturn targetURL, nil\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", proxySuccessCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to flag positive branch returning success with unchecked fallthrough")
+		}
+
+		// Safe: parenthesized IP predicate comparison to false
+		parenthesizedAllowCode := "package main\nfunc f(targetURL *url.URL) error {\n\tif (net.ParseIP(targetURL.Hostname()).IsLoopback()) == false {\n\t\treturn errors.New(\"must be loopback\")\n\t}\n\treturn nil\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", parenthesizedAllowCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to recognize parenthesized IP comparison to false")
+		}
+
+		parenthesizedVarAllowCode := "package main\nfunc f(ip net.IP) error {\n\tif (ip.IsLoopback()) == false {\n\t\treturn errors.New(\"must be loopback\")\n\t}\n\treturn nil\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", parenthesizedVarAllowCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to recognize parenthesized var IP comparison to false")
+		}
 	})
 
 	t.Run("negative-amount-bypass", func(t *testing.T) {
@@ -743,6 +760,24 @@ func TestNewRulesDetections(t *testing.T) {
 		safeStructSelectorCode := "package main\nfunc f(req Request, acc *Account, pricing Pricing) {\n\tif req.Amount * pricing.Rate <= 0 {\n\t\treturn\n\t}\n\tif acc.Balance < req.Amount * pricing.Rate {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount * pricing.Rate\n}\n"
 		if hasFinding(r.Check(extraDiff("main.go", safeStructSelectorCode)), "negative-amount-bypass") {
 			t.Errorf("expected negative-amount-bypass to recognize lower bound for scaled debit with struct selector")
+		}
+
+		// Vulnerable: literal-scaled debit with upper bound check
+		literalScaledCode := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount * 100 > acc.Balance {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount * 100\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", literalScaledCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag literal-scaled debit with only upper bound check")
+		}
+
+		// Vulnerable: positive-only check guarding logging does not protect subsequent debit outside block
+		positiveLoggingCode := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount > 0 {\n\t\tlog.Println(\"positive\")\n\t}\n\tif req.Amount > acc.Balance {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", positiveLoggingCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag debit when preceding positive check is only for logging")
+		}
+
+		// Safe: decimal zero threshold amount <= 0.0 protects debit
+		decimalZeroCode := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount <= 0.0 {\n\t\treturn\n\t}\n\tif req.Amount > acc.Balance {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", decimalZeroCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to recognize 0.0 as safe lower bound threshold")
 		}
 	})
 
@@ -885,6 +920,12 @@ func TestNewRulesDetections(t *testing.T) {
 		multiHunkDiff := "--- a/main.go\n+++ b/main.go\n@@ -1,4 +1,5 @@\n package main\n+const filename = \"metadata.json\"\n func other() {}\n@@ -20,4 +21,7 @@\n func read(base string) ([]byte, error) {\n+\tp := filepath.Join(base, filename)\n+\treturn os.ReadFile(p)\n }\n"
 		if hasFinding(r.Check(multiHunkDiff), "filepath-containment-bypass") {
 			t.Errorf("expected filepath-containment-bypass to recognize package constant across diff hunks")
+		}
+
+		// Safe: if statement initializer does not shadow package constant after if statement
+		ifInitScopeCode := "package main\nconst filename = \"metadata.json\"\nfunc read(base string) ([]byte, error) {\n\tif filename := getTemp(); filename != \"\" {\n\t\t_ = filename\n\t}\n\tp := filepath.Join(base, filename)\n\treturn os.ReadFile(p)\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", ifInitScopeCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to not treat if initializer variable as shadowing package constant outside if statement")
 		}
 	})
 }

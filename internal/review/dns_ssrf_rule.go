@@ -30,12 +30,6 @@ func (r *DNSRebindingRule) Check(diff string) []Finding {
 }
 
 var (
-	negatedCheckRe = regexp.MustCompile(
-		`(?:\b!\s*(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\(|!\s*\([^)]*\.Is[A-Z]\w*\s*\(|\b(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\([^)]*\)\s*==\s*false|\b(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\([^)]*\)\s*!=\s*true)`,
-	)
-	returnPredicateRe = regexp.MustCompile(
-		`\breturn\s+(?:[^;\n]*\b)?(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\(`,
-	)
 	rejectReturnRe = regexp.MustCompile(
 		`(?:\breturn\s+(?:nil\s*,\s*|[^;\n,]+\s*,\s*)*(?:errors\.|fmt\.Errorf|err\b|[a-zA-Z0-9_]*err[a-zA-Z0-9_]*\b|false\b)|http\.Error\b|\bpanic\s*\()`,
 	)
@@ -44,36 +38,169 @@ var (
 	)
 )
 
+func unwrapParens(s string) string {
+	for {
+		s = strings.TrimSpace(s)
+		if strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")") {
+			depth := 0
+			wrapsAll := true
+			for i, ch := range s {
+				if ch == '(' {
+					depth++
+				} else if ch == ')' {
+					depth--
+					if depth == 0 && i < len(s)-1 {
+						wrapsAll = false
+						break
+					}
+				}
+			}
+			if wrapsAll && depth == 0 {
+				s = s[1 : len(s)-1]
+				continue
+			}
+		}
+		break
+	}
+	return s
+}
+
+func findIfBlockEnd(lines []string, ifLine int) int {
+	depth := 0
+	foundOpen := false
+	for k := ifLine; k < len(lines); k++ {
+		for _, ch := range lines[k] {
+			if ch == '{' {
+				depth++
+				foundOpen = true
+			} else if ch == '}' {
+				depth--
+				if foundOpen && depth <= 0 {
+					return k
+				}
+			}
+		}
+	}
+	return ifLine
+}
+
+func hasRejectingElse(lines []string, endIfLine int) bool {
+	elseStart := -1
+	for k := endIfLine; k < len(lines) && k <= endIfLine+2; k++ {
+		if strings.Contains(lines[k], "else") {
+			elseStart = k
+			break
+		}
+	}
+	if elseStart == -1 {
+		return false
+	}
+	elseEnd := findIfBlockEnd(lines, elseStart)
+	for k := elseStart; k <= elseEnd && k < len(lines); k++ {
+		if rejectReturnRe.MatchString(lines[k]) {
+			return true
+		}
+	}
+	return false
+}
+
+func isReturnIPPredicate(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "return ") && !strings.HasPrefix(trimmed, "return\t") {
+		return false
+	}
+	expr := strings.TrimPrefix(trimmed, "return")
+	expr = strings.TrimSpace(expr)
+	if semi := strings.Index(expr, ";"); semi != -1 {
+		expr = expr[:semi]
+	}
+	expr = unwrapParens(expr)
+	ipCallRe := regexp.MustCompile(`^(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\([^()]*\)$`)
+	return ipCallRe.MatchString(expr)
+}
+
+func isNegatedIPPredicate(line string) bool {
+	cond := strings.TrimSpace(line)
+	if strings.HasPrefix(cond, "if ") {
+		cond = strings.TrimPrefix(cond, "if ")
+	} else if strings.HasPrefix(cond, "if(") {
+		cond = strings.TrimPrefix(cond, "if")
+	}
+	if idx := strings.Index(cond, "{"); idx != -1 {
+		cond = cond[:idx]
+	}
+	cond = strings.TrimSpace(cond)
+
+	// Direct negation check: !ip.IsLoopback(), !(ip.IsLoopback()), (!ip.IsLoopback())
+	if strings.Contains(cond, "!") {
+		negRe := regexp.MustCompile(`!\s*\(+\s*(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\(|\b!\s*(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\(`)
+		if negRe.MatchString(cond) {
+			return true
+		}
+	}
+
+	// Comparison to boolean false: (ip.IsLoopback()) == false or predicate != true
+	cmpRe := regexp.MustCompile(`\s*(?:==\s*false|!=\s*true)`)
+	for _, loc := range cmpRe.FindAllStringIndex(cond, -1) {
+		prefix := strings.TrimSpace(cond[:loc[0]])
+		if idx := strings.LastIndexAny(prefix, "&|"); idx != -1 {
+			prefix = strings.TrimSpace(prefix[idx+1:])
+		}
+		prefix = unwrapParens(prefix)
+		ipCallRe := regexp.MustCompile(`^(?:net\.ParseIP\s*\(.*?\)|[a-zA-Z0-9_]+)\s*\.\s*Is[A-Z]\w*\s*\([^()]*\)$`)
+		if ipCallRe.MatchString(prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func isAllowlistContext(line string, lines []string, idx int) bool {
 	// 1. Returning the check as a boolean predicate (e.g. return net.ParseIP(...).IsLoopback())
-	if returnPredicateRe.MatchString(line) {
+	if isReturnIPPredicate(line) {
 		return true
 	}
 
 	// 2. Negated check applied directly to the IP predicate:
-	// e.g. if !net.ParseIP(u.Hostname()).IsLoopback() or if net.ParseIP(...).IsLoopback() == false
+	// e.g. if !net.ParseIP(u.Hostname()).IsLoopback() or if (ip.IsLoopback()) == false
 	// These require the IP property to be true, rejecting non-matching hosts (domain names).
-	if negatedCheckRe.MatchString(line) {
+	if isNegatedIPPredicate(line) {
 		return true
 	}
 
-	// 3. Positive if guard: inspect whether the guarded block accepts or rejects.
+	// 3. Positive if guard: inspect whether the guarded block accepts AND non-matching path rejects.
 	trimmed := strings.TrimSpace(line)
 	if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "if(") {
-		for k := idx; k < len(lines) && k < idx+6; k++ {
+		endBlock := findIfBlockEnd(lines, idx)
+
+		branchAccepts := false
+		for k := idx; k <= endBlock && k < len(lines); k++ {
 			bodyLine := strings.TrimSpace(lines[k])
 			if rejectReturnRe.MatchString(bodyLine) {
-				// The branch rejects the host (e.g. return nil, fmt.Errorf(...) or http.Error).
-				// This is a denylist guard where non-matching domain names bypass it.
 				return false
 			}
 			if acceptReturnRe.MatchString(bodyLine) {
-				// The branch accepts the host (e.g. bare return nil or return true).
-				// This is an allowlist guard.
+				branchAccepts = true
+			}
+		}
+
+		if branchAccepts {
+			// Require evidence that the nonmatching path rejects the hostname,
+			// either via an else block that rejects, or fallthrough lines that reject.
+			if hasRejectingElse(lines, endBlock) {
 				return true
 			}
-			if strings.Contains(bodyLine, "}") && k > idx {
-				break
+			for k := endBlock + 1; k < len(lines) && k < endBlock+7; k++ {
+				ftLine := strings.TrimSpace(lines[k])
+				if strings.HasPrefix(ftLine, "func ") {
+					break
+				}
+				if rejectReturnRe.MatchString(ftLine) {
+					return true
+				}
+				if acceptReturnRe.MatchString(ftLine) {
+					return false
+				}
 			}
 		}
 	}
