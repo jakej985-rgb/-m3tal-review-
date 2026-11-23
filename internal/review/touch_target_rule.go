@@ -31,13 +31,13 @@ func (r TouchTargetRule) Check(diff string) []Finding {
 // Regex patterns for interactive widgets and layout attributes
 var (
 	// Interactive wrapper widgets
-	inkWellRe        = regexp.MustCompile(`\b(InkWell|GestureDetector|InkResponse)\s*\(`)
-	textButtonRe     = regexp.MustCompile(`\b(TextButton|OutlinedButton|ElevatedButton)\s*\(`)
-	iconButtonRe     = regexp.MustCompile(`\bIconButton\s*\(`)
+	inkWellRe    = regexp.MustCompile(`\b(InkWell|GestureDetector|InkResponse)\s*\(`)
+	textButtonRe = regexp.MustCompile(`\b(TextButton|OutlinedButton|ElevatedButton)\s*\(`)
+	iconButtonRe = regexp.MustCompile(`\bIconButton\s*\(`)
 
 	// Explicit shrinkWrap anti-pattern
-	shrinkWrapRe     = regexp.MustCompile(`\btapTargetSize:\s*MaterialTapTargetSize\.shrinkWrap\b`)
-	minimumSizeZero  = regexp.MustCompile(`\bminimumSize:\s*(?:Size\.zero|const\s+Size\(0,\s*0\)|Size\(0,\s*0\))\b`)
+	shrinkWrapRe    = regexp.MustCompile(`\btapTargetSize:\s*MaterialTapTargetSize\.shrinkWrap\b`)
+	minimumSizeZero = regexp.MustCompile(`\bminimumSize:\s*(?:Size\.zero|const\s+Size\(0,\s*0\)|Size\(0,\s*0\))\b`)
 
 	// Size/padding extraction
 	paddingVerticalRe = regexp.MustCompile(`\bvertical:\s*([0-9.]+)`)

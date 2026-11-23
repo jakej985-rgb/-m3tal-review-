@@ -149,4 +149,3 @@ func TestPythonExtraFindings_BareExceptNoneCompareBlockingAsync(t *testing.T) {
 		t.Errorf("expected 'Bare except: catches BaseException' finding, got %+v", findings)
 	}
 }
-

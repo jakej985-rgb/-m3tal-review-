@@ -160,3 +160,49 @@ func TestGeneratePRReview_FindingOutsideDiffHunk(t *testing.T) {
 	}
 }
 
+func TestGeneratePRReview_LifecycleFindingsHaveNoAsyncGapSuggestion(t *testing.T) {
+	diffText := `diff --git a/lib/screen.dart b/lib/screen.dart
+--- a/lib/screen.dart
++++ b/lib/screen.dart
+@@ -10,3 +10,4 @@ class Screen {
++    Theme.of(context);
++    context.watch<MyState>();
+`
+	fileDiffs, err := ParseUnifiedDiff(diffText)
+	if err != nil {
+		t.Fatalf("parse diff: %v", err)
+	}
+
+	findings := []review.Finding{
+		{
+			Rule:     "deactivated-context-lifecycle",
+			Severity: "high",
+			File:     "lib/screen.dart",
+			Line:     10,
+			Message:  "Calling Theme.of() inside dispose() attempts to query deactivated widget element ancestors",
+			Snippet:  "    Theme.of(context);",
+		},
+		{
+			Rule:     "watch-outside-build",
+			Severity: "high",
+			File:     "lib/screen.dart",
+			Line:     11,
+			Message:  "Calling context.watch() outside build",
+			Snippet:  "    context.watch<MyState>();",
+		},
+	}
+
+	report, err := GeneratePRReview(findings, fileDiffs, FormatOptions{})
+	if err != nil {
+		t.Fatalf("GeneratePRReview: %v", err)
+	}
+
+	for _, ic := range report.InlineComments {
+		if strings.Contains(ic.Body, "```suggestion") {
+			t.Errorf("expected no inline suggestion for lifecycle finding %s, got: %s", ic.Rule, ic.Body)
+		}
+		if strings.Contains(ic.Body, "if (!mounted) return;") || strings.Contains(ic.Body, "if (!context.mounted) return;") {
+			t.Errorf("lifecycle finding %s must not offer async-gap mounted check suggestion", ic.Rule)
+		}
+	}
+}

@@ -917,4 +917,3 @@ export function runWorker(taskCommand: string) {
 		t.Errorf("expected finding in lib/worker.ts, got %s", shellFindings[0].File)
 	}
 }
-

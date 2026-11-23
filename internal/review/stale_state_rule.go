@@ -14,10 +14,10 @@ import (
 // StaleStateRule is a deterministic static analyzer that verifies lifecycle
 // state invalidation contracts in reactive UI frameworks (Flutter didUpdateWidget
 // and React componentDidUpdate/useEffect):
-// 1. It flags when an entity ID change refreshes a resource but fails to reset
-//    cursor/index state (preventing RangeError / index out of bounds crashes).
-// 2. It flags tests that test a widget with didUpdateWidget but keep parameters
-//    fixed, leaving update and cache invalidation branches unexercised.
+//  1. It flags when an entity ID change refreshes a resource but fails to reset
+//     cursor/index state (preventing RangeError / index out of bounds crashes).
+//  2. It flags tests that test a widget with didUpdateWidget but keep parameters
+//     fixed, leaving update and cache invalidation branches unexercised.
 type StaleStateRule struct {
 	RepositoryRoot string
 	WorkingTree    bool

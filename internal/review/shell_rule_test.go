@@ -81,4 +81,3 @@ func TestShellRuleFindsPythonAndPHPShellExecution(t *testing.T) {
 		t.Fatalf("expected 1 PHP proc_open finding, got %d: %+v", len(findingsPHP), findingsPHP)
 	}
 }
-

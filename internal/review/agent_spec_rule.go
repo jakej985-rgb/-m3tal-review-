@@ -107,24 +107,24 @@ func (r AgentSpecRule) CheckContext(ctx context.Context, diff string) []Finding 
 				// Check 1: Optional delegation bypasses required domain specialists
 				if optionalDelegationRe.MatchString(line) && !mandatedDelegationCheckRe.MatchString(line) {
 					key := fmt.Sprintf("%s:%d:delegation", filePath, lineNum)
-						if !seen[key] {
-							seen[key] = true
-							findings = append(findings, Finding{
-								Rule:        "agent-spec-contract",
-								Severity:    "high",
-								Category:    "drift",
-								Confidence:  "High",
-								File:        filePath,
-								Line:        lineNum,
-								Message:     "Optional delegation bypasses required domain specialists declared in AGENTS.md",
-								Remediation: "When delegation is available, consult and delegate to the relevant specialists as required by AGENTS.md. If delegation is unavailable, perform the review directly, disclose the limitation, and apply the Partial coverage rule above.",
-								Explanation: &model.FindingExplanation{
-									RuleRationale:   "Repository governance requires delegating domain-specific verification to specialized agents. Subagents must not silently bypass specialist review.",
-									EvidenceSummary: "Line declares delegation as optional without conditioning on unavailability.",
-									EvidenceKind:    "contract-inconsistency",
-								},
-							})
-						}
+					if !seen[key] {
+						seen[key] = true
+						findings = append(findings, Finding{
+							Rule:        "agent-spec-contract",
+							Severity:    "high",
+							Category:    "drift",
+							Confidence:  "High",
+							File:        filePath,
+							Line:        lineNum,
+							Message:     "Optional delegation bypasses required domain specialists declared in AGENTS.md",
+							Remediation: "When delegation is available, consult and delegate to the relevant specialists as required by AGENTS.md. If delegation is unavailable, perform the review directly, disclose the limitation, and apply the Partial coverage rule above.",
+							Explanation: &model.FindingExplanation{
+								RuleRationale:   "Repository governance requires delegating domain-specific verification to specialized agents. Subagents must not silently bypass specialist review.",
+								EvidenceSummary: "Line declares delegation as optional without conditioning on unavailability.",
+								EvidenceKind:    "contract-inconsistency",
+							},
+						})
+					}
 				}
 
 				// Check 2: Unclear scope for direct requests (Scope collision without precedence)

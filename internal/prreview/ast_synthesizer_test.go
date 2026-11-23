@@ -174,4 +174,3 @@ public List<Item> getItems() {
 		t.Errorf("expected MapGet /api/orders route extracted, got %+v", csSymbols)
 	}
 }
-

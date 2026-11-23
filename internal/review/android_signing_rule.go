@@ -9,9 +9,9 @@ import (
 
 // AndroidSigningRule flags dangerous release signing configurations in Gradle
 // build scripts (build.gradle / build.gradle.kts):
-// 1. Conditionally assigning debug signingConfig to the release buildType.
-// 2. Gating release signing requirements on gradle.startParameter.taskNames,
-//    which aggregate tasks (assemble, build) bypass.
+//  1. Conditionally assigning debug signingConfig to the release buildType.
+//  2. Gating release signing requirements on gradle.startParameter.taskNames,
+//     which aggregate tasks (assemble, build) bypass.
 type AndroidSigningRule struct {
 	ruleRuntime
 }

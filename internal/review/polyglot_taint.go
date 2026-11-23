@@ -11,24 +11,24 @@ import (
 
 var (
 	// Python patterns
-	pyFuncDefRe = regexp.MustCompile(`(?m)^\s*def\s+([A-Za-z_]\w*)\s*\(([^)]*)\):`)
+	pyFuncDefRe        = regexp.MustCompile(`(?m)^\s*def\s+([A-Za-z_]\w*)\s*\(([^)]*)\):`)
 	pyRouteDecoratorRe = regexp.MustCompile(`@(?:app|router|bp|blueprint|api_router)\.(?:get|post|put|delete|patch|route)\b`)
-	pyFlaskSourceRe = regexp.MustCompile(`\brequest\.(?:args|form|values|json|get_json|data|files|headers|cookies)\b`)
-	pyFastAPISourceRe = regexp.MustCompile(`\b(?:request\.query_params|Query\s*\(|Body\s*\(|request\.body\s*\()`)
-	pyAssignRe = regexp.MustCompile(`(?m)^\s*([A-Za-z_]\w*)\s*=\s*([^\n#]{1,300})`)
-	pyGuardCallRe = regexp.MustCompile(`\b(?:int|float|shlex\.quote|html\.escape|re\.escape|sanitize\w*|validate\w*|clean\w*|escape\w*)\s*\(`)
-	pySQLSinkRe = regexp.MustCompile(`\b(?:cursor|conn|connection|db|session|engine)\.(?:execute|executemany)\s*\(`)
-	pyShellSinkRe = regexp.MustCompile(`\b(?:os\.(?:system|popen)|subprocess\.(?:run|Popen|call|check_output|check_call))\s*\(`)
+	pyFlaskSourceRe    = regexp.MustCompile(`\brequest\.(?:args|form|values|json|get_json|data|files|headers|cookies)\b`)
+	pyFastAPISourceRe  = regexp.MustCompile(`\b(?:request\.query_params|Query\s*\(|Body\s*\(|request\.body\s*\()`)
+	pyAssignRe         = regexp.MustCompile(`(?m)^\s*([A-Za-z_]\w*)\s*=\s*([^\n#]{1,300})`)
+	pyGuardCallRe      = regexp.MustCompile(`\b(?:int|float|shlex\.quote|html\.escape|re\.escape|sanitize\w*|validate\w*|clean\w*|escape\w*)\s*\(`)
+	pySQLSinkRe        = regexp.MustCompile(`\b(?:cursor|conn|connection|db|session|engine)\.(?:execute|executemany)\s*\(`)
+	pyShellSinkRe      = regexp.MustCompile(`\b(?:os\.(?:system|popen)|subprocess\.(?:run|Popen|call|check_output|check_call))\s*\(`)
 
 	// TypeScript / JavaScript patterns
-	tsFuncDefRe = regexp.MustCompile(`(?m)(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$]\w*)\s*\(([^)]*)\)|(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$]\w*)\s*=\s*(?:async\s+)?\(([^)]*)\)\s*=>`)
+	tsFuncDefRe       = regexp.MustCompile(`(?m)(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$]\w*)\s*\(([^)]*)\)|(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$]\w*)\s*=\s*(?:async\s+)?\(([^)]*)\)\s*=>`)
 	tsExpressSourceRe = regexp.MustCompile(`\b(?:req|request)\.(?:query|body|params|headers|cookies)\b`)
-	tsNextSourceRe = regexp.MustCompile(`\b(?:request\.nextUrl\.searchParams|searchParams\.get|request\.json\s*\(\))`)
-	tsAssignRe = regexp.MustCompile(`(?m)(?:const|let|var)\s+([$\w]+)\s*=\s*([^\n;]{1,300})`)
-	tsDestructureRe = regexp.MustCompile(`(?m)(?:const|let|var)\s*\{([^}]+)\}\s*=\s*([^\n;]{1,300})`)
-	tsGuardCallRe = regexp.MustCompile(`\b(?:encodeURIComponent|parseInt|parseFloat|Number|DOMPurify\.sanitize|sanitize\w*|validate\w*|escape\w*)\s*\(`)
-	tsSQLSinkRe = regexp.MustCompile(`\b(?:db|pool|client|prisma|knex|sequelize)\.(?:query|raw|\$queryRaw|\$executeRaw)\s*\(`)
-	tsShellSinkRe = regexp.MustCompile(`(?:child_process\.)?\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(`)
+	tsNextSourceRe    = regexp.MustCompile(`\b(?:request\.nextUrl\.searchParams|searchParams\.get|request\.json\s*\(\))`)
+	tsAssignRe        = regexp.MustCompile(`(?m)(?:const|let|var)\s+([$\w]+)\s*=\s*([^\n;]{1,300})`)
+	tsDestructureRe   = regexp.MustCompile(`(?m)(?:const|let|var)\s*\{([^}]+)\}\s*=\s*([^\n;]{1,300})`)
+	tsGuardCallRe     = regexp.MustCompile(`\b(?:encodeURIComponent|parseInt|parseFloat|Number|DOMPurify\.sanitize|sanitize\w*|validate\w*|escape\w*)\s*\(`)
+	tsSQLSinkRe       = regexp.MustCompile(`\b(?:db|pool|client|prisma|knex|sequelize)\.(?:query|raw|\$queryRaw|\$executeRaw)\s*\(`)
+	tsShellSinkRe     = regexp.MustCompile(`(?:child_process\.)?\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(`)
 )
 
 type polyglotFunc struct {

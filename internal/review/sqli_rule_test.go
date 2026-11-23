@@ -70,4 +70,3 @@ func TestSQLiRuleFindsCSharpJavaPHP(t *testing.T) {
 		t.Fatalf("php findings = %+v; want 1", got)
 	}
 }
-

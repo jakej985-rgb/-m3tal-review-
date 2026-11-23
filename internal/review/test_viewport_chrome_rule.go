@@ -40,7 +40,7 @@ var (
 	)
 
 	// Shell widgets
-	shellWidgetRe = regexp.MustCompile(`\b(MainScaffold|AppShell|DesktopScaffold|GtkSidebar|SidebarShell)\b`)
+	shellWidgetRe  = regexp.MustCompile(`\b(MainScaffold|AppShell|DesktopScaffold|GtkSidebar|SidebarShell)\b`)
 	sidebarWidthRe = regexp.MustCompile(`\b(?:sidebarWidth|GtkSidebar|width)\s*[:=]\s*([0-9.]+)`)
 )
 

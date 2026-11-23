@@ -237,9 +237,9 @@ func (r RustAsyncLockRule) Check(diff string) []Finding {
 }
 
 var (
-	asyncFnRe = regexp.MustCompile(`\basync\s+(?:unsafe\s+)?fn\s+([a-zA-Z0-9_]+)`)
+	asyncFnRe         = regexp.MustCompile(`\basync\s+(?:unsafe\s+)?fn\s+([a-zA-Z0-9_]+)`)
 	syncLockAcquireRe = regexp.MustCompile(`\b(?:std::sync::Mutex|parking_lot::Mutex|[a-zA-Z0-9_]+)\.lock\s*\(\s*\)`)
-	awaitCallRe = regexp.MustCompile(`\b[a-zA-Z0-9_().]+?\.await\b`)
+	awaitCallRe       = regexp.MustCompile(`\b[a-zA-Z0-9_().]+?\.await\b`)
 )
 
 func (r RustAsyncLockRule) CheckContext(ctx context.Context, diff string) []Finding {
@@ -328,4 +328,3 @@ func (r RustAsyncLockRule) checkAsyncLockBlock(block diffSourceBlock, seen map[s
 
 	return findings
 }
-

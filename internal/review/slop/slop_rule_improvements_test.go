@@ -166,4 +166,3 @@ func spawn(wg *sync.WaitGroup) {
 		t.Errorf("expected 'sync.WaitGroup.Add called inside spawned goroutine', got %v", got)
 	}
 }
-

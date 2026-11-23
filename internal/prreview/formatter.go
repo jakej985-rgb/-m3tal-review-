@@ -40,13 +40,13 @@ type PRReviewReport struct {
 	InlineComments  []InlineComment    `json:"inline_comments"`
 	Verdict         ReviewVerdict      `json:"verdict"`
 	Grade           review.GradeResult `json:"grade"`
-	TotalFindings   int              `json:"total_findings"`
-	CriticalCount   int              `json:"critical_count"`
-	HighCount       int              `json:"high_count"`
-	MediumCount     int              `json:"medium_count"`
-	LowCount        int              `json:"low_count"`
-	SuggestionCount int              `json:"suggestion_count"`
-	Synthesis       *PRSynthesis     `json:"synthesis,omitempty"`
+	TotalFindings   int                `json:"total_findings"`
+	CriticalCount   int                `json:"critical_count"`
+	HighCount       int                `json:"high_count"`
+	MediumCount     int                `json:"medium_count"`
+	LowCount        int                `json:"low_count"`
+	SuggestionCount int                `json:"suggestion_count"`
+	Synthesis       *PRSynthesis       `json:"synthesis,omitempty"`
 }
 
 // FormatOptions configures report generation.

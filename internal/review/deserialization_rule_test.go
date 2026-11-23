@@ -62,4 +62,3 @@ func TestDeserializationRuleFindsCSharpJavaAndTorch(t *testing.T) {
 		t.Fatalf("java findings = %+v; want 1", got)
 	}
 }
-

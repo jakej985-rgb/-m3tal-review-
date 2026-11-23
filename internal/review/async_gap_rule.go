@@ -10,9 +10,11 @@ import (
 )
 
 // AsyncGapRule is a deterministic lifecycle static analyzer that detects
-// BuildContext or setState() calls across async gaps (await) without
+// BuildContext, setState(), or controller calls across async gaps (await) without
 // verifying widget mountedness, preventing 'setState() called after dispose()'
-// and deactivated ancestor lookup exceptions.
+// and deactivated ancestor lookup exceptions. It also audits Flutter component
+// lifecycle rules: preventing deactivated context lookups in dispose(), illegal setState()
+// calls in initState()/dispose(), and reactive watch() subscriptions outside build().
 type AsyncGapRule struct {
 	RepositoryRoot string
 	WorkingTree    bool
@@ -40,38 +42,48 @@ var (
 		`\bif\s*\([^)]*!(?:context\.)?mounted[^)]*\)\s*\{`,
 	)
 
-	// Positive block guard: if (mounted) { or if (context.mounted) { or mounted ?
-	mountedPositiveGuardRe = regexp.MustCompile(
-		`\bif\s*\(\s*(?:context\.)?mounted\s*\)\s*\{|\bmounted\s*\?`,
+	// Unconditional exit statement: return; return x; throw x; rethrow;
+	unconditionalExitRe = regexp.MustCompile(`^\s*(?:return\b|throw\b|rethrow\b)`)
+
+	// Positive guard condition: if (mounted), if (context.mounted), if (mounted && changed), etc.
+	// Must NOT contain '!' before mounted.
+	mountedPositiveConditionRe = regexp.MustCompile(
+		`\bif\s*\([^!)\n]*\b(?:context\.)?mounted\b[^)\n]*\)`,
 	)
 
-	// Early exit statement within multi-line block
-	earlyExitRe = regexp.MustCompile(`^\s*(?:return\b|throw\b|rethrow\b)|;\s*(?:return\b|throw\b|rethrow\b)`)
+	// Ternary guard on mounted: mounted ? ... : ...
+	mountedTernaryRe = regexp.MustCompile(`\b(?:context\.)?mounted\s*\?`)
 
 	// Calls requiring mounted context
-	setStateRe = regexp.MustCompile(`\bsetState\s*\(`)
+	setStateRe   = regexp.MustCompile(`\bsetState\s*\(`)
 	contextUseRe = regexp.MustCompile(
-		`\b(?:Navigator\.(?:of|pop|push|maybePop|pushNamed|pushReplacement|popUntil)|ScaffoldMessenger\.of|Scaffold\.of|Theme\.of|MediaQuery\.(?:of|sizeOf|orientationOf|paddingOf|viewInsetsOf|platformBrightnessOf|textScalerOf)|FocusScope\.of|DefaultTabController\.of|BlocProvider\.of|context\.(?:go|push|pop|read|watch|select)|ref\.(?:read|watch)|showDialog|showModalBottomSheet|showBottomSheet|showMenu|showDatePicker|showTimePicker|showSearch)\b`,
+		`\b(?:Navigator\.(?:of|pop|push|maybePop|pushNamed|pushReplacement|popUntil)|ScaffoldMessenger\.of|Scaffold\.of|Theme\.of|MediaQuery\.(?:of|sizeOf|orientationOf|paddingOf|viewInsetsOf|platformBrightnessOf|textScalerOf)|FocusScope\.of|DefaultTabController\.of|BlocProvider\.of(?:\s*<[^;\n()]+>)?|context\.(?:go|push|pop|read|watch|select)|ref\.(?:read|watch)|showDialog|showModalBottomSheet|showBottomSheet|showMenu|showDatePicker|showTimePicker|showSearch)\b`,
 	)
 	controllerRe = regexp.MustCompile(
-		`\b[a-zA-Z0-9_]*(?:Controller|Node|Animation)\s*\.\s*(?:forward|reverse|reset|animateTo|jumpTo|jumpToPage|requestFocus)\s*\(`,
+		`(?i:\b\w*(?:controller|node|animation)\w*)\s*\.\s*(?:forward|reverse|reset|animateTo|jumpTo|jumpToPage|requestFocus)\s*\(`,
 	)
 
-	lifecycleIllegalSetStateRe = regexp.MustCompile(`\bvoid\s+(initState|dispose)\s*\(\s*\)`)
-	asyncDisposeMethodRe       = regexp.MustCompile(`\bvoid\s+dispose\s*\(\s*\)`)
-	deactivatedContextRe       = regexp.MustCompile(
-		`\b(?:Theme\.of|MediaQuery\.(?:of|sizeOf|orientationOf|paddingOf)|Navigator\.of|ScaffoldMessenger\.of|Provider\.of|context\.(?:read|watch|select)(?:\s*<[^>]+>)?|context\.(?:go|push|pop))\s*\(`,
+	// Method declaration in Dart (handles nested generics like Future<List<T>>)
+	methodDeclRe = regexp.MustCompile(
+		`(?:^|\s)(?:@override\s+)?(?:void|Widget|Future(?:<[^;\n()]+>)?|[A-Z]\w*(?:<[^;\n()]+>)?|bool|int|String|double)\s+([a-zA-Z0-9_]+)\s*\(`,
 	)
-	watchOutsideBuildRe = regexp.MustCompile(`\b(?:context|ref)\.watch\s*(?:<[^>]+>)?\s*\(`)
-	methodBoundaryRe    = regexp.MustCompile(`^\s*(?:@override\s+)?(?:void|Widget|Future<[^>]*>|[A-Z]\w*|bool|int|String|double)\s+[a-zA-Z0-9_]+\s*\(`)
+
+	// Event callback opening in Flutter UI (onPressed: () { ..., onTap: () => ...)
+	eventCallbackRe = regexp.MustCompile(
+		`\bon[A-Z]\w*\s*:\s*(?:\([^)]*\)|[a-zA-Z0-9_]+)?\s*(?:=>|\{)`,
+	)
+
+	deactivatedContextRe = regexp.MustCompile(
+		`\b(?:Theme\.of|MediaQuery\.(?:of|sizeOf|orientationOf|paddingOf)|Navigator\.of|ScaffoldMessenger\.of|Provider\.of(?:\s*<[^;\n()]+>)?|context\.(?:read|watch|select)(?:\s*<[^;\n()]+>)?|context\.(?:go|push|pop))\s*\(`,
+	)
+	watchOutsideBuildRe = regexp.MustCompile(
+		`\b(?:context|ref)\.watch\s*(?:<[^;\n()]+>)?\s*\(`,
+	)
 )
 
-func isMountedGuard(lines []string, j int) bool {
+func isUnconditionalEarlyExit(lines []string, j int) bool {
 	line := lines[j]
 	if mountedEarlyExitRe.MatchString(line) {
-		return true
-	}
-	if mountedPositiveGuardRe.MatchString(line) {
 		return true
 	}
 	if mountedIfNegativeBlockRe.MatchString(line) {
@@ -81,14 +93,16 @@ func isMountedGuard(lines []string, j int) bool {
 		}
 		for k := j + 1; k < maxK; k++ {
 			trimmed := strings.TrimSpace(lines[k])
-			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
+			if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
 				continue
 			}
-			if earlyExitRe.MatchString(trimmed) {
+			// If unconditional return/throw/rethrow at block level
+			if unconditionalExitRe.MatchString(trimmed) {
 				return true
 			}
-			if strings.Contains(lines[k], "}") {
-				break
+			// If nested if or closing brace before an unconditional return, it is NOT guaranteed
+			if strings.HasPrefix(trimmed, "if") || strings.Contains(trimmed, "}") {
+				return false
 			}
 		}
 	}
@@ -105,11 +119,17 @@ func (r AsyncGapRule) CheckContext(ctx context.Context, diff string) []Finding {
 		}
 
 		filePath := fileDiff.Path
-		if !isUIFile(filePath) || isTestFile(filePath) {
+		// Only check Dart source files (.dart) and ignore tests
+		if !strings.HasSuffix(strings.ToLower(filePath), ".dart") || isTestFile(filePath) {
 			continue
 		}
 
 		blocks := fileDiffSourceBlocks(fileDiff)
+		// If repository snapshot is available, load full file source so partial diff hunks have full enclosing method context
+		if source, err := readRuleSource(r.RepositoryRoot, fileDiff.Path, r.WorkingTree); err == nil {
+			blocks = []diffSourceBlock{fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)}
+		}
+
 		for _, block := range blocks {
 			findings = append(findings, r.checkBlock(block, seen)...)
 		}
@@ -122,101 +142,131 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 	var findings []Finding
 	lines := strings.Split(block.text, "\n")
 
-	inBuildMethod := false
+	currentMethod := ""
+	methodBaseDepth := 0
+	inEventCallback := false
+	eventCallbackBraceDepth := 0
+	currentBraceDepth := 0
 
 	for i, line := range lines {
 		lineNum := block.firstLine + i
 
-		// Track current method context to detect watch() calls outside build()
-		if strings.Contains(line, "Widget build(") || strings.Contains(line, "Widget build (") {
-			inBuildMethod = true
-		} else if methodBoundaryRe.MatchString(line) {
-			inBuildMethod = false
+		// Track method declarations and depth
+		if m := methodDeclRe.FindStringSubmatch(line); len(m) > 1 {
+			currentMethod = m[1]
+			methodBaseDepth = currentBraceDepth
 		}
 
-		// Check for watch() called outside build()
-		if !inBuildMethod && watchOutsideBuildRe.MatchString(line) && block.addedLines[lineNum] {
-			key := fmt.Sprintf("%s:%d:watch-outside-build", block.file, lineNum)
+		// Track braces to know when we exit currentMethod
+		for _, ch := range line {
+			if ch == '{' {
+				currentBraceDepth++
+			} else if ch == '}' {
+				currentBraceDepth--
+				if currentMethod != "" && currentBraceDepth <= methodBaseDepth {
+					currentMethod = ""
+				}
+			}
+		}
+
+		// Track event callbacks (e.g. onPressed: () { ... }, onTap: () => ...)
+		if eventCallbackRe.MatchString(line) {
+			if strings.Contains(line, "{") {
+				inEventCallback = true
+				eventCallbackBraceDepth = currentBraceDepth
+			} else if strings.Contains(line, "=>") {
+				if watchOutsideBuildRe.MatchString(line) && block.addedLines[lineNum] {
+					key := fmt.Sprintf("%s:%d:watch-in-callback", block.file, lineNum)
+					if !seen[key] {
+						seen[key] = true
+						findings = append(findings, Finding{
+							Rule:        "watch-outside-build",
+							Severity:    "high",
+							Category:    "quality",
+							File:        block.file,
+							Line:        lineNum,
+							Message:     "Calling context.watch() inside an event callback runs on user interaction rather than during build, causing runtime exceptions; use context.read() instead",
+							Remediation: "Use context.read() instead of context.watch() in event callbacks and action handlers.",
+							Confidence:  "High",
+						})
+					}
+				}
+			}
+		}
+		if inEventCallback && currentBraceDepth < eventCallbackBraceDepth {
+			inEventCallback = false
+		}
+
+		// 1. Check for watch() called outside build() or inside an event callback
+		if block.addedLines[lineNum] && watchOutsideBuildRe.MatchString(line) {
+			isWatchViolation := false
+			violationMsg := ""
+
+			if inEventCallback {
+				isWatchViolation = true
+				violationMsg = "Calling context.watch() inside an event callback runs on user interaction rather than during build, causing runtime exceptions; use context.read() instead"
+			} else if currentMethod != "" && currentMethod != "build" {
+				isWatchViolation = true
+				violationMsg = "Calling context.watch() or ref.watch() outside of Widget build() causes runtime exceptions and leaks subscriptions; use context.read() or ref.read() instead"
+			}
+
+			if isWatchViolation {
+				key := fmt.Sprintf("%s:%d:watch-outside-build", block.file, lineNum)
+				if !seen[key] {
+					seen[key] = true
+					findings = append(findings, Finding{
+						Rule:        "watch-outside-build",
+						Severity:    "high",
+						Category:    "quality",
+						File:        block.file,
+						Line:        lineNum,
+						Message:     violationMsg,
+						Remediation: "Use context.read() or ref.read() in callbacks and async methods.",
+						Confidence:  "High",
+					})
+				}
+			}
+		}
+
+		// 2. Check for setState called inside initState() or dispose()
+		if (currentMethod == "initState" || currentMethod == "dispose") && setStateRe.MatchString(line) && (block.addedLines[lineNum]) {
+			key := fmt.Sprintf("%s:%d:lifecycle-%s-setstate", block.file, lineNum, currentMethod)
 			if !seen[key] {
 				seen[key] = true
 				findings = append(findings, Finding{
-					Rule:        "unmounted-async-gap",
+					Rule:        "invalid-lifecycle-setstate",
 					Severity:    "high",
 					Category:    "quality",
 					File:        block.file,
 					Line:        lineNum,
-					Message:     "Calling context.watch() or ref.watch() outside of Widget build() causes runtime exceptions and leaks subscriptions; use context.read() or ref.read() instead",
-					Remediation: "Use context.read() or ref.read() in callbacks and async methods.",
+					Message:     fmt.Sprintf("Calling setState() inside %s() throws or is redundant; the framework cannot re-render unmounted/building widgets", currentMethod),
+					Remediation: fmt.Sprintf("In %s(), assign state variables directly without calling setState().", currentMethod),
 					Confidence:  "High",
 				})
 			}
 		}
 
-		// Check for setState called inside initState() or dispose()
-		if m := lifecycleIllegalSetStateRe.FindStringSubmatch(line); len(m) > 1 {
-			lifecycleMethod := m[1]
-			end := i + 30
-			if end > len(lines) {
-				end = len(lines)
-			}
-			for j := i + 1; j < end; j++ {
-				currLine := lines[j]
-				currLineNum := block.firstLine + j
-				if methodBoundaryRe.MatchString(currLine) {
-					break
-				}
-				if setStateRe.MatchString(currLine) && (block.addedLines[currLineNum] || block.addedLines[lineNum]) {
-					key := fmt.Sprintf("%s:%d:lifecycle-%s-setstate", block.file, currLineNum, lifecycleMethod)
-					if !seen[key] {
-						seen[key] = true
-						findings = append(findings, Finding{
-							Rule:        "unmounted-async-gap",
-							Severity:    "high",
-							Category:    "quality",
-							File:        block.file,
-							Line:        currLineNum,
-							Message:     fmt.Sprintf("Calling setState() inside %s() throws or is redundant; the framework cannot re-render unmounted/building widgets", lifecycleMethod),
-							Remediation: fmt.Sprintf("In %s(), assign state variables directly without calling setState().", lifecycleMethod),
-							Confidence:  "High",
-						})
-					}
-				}
+		// 3. Check for deactivated context / inherited model lookup inside dispose()
+		if currentMethod == "dispose" && deactivatedContextRe.MatchString(line) && (block.addedLines[lineNum]) {
+			m := deactivatedContextRe.FindString(line)
+			op := strings.TrimSuffix(m, "(")
+			key := fmt.Sprintf("%s:%d:dispose-deactivated-%s", block.file, lineNum, op)
+			if !seen[key] {
+				seen[key] = true
+				findings = append(findings, Finding{
+					Rule:        "deactivated-context-lifecycle",
+					Severity:    "high",
+					Category:    "quality",
+					File:        block.file,
+					Line:        lineNum,
+					Message:     fmt.Sprintf("Calling %s() inside dispose() attempts to query deactivated widget element ancestors and throws runtime assertions", op),
+					Remediation: "Remove context-dependent lookups from dispose(); perform cleanup on listeners, subscriptions, and controllers directly.",
+					Confidence:  "High",
+				})
 			}
 		}
 
-		// Check for deactivated context / inherited model lookup inside dispose()
-		if asyncDisposeMethodRe.MatchString(line) {
-			end := i + 30
-			if end > len(lines) {
-				end = len(lines)
-			}
-			for j := i + 1; j < end; j++ {
-				currLine := lines[j]
-				currLineNum := block.firstLine + j
-				if methodBoundaryRe.MatchString(currLine) {
-					break
-				}
-				if m := deactivatedContextRe.FindString(currLine); m != "" && (block.addedLines[currLineNum] || block.addedLines[lineNum]) {
-					op := strings.TrimSuffix(m, "(")
-					key := fmt.Sprintf("%s:%d:dispose-deactivated-%s", block.file, currLineNum, op)
-					if !seen[key] {
-						seen[key] = true
-						findings = append(findings, Finding{
-							Rule:        "unmounted-async-gap",
-							Severity:    "high",
-							Category:    "quality",
-							File:        block.file,
-							Line:        currLineNum,
-							Message:     fmt.Sprintf("Calling %s() inside dispose() attempts to query deactivated widget element ancestors and throws runtime assertions", op),
-							Remediation: "Remove context-dependent lookups from dispose(); perform cleanup on listeners, subscriptions, and controllers directly.",
-							Confidence:  "High",
-						})
-					}
-				}
-			}
-		}
-
-		// Look for an await expression
+		// 4. Look for an await expression (async gap)
 		if !awaitExprRe.MatchString(line) {
 			continue
 		}
@@ -244,24 +294,63 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 			end = len(lines)
 		}
 
-		hasGuard := false
+		inPositiveGuardBlock := false
+		positiveGuardBraceDepth := 0
+
 		for j := stmtEnd + 1; j < end; j++ {
 			currLine := lines[j]
 			currLineNum := block.firstLine + j
 
-			// If a new function begins, break
-			if methodBoundaryRe.MatchString(currLine) {
+			// If a new method declaration begins, break
+			if methodDeclRe.MatchString(currLine) {
 				break
 			}
 
-			// If a mounted guard is found, subsequent calls in this scope are safe
-			if isMountedGuard(lines, j) {
-				hasGuard = true
+			// Check for unconditional early exit of unmounted path
+			if isUnconditionalEarlyExit(lines, j) {
 				break
 			}
 
-			// If we touch an added line that uses setState, context, or controllers after await without a guard
-			if !hasGuard && (block.addedLines[currLineNum] || block.addedLines[lineNum]) {
+			// Check for entering positive guard branch: if (mounted && ...) {
+			if !inPositiveGuardBlock && mountedPositiveConditionRe.MatchString(currLine) && strings.Contains(currLine, "{") {
+				inPositiveGuardBlock = true
+				positiveGuardBraceDepth = 1
+				// Count any closing braces on the same line
+				for _, ch := range currLine[strings.Index(currLine, "{")+1:] {
+					if ch == '{' {
+						positiveGuardBraceDepth++
+					} else if ch == '}' {
+						positiveGuardBraceDepth--
+					}
+				}
+				if positiveGuardBraceDepth <= 0 {
+					inPositiveGuardBlock = false
+				}
+				continue
+			}
+
+			if inPositiveGuardBlock {
+				for _, ch := range currLine {
+					if ch == '{' {
+						positiveGuardBraceDepth++
+					} else if ch == '}' {
+						positiveGuardBraceDepth--
+					}
+				}
+				if positiveGuardBraceDepth <= 0 {
+					inPositiveGuardBlock = false
+				}
+				// Lines inside positive guard are protected
+				continue
+			}
+
+			// Single-line ternary guard: mounted ? ... : ...
+			if mountedTernaryRe.MatchString(currLine) {
+				continue
+			}
+
+			// Unprotected call check
+			if block.addedLines[currLineNum] || block.addedLines[lineNum] {
 				matchedOp := ""
 				if setStateRe.MatchString(currLine) {
 					matchedOp = "setState()"

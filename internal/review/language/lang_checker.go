@@ -280,10 +280,10 @@ func DetectWithOverrides(file string, content []byte, overrides map[string]strin
 }
 
 var (
-	cppKeywordsPattern = regexp.MustCompile(`\b(?:class\s+\w+|template\s*<|namespace\s+\w+|public:|private:|protected:|std::|constexpr|nullptr|typename|using\s+namespace)\b`)
-	cConstructsPattern = regexp.MustCompile(`\b(?:typedef\s+struct|extern\s+(?:int|char|void|unsigned|const)|\bstdio\.h\b|\bstdlib\.h\b)\b`)
-	goPackagePattern   = regexp.MustCompile(`(?m)^\s*package\s+[a-zA-Z_]\w*`)
-	pyConstructPattern = regexp.MustCompile(`(?m)^\s*(?:def\s+\w+\s*\(|class\s+\w+|import\s+\w+|from\s+\w+\s+import)`)
+	cppKeywordsPattern  = regexp.MustCompile(`\b(?:class\s+\w+|template\s*<|namespace\s+\w+|public:|private:|protected:|std::|constexpr|nullptr|typename|using\s+namespace)\b`)
+	cConstructsPattern  = regexp.MustCompile(`\b(?:typedef\s+struct|extern\s+(?:int|char|void|unsigned|const)|\bstdio\.h\b|\bstdlib\.h\b)\b`)
+	goPackagePattern    = regexp.MustCompile(`(?m)^\s*package\s+[a-zA-Z_]\w*`)
+	pyConstructPattern  = regexp.MustCompile(`(?m)^\s*(?:def\s+\w+\s*\(|class\s+\w+|import\s+\w+|from\s+\w+\s+import)`)
 	shellShebangPattern = regexp.MustCompile(`\b(?:bash|sh|zsh|dash|ash|ksh)\b`)
 )
 

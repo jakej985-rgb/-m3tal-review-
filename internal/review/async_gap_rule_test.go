@@ -164,6 +164,11 @@ new file mode 100644
 	if len(findings) != 2 {
 		t.Fatalf("expected 2 findings for setState in initState and dispose, got %d: %+v", len(findings), findings)
 	}
+	for _, f := range findings {
+		if f.Rule != "invalid-lifecycle-setstate" {
+			t.Errorf("expected rule invalid-lifecycle-setstate, got %s", f.Rule)
+		}
+	}
 }
 
 func TestAsyncGapRuleDoesNotAcceptUnguardedIfUnmounted(t *testing.T) {
@@ -329,6 +334,11 @@ new file mode 100644
 	if len(findings) != 2 {
 		t.Fatalf("expected 2 findings for deactivated context lookups in dispose, got %d: %+v", len(findings), findings)
 	}
+	for _, f := range findings {
+		if f.Rule != "deactivated-context-lifecycle" {
+			t.Errorf("expected rule deactivated-context-lifecycle, got %s", f.Rule)
+		}
+	}
 }
 
 func TestAsyncGapRuleDetectsWatchOutsideBuild(t *testing.T) {
@@ -355,6 +365,206 @@ new file mode 100644
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding for context.watch outside build, got %d: %+v", len(findings), findings)
 	}
+	if findings[0].Rule != "watch-outside-build" {
+		t.Errorf("expected rule watch-outside-build, got %s", findings[0].Rule)
+	}
 }
 
+func TestAsyncGapRule_PositiveBranchDoesNotHideFollowingUnguardedCalls(t *testing.T) {
+	diff := `diff --git a/lib/presentation/branch_screen.dart b/lib/presentation/branch_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/branch_screen.dart
+@@ -0,0 +1,16 @@
++class _BranchScreenState extends State<BranchScreen> {
++  Future<void> _save() async {
++    await api.save();
++    if (mounted) {
++      setState(() {});
++    }
++    showDialog(context: context, builder: (_) => Container());
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for showDialog after if (mounted) block, got %d: %+v", len(findings), findings)
+	}
+	if !strings.Contains(findings[0].Message, "showDialog") {
+		t.Errorf("expected showDialog in message, got %s", findings[0].Message)
+	}
+}
 
+func TestAsyncGapRule_CompoundPositiveGuardAllowed(t *testing.T) {
+	diff := `diff --git a/lib/presentation/compound_screen.dart b/lib/presentation/compound_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/compound_screen.dart
+@@ -0,0 +1,14 @@
++class _CompoundScreenState extends State<CompoundScreen> {
++  Future<void> _update(bool changed) async {
++    await api.sync();
++    if (mounted && changed) {
++      setState(() {});
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for compound mounted check if (mounted && changed), got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_ConditionalExitInIfUnmountedDoesNotHideCalls(t *testing.T) {
+	diff := `diff --git a/lib/presentation/nested_exit.dart b/lib/presentation/nested_exit.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/nested_exit.dart
+@@ -0,0 +1,17 @@
++class _NestedExitState extends State<NestedExit> {
++  Future<void> _fetch(bool foo) async {
++    await api.fetch();
++    if (!mounted) {
++      if (foo) return;
++    }
++    showDialog(context: context, builder: (_) => Container());
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding because nested return does not guarantee unmounted exit, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_GenericProviderOfInDispose(t *testing.T) {
+	diff := `diff --git a/lib/presentation/provider_dispose.dart b/lib/presentation/provider_dispose.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/provider_dispose.dart
+@@ -0,0 +1,11 @@
++class _ProviderDisposeState extends State<ProviderDispose> {
++  @override
++  void dispose() {
++    Provider.of<User>(context);
++    super.dispose();
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for Provider.of<User>(context) in dispose, got %d: %+v", len(findings), findings)
+	}
+	if findings[0].Rule != "deactivated-context-lifecycle" {
+		t.Errorf("expected deactivated-context-lifecycle, got %s", findings[0].Rule)
+	}
+}
+
+func TestAsyncGapRule_GenericContextWatchInTapHandler(t *testing.T) {
+	diff := `diff --git a/lib/presentation/tap_screen.dart b/lib/presentation/tap_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/tap_screen.dart
+@@ -0,0 +1,15 @@
++class _TapScreenState extends State<TapScreen> {
++  @override
++  Widget build(BuildContext context) {
++    return ElevatedButton(
++      onPressed: () {
++        context.watch<List<User>>();
++      },
++      child: Text('Tap'),
++    );
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for context.watch inside onPressed callback, got %d: %+v", len(findings), findings)
+	}
+	if findings[0].Rule != "watch-outside-build" {
+		t.Errorf("expected watch-outside-build, got %s", findings[0].Rule)
+	}
+}
+
+func TestAsyncGapRule_ControllerForwardWithoutCapitalController(t *testing.T) {
+	diff := `diff --git a/lib/presentation/anim_screen.dart b/lib/presentation/anim_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/anim_screen.dart
+@@ -0,0 +1,10 @@
++class _AnimScreenState extends State<AnimScreen> {
++  Future<void> _start() async {
++    await api.prepare();
++    _controller.forward();
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for _controller.forward(), got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_IgnoresVueShowMenu(t *testing.T) {
+	diff := `diff --git a/src/components/Menu.vue b/src/components/Menu.vue
+new file mode 100644
+--- /dev/null
++++ b/src/components/Menu.vue
+@@ -0,0 +1,8 @@
++<script setup>
++async function open() {
++  await api.fetch();
++  showMenu();
++}
++</script>
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for non-Dart Vue file, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_RiverpodNotifierBuildMethodAllowed(t *testing.T) {
+	diff := `diff --git a/lib/notifier.dart b/lib/notifier.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/notifier.dart
+@@ -0,0 +1,9 @@
++class MyNotifier extends Notifier<String> {
++  @override
++  String build() {
++    final user = ref.watch(userProvider);
++    return user.name;
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for ref.watch inside Riverpod String build(), got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_DoesNotFlagWatchWhenEnclosingMethodUnknown(t *testing.T) {
+	diff := `diff --git a/lib/presentation/partial.dart b/lib/presentation/partial.dart
+--- a/lib/presentation/partial.dart
++++ b/lib/presentation/partial.dart
+@@ -42,1 +42,2 @@
++    final settings = context.watch<Settings>();
++    return Text(settings.title);
+`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for body-only hunk with unknown enclosing method, got %d: %+v", len(findings), findings)
+	}
+}

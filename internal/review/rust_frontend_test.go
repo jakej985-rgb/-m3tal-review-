@@ -117,4 +117,3 @@ pub async fn handle_request(state: Arc<tokio::sync::Mutex<State>>) -> Result<(),
 		t.Fatalf("expected 0 findings for tokio::sync::Mutex, got %d", len(findings))
 	}
 }
-

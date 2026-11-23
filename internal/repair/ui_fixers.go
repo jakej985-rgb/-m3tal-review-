@@ -18,7 +18,7 @@ func (AsyncGapFixer) Name() string {
 }
 
 func (AsyncGapFixer) CanFix(f review.Finding) bool {
-	return f.Rule == "unmounted-async-gap"
+	return f.Rule == "unmounted-async-gap" && (f.Explanation == nil || f.Explanation.EvidenceKind == "async-boundary")
 }
 
 func (AsyncGapFixer) GenerateProposal(ctx context.Context, repoRoot string, f review.Finding, content []byte) (*Proposal, error) {
