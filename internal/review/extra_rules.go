@@ -31,7 +31,13 @@ func ExtraRules(repositoryRoot string) []Rule {
 			name: "negative-amount-bypass", severity: "high", raw: true,
 			remediation: "Verify numeric amounts are strictly positive (e.g. amount <= 0 check) in financial and payment transactions to prevent fund drain and credit balance inversion.",
 			patterns: []langPattern{
-				{language.LanguageGo, regexp.MustCompile(`(?i)\b(?:amount|balance|cents|payment|transfer)\b[^\n]{0,60}>\s*\d+[^\n]*\n(?:[^\n]*\n){0,30}?[^\n]*?(?:Balance|balance)\s*[-+]=`), "Upper-bound check on transaction amount without visible non-negative check before balance modification"},
+				{language.LanguageGo, regexp.MustCompile(`(?i)\b\w*(?:amount|balance|cents|payment|transfer)\w*\s*>\s*\d+[^\n]*\n(?:[^\n]*\n){0,30}?[^\n]*?(?:Balance|balance)\w*\s*[-+]=`), "Upper-bound check on transaction amount without visible non-negative check before balance modification"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "idor-unverified-access", severity: "high", raw: true,
+			remediation: "Verify that the authenticated user owns or is authorized to access the requested entity ID (e.g. record.OwnerID == caller.ID) before serializing or returning data.",
+			patterns: []langPattern{
+				{language.LanguageGo, regexp.MustCompile(`(?s)r\.URL\.Query\(\)\.Get\s*\(\s*["']id["']\s*\).*?\[\w+\]\s*\n\s*(?:s\.\w+Mu\.RUnlock\(\)\s*\n\s*)?(?:if\s+!ok|\w+\s*==\s*nil).*?Encode\(\w+\)`), "Entity retrieved by query ID and returned without visible ownership or tenant authorization check"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "command-injection", severity: "high",

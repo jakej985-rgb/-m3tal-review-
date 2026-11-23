@@ -595,4 +595,28 @@ func TestNewRulesDetections(t *testing.T) {
 			t.Errorf("expected js-common-mistakes to flag useEffect(async ...)")
 		}
 	})
+
+	t.Run("dns-rebinding-ssrf", func(t *testing.T) {
+		r := rulesByName(t, "dns-rebinding-ssrf")[0]
+		code := "package main\nfunc f(u *url.URL) {\n\tip := net.ParseIP(u.Hostname())\n\tif ip != nil && ip.IsLoopback() {\n\t\treturn\n\t}\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", code)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to flag naive net.ParseIP check on Hostname")
+		}
+	})
+
+	t.Run("negative-amount-bypass", func(t *testing.T) {
+		r := rulesByName(t, "negative-amount-bypass")[0]
+		code := "package main\nfunc f(req Request, acc *Account) {\n\tif req.AmountCents > 10000 {\n\t\treturn\n\t}\n\tacc.Balance -= req.AmountCents\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", code)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag upper bound check without non-negative check")
+		}
+	})
+
+	t.Run("idor-unverified-access", func(t *testing.T) {
+		r := rulesByName(t, "idor-unverified-access")[0]
+		code := "package main\nfunc f(w http.ResponseWriter, r *http.Request) {\n\tid := r.URL.Query().Get(\"id\")\n\trec := store[id]\n\tif !ok {\n\t\treturn\n\t}\n\tjson.NewEncoder(w).Encode(rec)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", code)), "idor-unverified-access") {
+			t.Errorf("expected idor-unverified-access to flag direct query retrieval and encode")
+		}
+	})
 }
