@@ -10,8 +10,29 @@ import (
 )
 
 var (
-	balanceDebitRe = regexp.MustCompile(`(?i)\b(?:Balance|balance)\w*\s*(?:[-+]=|=(?:[^\n=;]+[-+]))\s*([a-zA-Z0-9_.]+)`)
+	balanceDebitRe = regexp.MustCompile(`(?i)\b(?:Balance|balance)\w*\s*(?:[-+]=|=(?:[^\n=;]+[-+]))\s*([^\n;]+)`)
 )
+
+func unwrapDebitOperand(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if idx := strings.Index(raw, "//"); idx != -1 {
+		raw = strings.TrimSpace(raw[:idx])
+	}
+	typeCastRe := regexp.MustCompile(`^(?:u?int(?:8|16|32|64)?|float(?:32|64))\s*\((.*)\)$`)
+	for {
+		raw = strings.TrimSpace(raw)
+		if strings.HasPrefix(raw, "(") && strings.HasSuffix(raw, ")") {
+			raw = strings.TrimSpace(raw[1 : len(raw)-1])
+			continue
+		}
+		if m := typeCastRe.FindStringSubmatch(raw); len(m) > 1 {
+			raw = strings.TrimSpace(m[1])
+			continue
+		}
+		break
+	}
+	return raw
+}
 
 // NegativeAmountRule detects financial transactions and balance modifications where
 // an amount is checked against an upper bound or balance limit without ensuring it
@@ -56,12 +77,17 @@ func (r *NegativeAmountRule) CheckContext(ctx context.Context, diff string) []Fi
 				continue
 			}
 
-			targetExpr := m[1]
+			targetExpr := unwrapDebitOperand(m[1])
 			parts := strings.Split(targetExpr, ".")
 			shortName := parts[len(parts)-1]
 
-			upperCheckRe := regexp.MustCompile(`(?i)\b(?:` + regexp.QuoteMeta(targetExpr) + `|` + regexp.QuoteMeta(shortName) + `)\b\s*>\s*(?:[0-9]+|\w+(?:\.\w+)*)`)
-			lowerCheckRe := regexp.MustCompile(`(?i)\b(?:` + regexp.QuoteMeta(targetExpr) + `|` + regexp.QuoteMeta(shortName) + `)\b\s*(?:<=|<)\s*[01]\b|\b(?:0|zero)\s*(?:>=|>)\s*(?:` + regexp.QuoteMeta(targetExpr) + `|` + regexp.QuoteMeta(shortName) + `)\b`)
+			targetPattern := regexp.QuoteMeta(targetExpr)
+			if shortName != "" && shortName != targetExpr {
+				targetPattern += "|" + regexp.QuoteMeta(shortName)
+			}
+
+			upperCheckRe := regexp.MustCompile(`(?i)\b(?:` + targetPattern + `)\b\s*>\s*(?:[0-9]+|\w+(?:\.\w+)*)`)
+			lowerCheckRe := regexp.MustCompile(`(?i)\b(?:` + targetPattern + `)\b\s*(?:<=|<)\s*(?:[01]\b|zero\b)|\b(?:[01]\b|zero\b)\s*(?:>=|>)\s*(?:` + targetPattern + `)\b`)
 
 			hasUpper := false
 			hasLower := false

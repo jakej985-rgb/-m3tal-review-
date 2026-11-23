@@ -76,9 +76,6 @@ type patternRule struct {
 	// call arguments (handling nested parens, quotes, and newlines) before
 	// evaluating matchAbsent.
 	inspectCallArgs bool
-	// inspectEnclosingBlock, when set, expands matchAbsent evaluation to
-	// surrounding context (up to 1000 bytes before and 200 bytes after match).
-	inspectEnclosingBlock bool
 	// includeTests, when false (the default), automatically suppresses findings
 	// in test files, suites, testdata, and mock fixtures.
 	includeTests bool
@@ -131,18 +128,6 @@ func (r *patternRule) CheckContext(ctx context.Context, diff string) []Finding {
 				if r.inspectCallArgs && r.matchAbsent != nil {
 					callArgs := extractBalancedCallArgs(block.text, match[0])
 					if callArgs != "" && r.matchAbsent.MatchString(callArgs) {
-						continue
-					}
-				} else if r.inspectEnclosingBlock && r.matchAbsent != nil {
-					start := match[0] - 1000
-					if start < 0 {
-						start = 0
-					}
-					end := match[1] + 200
-					if end > len(code) {
-						end = len(code)
-					}
-					if r.matchAbsent.MatchString(code[start:end]) {
 						continue
 					}
 				} else if r.matchAbsent != nil && r.matchAbsent.MatchString(code[match[0]:match[1]]) {

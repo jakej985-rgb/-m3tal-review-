@@ -36,23 +36,23 @@ var (
 
 	// Single-line early exit guard (e.g. 'if (!mounted) return;', 'if (x || !context.mounted) return;', 'throw')
 	mountedEarlyExitRe = regexp.MustCompile(
-		`\bif\s*\([^)]*!(?:context\.)?mounted[^)]*\)\s*(?:return\b|throw\b|rethrow\b)`,
+		`\bif\s*\([^)]*!(?:(?:this|context|[a-zA-Z0-9_]+)\.)?mounted[^)]*\)\s*(?:return\b|throw\b|rethrow\b)`,
 	)
 
 	// Opening of multi-line !mounted guard (e.g. 'if (!mounted) {')
 	mountedIfNegativeBlockRe = regexp.MustCompile(
-		`\bif\s*\([^)]*!(?:context\.)?mounted[^)]*\)\s*\{`,
+		`\bif\s*\([^)]*!(?:(?:this|context|[a-zA-Z0-9_]+)\.)?mounted[^)]*\)\s*\{`,
 	)
 
 	// Unconditional exit statement: return; return x; throw x; rethrow;
 	unconditionalExitRe = regexp.MustCompile(`^\s*(?:return\b|throw\b|rethrow\b)`)
 
 	// Guard reference and false comparison patterns
-	mountedRefRe   = regexp.MustCompile(`\b(?:context\.)?mounted\b`)
-	mountedFalseRe = regexp.MustCompile(`\b(?:context\.)?mounted\s*==\s*false\b|\b(?:context\.)?mounted\s*!=\s*true\b`)
+	mountedRefRe   = regexp.MustCompile(`\b(?:(?:this|context|[a-zA-Z0-9_]+)\.)?mounted\b`)
+	mountedFalseRe = regexp.MustCompile(`\b(?:(?:this|context|[a-zA-Z0-9_]+)\.)?mounted\s*==\s*false\b|\b(?:(?:this|context|[a-zA-Z0-9_]+)\.)?mounted\s*!=\s*true\b`)
 
 	// Ternary guard on mounted: mounted ? ... : ...
-	mountedTernaryRe = regexp.MustCompile(`\b(?:context\.)?mounted\s*\?`)
+	mountedTernaryRe = regexp.MustCompile(`\b(?:(?:this|context|[a-zA-Z0-9_]+)\.)?mounted\s*\?`)
 
 	// Calls requiring mounted context
 	setStateRe   = regexp.MustCompile(`\bsetState\s*\(`)
@@ -81,14 +81,14 @@ var (
 	)
 )
 
-func isSafePositiveMountedGuard(line string) bool {
+func isSafePositiveMountedGuard(line string) (bool, map[string]bool) {
 	openIdx := strings.Index(line, "if")
 	if openIdx < 0 {
-		return false
+		return false, nil
 	}
 	parenStart := strings.Index(line[openIdx:], "(")
 	if parenStart < 0 {
-		return false
+		return false, nil
 	}
 	parenStart += openIdx
 
@@ -106,16 +106,16 @@ func isSafePositiveMountedGuard(line string) bool {
 		}
 	}
 	if parenEnd == -1 {
-		return false
+		return false, nil
 	}
 	cond := line[parenStart+1 : parenEnd]
 	return impliesMounted(cond)
 }
 
-func impliesMounted(expr string) bool {
+func impliesMounted(expr string) (bool, map[string]bool) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
-		return false
+		return false, nil
 	}
 
 	for strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
@@ -139,37 +139,84 @@ func impliesMounted(expr string) bool {
 		}
 	}
 
-	// 1. Top-level disjunction (||): every term must guarantee mountedness
-	orTerms := splitTopLevelOp(expr, "||")
-	if len(orTerms) > 1 {
-		for _, term := range orTerms {
-			if !impliesMounted(term) {
-				return false
-			}
-		}
-		return true
+	// In Dart, conditional operator (? :) has lower precedence than && and ||.
+	// Conservatively reject unsupported top-level conditional expressions before splitting at logical operators.
+	if len(splitTopLevelOp(expr, "?")) > 1 {
+		return false, nil
 	}
 
-	// 2. Top-level conjunction (&&): at least one term must guarantee mountedness
-	andTerms := splitTopLevelOp(expr, "&&")
-	if len(andTerms) > 1 {
-		for _, term := range andTerms {
-			if impliesMounted(term) {
-				return true
+	// 1. Top-level disjunction (||): every term must guarantee mountedness.
+	// Only receivers guaranteed across ALL branches are safely mounted.
+	orTerms := splitTopLevelOp(expr, "||")
+	if len(orTerms) > 1 {
+		var commonReceivers map[string]bool
+		for i, term := range orTerms {
+			safe, recs := impliesMounted(term)
+			if !safe || len(recs) == 0 {
+				return false, nil
+			}
+			if i == 0 {
+				commonReceivers = make(map[string]bool, len(recs))
+				for k, v := range recs {
+					commonReceivers[k] = v
+				}
+			} else {
+				for k := range commonReceivers {
+					if !recs[k] {
+						delete(commonReceivers, k)
+					}
+				}
+				if len(commonReceivers) == 0 {
+					return false, nil
+				}
 			}
 		}
-		return false
+		return true, commonReceivers
+	}
+
+	// 2. Top-level conjunction (&&): at least one term must guarantee mountedness.
+	// Union the receivers guaranteed by any conjunct.
+	andTerms := splitTopLevelOp(expr, "&&")
+	if len(andTerms) > 1 {
+		anySafe := false
+		unionReceivers := make(map[string]bool)
+		for _, term := range andTerms {
+			safe, recs := impliesMounted(term)
+			if safe {
+				anySafe = true
+				for k, v := range recs {
+					if v {
+						unionReceivers[k] = true
+					}
+				}
+			}
+		}
+		if anySafe && len(unionReceivers) > 0 {
+			return true, unionReceivers
+		}
+		return false, nil
 	}
 
 	// 3. Atomic positive condition
 	atomic := strings.TrimSpace(expr)
 	if strings.HasPrefix(atomic, "!") {
-		return false
+		return false, nil
 	}
 	if mountedFalseRe.MatchString(atomic) {
-		return false
+		return false, nil
 	}
-	return atomicMountedRe.MatchString(atomic)
+	m := atomicMountedRe.FindStringSubmatch(atomic)
+	if len(m) > 0 {
+		rec := m[1]
+		if rec == "" || rec == "this" {
+			// Bare mounted or this.mounted: State instance mounted check.
+			// Guards setState() and State-level context.
+			return true, map[string]bool{"this": true, "context": true}
+		}
+		// Qualified context guard like context.mounted or ctx.mounted
+		return true, map[string]bool{rec: true}
+	}
+	return false, nil
 }
 
 func splitTopLevelOp(expr string, op string) []string {
@@ -197,8 +244,54 @@ func splitTopLevelOp(expr string, op string) []string {
 }
 
 var (
-	atomicMountedRe = regexp.MustCompile(`^(?:context\.)?mounted(?:\s*==\s*true|\s*!=\s*false)?$`)
+	atomicMountedRe = regexp.MustCompile(`^(?:(this|context|[a-zA-Z0-9_]+)\.)?mounted(?:\s*==\s*true|\s*!=\s*false)?$`)
 )
+
+func isCallProtectedByReceivers(line string, activeReceivers map[string]bool) bool {
+	if activeReceivers == nil {
+		return false
+	}
+	hasStateMounted := activeReceivers["this"]
+
+	if setStateRe.MatchString(line) {
+		return hasStateMounted
+	}
+	if controllerRe.MatchString(line) {
+		return hasStateMounted
+	}
+
+	if m := regexp.MustCompile(`\b([a-zA-Z0-9_]+)\.(?:go|push|pop|read|watch|select)\b`).FindStringSubmatch(line); len(m) > 1 {
+		recv := m[1]
+		if hasStateMounted {
+			return true
+		}
+		return activeReceivers[recv]
+	}
+
+	if m := regexp.MustCompile(`\b(?:of|Of)\s*\(\s*([a-zA-Z0-9_]+)`).FindStringSubmatch(line); len(m) > 1 {
+		arg := m[1]
+		if hasStateMounted {
+			return true
+		}
+		return activeReceivers[arg]
+	}
+	if m := regexp.MustCompile(`\bcontext\s*:\s*([a-zA-Z0-9_]+)`).FindStringSubmatch(line); len(m) > 1 {
+		arg := m[1]
+		if hasStateMounted {
+			return true
+		}
+		return activeReceivers[arg]
+	}
+
+	if contextUseRe.MatchString(line) {
+		if hasStateMounted || activeReceivers["context"] {
+			return true
+		}
+		return false
+	}
+
+	return hasStateMounted
+}
 
 func isUnconditionalEarlyExit(lines []string, j int) bool {
 	line := lines[j]
@@ -318,6 +411,7 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 
 		inPositiveGuardBlock := false
 		positiveGuardBraceDepth := 0
+		var activeReceivers map[string]bool
 
 		for j := stmtEnd + 1; j < end; j++ {
 			currLine := lines[j]
@@ -334,21 +428,25 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 			}
 
 			// Check for entering positive guard branch: if (mounted && ...) {
-			if !inPositiveGuardBlock && isSafePositiveMountedGuard(currLine) && strings.Contains(currLine, "{") {
-				inPositiveGuardBlock = true
-				positiveGuardBraceDepth = 1
-				// Count any closing braces on the same line after {
-				for _, ch := range currLine[strings.Index(currLine, "{")+1:] {
-					if ch == '{' {
-						positiveGuardBraceDepth++
-					} else if ch == '}' {
-						positiveGuardBraceDepth--
+			if !inPositiveGuardBlock {
+				if safe, recs := isSafePositiveMountedGuard(currLine); safe && strings.Contains(currLine, "{") {
+					inPositiveGuardBlock = true
+					activeReceivers = recs
+					positiveGuardBraceDepth = 1
+					// Count any closing braces on the same line after {
+					for _, ch := range currLine[strings.Index(currLine, "{")+1:] {
+						if ch == '{' {
+							positiveGuardBraceDepth++
+						} else if ch == '}' {
+							positiveGuardBraceDepth--
+						}
 					}
+					if positiveGuardBraceDepth <= 0 {
+						inPositiveGuardBlock = false
+						activeReceivers = nil
+					}
+					continue
 				}
-				if positiveGuardBraceDepth <= 0 {
-					inPositiveGuardBlock = false
-				}
-				continue
 			}
 
 			if inPositiveGuardBlock {
@@ -359,11 +457,19 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 						positiveGuardBraceDepth--
 					}
 				}
+				wasInPositiveGuard := inPositiveGuardBlock
 				if positiveGuardBraceDepth <= 0 {
 					inPositiveGuardBlock = false
 				}
-				// Lines inside positive guard are protected
-				continue
+				if wasInPositiveGuard && isCallProtectedByReceivers(currLine, activeReceivers) {
+					if !inPositiveGuardBlock {
+						activeReceivers = nil
+					}
+					continue
+				}
+				if !inPositiveGuardBlock {
+					activeReceivers = nil
+				}
 			}
 
 			// Single-line ternary guard: mounted ? ... : ...

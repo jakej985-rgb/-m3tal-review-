@@ -621,6 +621,12 @@ func TestNewRulesDetections(t *testing.T) {
 		if !hasFinding(r.Check(extraDiff("main.go", hostVarCode)), "dns-rebinding-ssrf") {
 			t.Errorf("expected dns-rebinding-ssrf to flag hostname stored in variable before net.ParseIP")
 		}
+
+		// Safe: hostname logged, but unrelated proxy IP parsed
+		unrelatedCode := "package main\nfunc f(targetURL *url.URL, proxyIP string) error {\n\t_ = targetURL.Hostname()\n\tip := net.ParseIP(proxyIP)\n\tif ip.IsLoopback() || ip.IsPrivate() {\n\t\treturn errors.New(\"private\")\n\t}\n\treturn nil\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", unrelatedCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to ignore unrelated net.ParseIP on proxyIP")
+		}
 	})
 
 	t.Run("negative-amount-bypass", func(t *testing.T) {
@@ -654,6 +660,18 @@ func TestNewRulesDetections(t *testing.T) {
 		if !hasFinding(r.Check(extraDiff("main.go", unrelatedCheckCode)), "negative-amount-bypass") {
 			t.Errorf("expected negative-amount-bypass to flag debit when lower bound check protects an unrelated variable")
 		}
+
+		// Vulnerable: debit operand wrapped in type conversion int64(req.Amount)
+		typeCastCode := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount > 1000 {\n\t\treturn\n\t}\n\tacc.Balance -= int64(req.Amount)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", typeCastCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag debit wrapped in int64 type conversion")
+		}
+
+		// Safe: req.Amount < zero
+		safeNamedZeroCode := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount < zero {\n\t\treturn\n\t}\n\tif req.Amount > 1000 {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", safeNamedZeroCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to recognize req.Amount < zero as safe lower bound")
+		}
 	})
 
 	t.Run("idor-unverified-access", func(t *testing.T) {
@@ -661,6 +679,12 @@ func TestNewRulesDetections(t *testing.T) {
 		code := "package main\nfunc f(w http.ResponseWriter, r *http.Request) {\n\tid := r.URL.Query().Get(\"id\")\n\trec := store[id]\n\tif !ok {\n\t\treturn\n\t}\n\tjson.NewEncoder(w).Encode(rec)\n}\n"
 		if !hasFinding(r.Check(extraDiff("main.go", code)), "idor-unverified-access") {
 			t.Errorf("expected idor-unverified-access to flag direct query retrieval and encode")
+		}
+
+		// Vulnerable: variable named owner does not supply ownership check
+		ownerVarCode := "package main\nfunc f(w http.ResponseWriter, r *http.Request) {\n\tid := r.URL.Query().Get(\"id\")\n\towner := store[id]\n\tif !ok {\n\t\treturn\n\t}\n\tjson.NewEncoder(w).Encode(owner)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", ownerVarCode)), "idor-unverified-access") {
+			t.Errorf("expected idor-unverified-access to flag lookup when variable is named owner without actual check")
 		}
 
 		// Safe: record owner check prevents IDOR
@@ -681,6 +705,24 @@ func TestNewRulesDetections(t *testing.T) {
 		safeIsLocalCode := "package main\nfunc f(dir, keyID string) ([]byte, error) {\n\tif !filepath.IsLocal(keyID) {\n\t\treturn nil, errors.New(\"invalid path\")\n\t}\n\tp := filepath.Join(dir, keyID)\n\treturn os.ReadFile(p)\n}\n"
 		if hasFinding(r.Check(extraDiff("main.go", safeIsLocalCode)), "filepath-containment-bypass") {
 			t.Errorf("expected filepath-containment-bypass to ignore join guarded by filepath.IsLocal")
+		}
+
+		// Vulnerable: IsLocal checks an unrelated variable
+		unrelatedKeyCheck := "package main\nfunc f(dir, keyID, otherKey string) ([]byte, error) {\n\tif !filepath.IsLocal(otherKey) {\n\t\treturn nil, errors.New(\"bad other key\")\n\t}\n\tp := filepath.Join(dir, keyID)\n\treturn os.ReadFile(p)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", unrelatedKeyCheck)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag join when IsLocal checks unrelated variable")
+		}
+
+		// Vulnerable: check in neighboring helper function
+		neighborFuncCheck := "package main\nfunc helper(k string) bool {\n\treturn filepath.IsLocal(k)\n}\nfunc f(dir, keyID string) ([]byte, error) {\n\tp := filepath.Join(dir, keyID)\n\treturn os.ReadFile(p)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", neighborFuncCheck)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag join when IsLocal is in neighboring function")
+		}
+
+		// Vulnerable: check occurs AFTER read
+		afterReadCheck := "package main\nfunc f(dir, keyID string) ([]byte, error) {\n\tp := filepath.Join(dir, keyID)\n\tdata, err := os.ReadFile(p)\n\tif !filepath.IsLocal(keyID) {\n\t\treturn nil, errors.New(\"too late\")\n\t}\n\treturn data, err\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", afterReadCheck)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag when containment check runs after os.ReadFile")
 		}
 	})
 }

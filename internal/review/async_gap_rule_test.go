@@ -719,6 +719,76 @@ new file mode 100644
 	}
 }
 
+func TestAsyncGapRule_TernaryGuardDoesNotHideUnmountedUpdate(t *testing.T) {
+	diff := `diff --git a/lib/presentation/ternary_screen.dart b/lib/presentation/ternary_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/ternary_screen.dart
+@@ -0,0 +1,15 @@
++class _TernaryState extends State<TernaryScreen> {
++  Future<void> _update(bool busy, bool ready, bool force) async {
++    await api.sync();
++    if (mounted && !busy ? ready : force) {
++      setState(() {});
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding because ternary guard cannot guarantee mounted, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_ThisMountedGuardAllowed(t *testing.T) {
+	diff := `diff --git a/lib/presentation/this_mounted_screen.dart b/lib/presentation/this_mounted_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/this_mounted_screen.dart
+@@ -0,0 +1,14 @@
++class _ThisMountedState extends State<ThisMountedScreen> {
++  Future<void> _update() async {
++    await api.sync();
++    if (this.mounted) {
++      setState(() {});
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for safe if (this.mounted), got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_CtxMountedGuardProtectsMatchingContext(t *testing.T) {
+	diff := `diff --git a/lib/presentation/ctx_screen.dart b/lib/presentation/ctx_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/ctx_screen.dart
+@@ -0,0 +1,17 @@
++class _CtxScreenState extends State<CtxScreen> {
++  Future<void> _update(BuildContext ctx, BuildContext otherCtx) async {
++    await api.sync();
++    if (ctx.mounted) {
++      Navigator.of(ctx).pop();
++    }
++    await api.sync2();
++    if (ctx.mounted) {
++      Navigator.of(otherCtx).pop();
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for Navigator.of(otherCtx) inside if (ctx.mounted), got %d: %+v", len(findings), findings)
+	}
+}
+
 func TestFlutterRules_WorkingTreeAware(t *testing.T) {
 	asyncGap := &AsyncGapRule{}
 	asyncGap.EnableWorkingTree()
