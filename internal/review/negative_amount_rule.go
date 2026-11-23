@@ -113,13 +113,14 @@ func (r *NegativeAmountRule) CheckContext(ctx context.Context, diff string) []Fi
 				parts := strings.Split(targetExpr, ".")
 				shortName := parts[len(parts)-1]
 
-				targetPattern := regexp.QuoteMeta(targetExpr)
+				baseIdent := regexp.QuoteMeta(targetExpr)
 				if shortName != "" && shortName != targetExpr {
-					targetPattern += "|" + regexp.QuoteMeta(shortName)
+					baseIdent += "|" + regexp.QuoteMeta(shortName)
 				}
+				targetPattern := `(?:(?:` + baseIdent + `)(?:\s*[*x/]\s*\w+)?)`
 
-				upperCheckRe := regexp.MustCompile(`(?i)\b(?:` + targetPattern + `)\b\s*>\s*(?:[0-9]+|\w+(?:\.\w+)*)`)
-				lowerCheckRe := regexp.MustCompile(`(?i)\b(?:` + targetPattern + `)\b\s*(?:<=|<)\s*(?:[01]\b|zero\b)|\b(?:[01]\b|zero\b)\s*(?:>=|>)\s*(?:` + targetPattern + `)\b`)
+				upperCheckRe := regexp.MustCompile(`(?i)(?:\b` + targetPattern + `\s*>\s*(?:[0-9]+|\w+(?:\.\w+)*)|(?:[0-9]+|\w+(?:\.\w+)*)\s*<\s*` + targetPattern + `\b)`)
+				lowerCheckRe := regexp.MustCompile(`(?i)(?:\b` + targetPattern + `\s*(?:<=|<)\s*(?:[01]\b|zero\b)|\b(?:[01]\b|zero\b)\s*(?:>=|>)\s*` + targetPattern + `\b)`)
 
 				hasUpper := false
 				hasLower := false

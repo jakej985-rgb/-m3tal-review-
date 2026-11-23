@@ -645,6 +645,12 @@ func TestNewRulesDetections(t *testing.T) {
 		if hasFinding(r.Check(extraDiff("main.go", negatedLoopbackCode)), "dns-rebinding-ssrf") {
 			t.Errorf("expected dns-rebinding-ssrf to ignore negated allowlist check")
 		}
+
+		// Safe: allowlist check with positive if guard returning nil (accepts only on loopback)
+		positiveAllowCode := "package main\nfunc f(targetURL *url.URL) error {\n\tif net.ParseIP(targetURL.Hostname()).IsLoopback() {\n\t\treturn nil\n\t}\n\treturn errors.New(\"must be loopback\")\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", positiveAllowCode)), "dns-rebinding-ssrf") {
+			t.Errorf("expected dns-rebinding-ssrf to ignore positive allowlist guard that returns nil on true")
+		}
 	})
 
 	t.Run("negative-amount-bypass", func(t *testing.T) {
@@ -695,6 +701,18 @@ func TestNewRulesDetections(t *testing.T) {
 		safeNamedZeroCode := "package main\nfunc f(req Request, acc *Account) {\n\tif req.Amount < zero {\n\t\treturn\n\t}\n\tif req.Amount > 1000 {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount\n}\n"
 		if hasFinding(r.Check(extraDiff("main.go", safeNamedZeroCode)), "negative-amount-bypass") {
 			t.Errorf("expected negative-amount-bypass to recognize req.Amount < zero as safe lower bound")
+		}
+
+		// Vulnerable: scaled debit with inverted balance comparison acc.Balance < req.Amount * rate
+		invertedScaledCode := "package main\nfunc f(req Request, acc *Account, rate int64) {\n\tif acc.Balance < req.Amount * rate {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount * rate\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", invertedScaledCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag scaled debit with inverted upper bound check")
+		}
+
+		// Safe: scaled debit with valid lower bound on scaled expression
+		safeScaledCode := "package main\nfunc f(req Request, acc *Account, rate int64) {\n\tif req.Amount * rate <= 0 {\n\t\treturn\n\t}\n\tif acc.Balance < req.Amount * rate {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount * rate\n}\n"
+		if hasFinding(r.Check(extraDiff("main.go", safeScaledCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to ignore scaled debit when lower bound protects scaled amount")
 		}
 	})
 
@@ -753,6 +771,18 @@ func TestNewRulesDetections(t *testing.T) {
 		constJoinCode := "package main\nconst metadataFilename = \"metadata.json\"\nfunc f(dir, group string) ([]byte, error) {\n\tif !filepath.IsLocal(group) {\n\t\treturn nil, errors.New(\"bad group\")\n\t}\n\tp := filepath.Join(dir, group, metadataFilename)\n\treturn os.ReadFile(p)\n}\n"
 		if hasFinding(r.Check(extraDiff("main.go", constJoinCode)), "filepath-containment-bypass") {
 			t.Errorf("expected filepath-containment-bypass to ignore join with named string constant")
+		}
+
+		// Vulnerable: parameter shadows package constant
+		shadowedConstCode := "package main\nconst filename = \"metadata.json\"\nfunc read(base, filename string) ([]byte, error) {\n\tp := filepath.Join(base, filename)\n\treturn os.ReadFile(p)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", shadowedConstCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag join when parameter shadows package constant")
+		}
+
+		// Vulnerable: constant declared in unrelated function does not protect parameter
+		unrelatedFnConstCode := "package main\nfunc helper() {\n\tconst filename = \"metadata.json\"\n}\nfunc read(base, filename string) ([]byte, error) {\n\tp := filepath.Join(base, filename)\n\treturn os.ReadFile(p)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", unrelatedFnConstCode)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag join when constant is declared in an unrelated function")
 		}
 
 		// Safe: fixed filename literal does not allow directory traversal

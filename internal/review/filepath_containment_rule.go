@@ -60,6 +60,90 @@ func extractStringConstants(rawText string) map[string]bool {
 	return consts
 }
 
+type funcSpan struct {
+	start int
+	end   int
+}
+
+func extractPackageConstants(rawLines []string, funcSpans []funcSpan) map[string]bool {
+	inFunc := make(map[int]bool)
+	for _, fn := range funcSpans {
+		for i := fn.start; i <= fn.end; i++ {
+			inFunc[i] = true
+		}
+	}
+	var pkgLines []string
+	for i, l := range rawLines {
+		if !inFunc[i] {
+			pkgLines = append(pkgLines, l)
+		}
+	}
+	return extractStringConstants(strings.Join(pkgLines, "\n"))
+}
+
+func extractShadowedIdents(rawLines []string, fnStart, fnEnd int) map[string]bool {
+	shadowed := make(map[string]bool)
+
+	header := ""
+	for i := fnStart; i <= fnEnd && i < len(rawLines); i++ {
+		header += " " + rawLines[i]
+		if strings.Contains(rawLines[i], "{") {
+			break
+		}
+	}
+
+	var parenGroups []string
+	pDepth := 0
+	pStart := -1
+	for idx, ch := range header {
+		if ch == '(' {
+			if pDepth == 0 {
+				pStart = idx + 1
+			}
+			pDepth++
+		} else if ch == ')' {
+			pDepth--
+			if pDepth == 0 && pStart != -1 {
+				parenGroups = append(parenGroups, header[pStart:idx])
+				pStart = -1
+			}
+		}
+	}
+
+	identRe := regexp.MustCompile(`^[a-zA-Z_]\w*$`)
+	for _, group := range parenGroups {
+		for _, decl := range strings.Split(group, ",") {
+			decl = strings.TrimSpace(decl)
+			fields := strings.Fields(decl)
+			if len(fields) >= 2 {
+				for _, f := range fields[:len(fields)-1] {
+					f = strings.Trim(f, " \t,")
+					if identRe.MatchString(f) {
+						shadowed[f] = true
+					}
+				}
+			}
+		}
+	}
+
+	assignRe := regexp.MustCompile(`\b([a-zA-Z_]\w*)\s*(?::=)`)
+	varDeclRe := regexp.MustCompile(`\bvar\s+([a-zA-Z_]\w*)`)
+	for i := fnStart; i <= fnEnd && i < len(rawLines); i++ {
+		line := rawLines[i]
+		for _, m := range assignRe.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				shadowed[m[1]] = true
+			}
+		}
+		for _, m := range varDeclRe.FindAllStringSubmatch(line, -1) {
+			if len(m) > 1 {
+				shadowed[m[1]] = true
+			}
+		}
+	}
+	return shadowed
+}
+
 func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
@@ -75,16 +159,11 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 			continue
 		}
 
-		stringConstants := extractStringConstants(block.text)
 		code := string(maskNonCode(block.file, block.text))
 		lines := strings.Split(code, "\n")
 		rawLines := strings.Split(block.text, "\n")
 
 		// Group lines into functions
-		type funcSpan struct {
-			start int
-			end   int
-		}
 		var funcSpans []funcSpan
 		curStart := -1
 		braceDepth := 0
@@ -113,8 +192,13 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 			funcSpans = append(funcSpans, funcSpan{start: curStart, end: len(lines) - 1})
 		}
 
+		packageConstants := extractPackageConstants(rawLines, funcSpans)
+
 		for _, fn := range funcSpans {
 			fnLines := lines[fn.start : fn.end+1]
+			fnRawLines := rawLines[fn.start : fn.end+1]
+			fnLocalConstants := extractStringConstants(strings.Join(fnRawLines, "\n"))
+			shadowed := extractShadowedIdents(rawLines, fn.start, fn.end)
 
 			type joinInfo struct {
 				pathVars    []string // all aliases, including cleaned
@@ -140,8 +224,11 @@ func (r *FilepathContainmentRule) CheckContext(ctx context.Context, diff string)
 					var dynamicKeys []string
 					for _, seg := range args[1:] {
 						seg = strings.TrimSpace(seg)
-						// Ignore string constants like "config.json", static paths, ".", empty (masked string), or declared string constants
-						if seg == "" || isStringLiteral(seg) || seg == "." || seg == `""` || stringConstants[seg] {
+						// Ignore string constants like "config.json", static paths, ".", empty (masked string),
+						// or scoped constants (local constant, or unshadowed package constant)
+						isConstant := seg == "" || isStringLiteral(seg) || seg == "." || seg == `""` ||
+							fnLocalConstants[seg] || (packageConstants[seg] && !shadowed[seg])
+						if isConstant {
 							continue
 						}
 						dynamicKeys = append(dynamicKeys, seg)

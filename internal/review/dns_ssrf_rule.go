@@ -29,6 +29,41 @@ func (r *DNSRebindingRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
 }
 
+func isAllowlistContext(line string, lines []string, idx int) bool {
+	trimmed := strings.TrimSpace(line)
+
+	// Return expressions: returning the check as a boolean predicate (e.g. return net.ParseIP(...).IsLoopback())
+	if strings.Contains(line, "return ") || strings.Contains(line, "return\t") || strings.HasPrefix(trimmed, "return") {
+		return true
+	}
+
+	// Negated checks: !net.ParseIP(...).IsLoopback(), == false, != true
+	// These require the property to be true, rejecting on false (domain names return false and are rejected)
+	if strings.Contains(line, "!net.ParseIP") || strings.Contains(line, "! net.ParseIP") ||
+		strings.Contains(line, "==") && strings.Contains(line, "false") ||
+		strings.Contains(line, "!=") && strings.Contains(line, "true") {
+		return true
+	}
+
+	// Check if this is an allowlist guard where true accepts (e.g. return nil / return true)
+	if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "if(") {
+		for k := idx; k < len(lines) && k < idx+6; k++ {
+			bodyLine := strings.TrimSpace(lines[k])
+			if strings.Contains(bodyLine, "return nil") || strings.Contains(bodyLine, "return true") {
+				return true
+			}
+			if strings.Contains(bodyLine, "return errors.") || strings.Contains(bodyLine, "return err") ||
+				strings.Contains(bodyLine, "http.Error") || strings.Contains(bodyLine, "return false") {
+				return false
+			}
+			if strings.Contains(bodyLine, "}") && k > idx {
+				break
+			}
+		}
+	}
+	return false
+}
+
 func (r *DNSRebindingRule) CheckContext(ctx context.Context, diff string) []Finding {
 	var findings []Finding
 	seen := make(map[string]bool)
@@ -114,7 +149,7 @@ func (r *DNSRebindingRule) CheckContext(ctx context.Context, diff string) []Find
 							hasNilGuard = true
 						}
 						if ipCheckRe.MatchString(lines[k]) {
-							if strings.HasPrefix(checkTrimmed, "return ") || strings.HasPrefix(checkTrimmed, "return\t") {
+							if isAllowlistContext(lines[k], lines, k) {
 								continue
 							}
 							if strings.Contains(lines[k], "!"+ipVar+".") || strings.Contains(lines[k], "! "+ipVar+".") {
@@ -164,11 +199,10 @@ func (r *DNSRebindingRule) CheckContext(ctx context.Context, diff string) []Find
 
 			// Check for inline check: net.ParseIP(u.Hostname()).IsPrivate() or net.ParseIP(host).IsLoopback()
 			if m := inlineNetParseIPCheckRe.FindStringSubmatch(line); len(m) > 1 {
-				trimmedLine := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmedLine, "return ") || strings.HasPrefix(trimmedLine, "return\t") {
+				if isAllowlistContext(line, lines, i) {
 					continue
 				}
-				if strings.Contains(line, "!"+m[0]) || strings.Contains(line, "! "+m[0]) || strings.Contains(line, "!net.ParseIP") || strings.Contains(line, "! net.ParseIP") {
+				if strings.Contains(line, "!"+m[0]) || strings.Contains(line, "! "+m[0]) {
 					continue
 				}
 				arg := strings.TrimSpace(m[1])
