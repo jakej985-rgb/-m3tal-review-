@@ -40,6 +40,12 @@ func ExtraRules(repositoryRoot string) []Rule {
 				{language.LanguageGo, regexp.MustCompile(`(?s)r\.URL\.Query\(\)\.Get\s*\(\s*["']id["']\s*\).*?\[\w+\]\s*\n\s*(?:s\.\w+Mu\.RUnlock\(\)\s*\n\s*)?(?:if\s+!ok|\w+\s*==\s*nil).*?Encode\(\w+\)`), "Entity retrieved by query ID and returned without visible ownership or tenant authorization check"},
 			}},
 		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
+			name: "filepath-containment-bypass", severity: "high", raw: true,
+			remediation: "Validate path containment using filepath.IsLocal (Go 1.20+) or strings.HasPrefix(cleaned, baseDir) before reading; filepath.Join does not prevent directory traversal.",
+			patterns: []langPattern{
+				{language.LanguageGo, regexp.MustCompile(`(?s)filepath\.Join\s*\([^)\n]+,[^\n)]*key\w*\).*?os\.ReadFile`), "filepath.Join with key/path parameter read without containment validation (vulnerable to traversal /dev/null bypass)"},
+			}},
+		&patternRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot},
 			name: "command-injection", severity: "high",
 			remediation: "Avoid building shell commands from untrusted input; pass arguments as separate parameters or use an allowlist.",
 			patterns: []langPattern{

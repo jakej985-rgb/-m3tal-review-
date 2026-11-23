@@ -619,4 +619,12 @@ func TestNewRulesDetections(t *testing.T) {
 			t.Errorf("expected idor-unverified-access to flag direct query retrieval and encode")
 		}
 	})
+
+	t.Run("filepath-containment-bypass", func(t *testing.T) {
+		r := rulesByName(t, "filepath-containment-bypass")[0]
+		code := "package main\nfunc f(dir, keyID string) ([]byte, error) {\n\tp := filepath.Join(dir, keyID)\n\treturn os.ReadFile(p)\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", code)), "filepath-containment-bypass") {
+			t.Errorf("expected filepath-containment-bypass to flag unvalidated filepath.Join read")
+		}
+	})
 }

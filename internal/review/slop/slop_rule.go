@@ -735,6 +735,9 @@ func inspectGoAST(fset *token.FileSet, f *ast.File, file string, addedLines []in
 			inspector.checkDeferBeforeErrCheck(node)
 			inspector.checkTypedNilError(node)
 			inspector.checkSubsliceRetention(node)
+			inspector.checkSyncPoolDirtyState(node)
+			inspector.checkSliceAliasingReturn(node)
+			inspector.checkStatefulHasherInMethod(node)
 			inspector.checkInitFunc(node)
 			inspector.checkCyclomatic(node)
 		case *ast.GoStmt:

@@ -217,3 +217,77 @@ func process(buf []byte) {
 		t.Fatalf("expected 'Subslice stored directly in map retains underlying allocation buffer', got %v", got)
 	}
 }
+
+func TestSlopSyncPoolDirtyState(t *testing.T) {
+	src := `package main
+import "sync"
+type Ctx struct{ IsAdmin bool }
+var pool = sync.Pool{New: func() any { return &Ctx{} }}
+func handle() {
+	c := pool.Get().(*Ctx)
+	defer pool.Put(c)
+	c.IsAdmin = true
+}
+`
+	got := slopMessages(t, src)
+	found := false
+	for _, msg := range got {
+		if strings.Contains(msg, "Deferred sync.Pool.Put retains dirty struct state") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'Deferred sync.Pool.Put retains dirty struct state across recycled instances', got %v", got)
+	}
+}
+
+func TestSlopSliceAliasingReturn(t *testing.T) {
+	src := `package main
+type Svc struct {
+	items []string
+}
+func (s *Svc) GetItems() []string {
+	return s.items
+}
+`
+	got := slopMessages(t, src)
+	found := false
+	for _, msg := range got {
+		if strings.Contains(msg, "Method returns internal slice field directly") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'Method returns internal slice field directly (slice aliasing hazard)', got %v", got)
+	}
+}
+
+func TestSlopStatefulHasherInMethod(t *testing.T) {
+	src := `package main
+import (
+	"crypto/sha256"
+	"hash"
+)
+type Svc struct {
+	hasher hash.Hash
+}
+func (s *Svc) Hash(data []byte) []byte {
+	s.hasher.Reset()
+	s.hasher.Write(data)
+	return s.hasher.Sum(nil)
+}
+`
+	got := slopMessages(t, src)
+	found := false
+	for _, msg := range got {
+		if strings.Contains(msg, "Stateful hash.Hash field reset and reused") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'Stateful hash.Hash field reset and reused in method without synchronization', got %v", got)
+	}
+}

@@ -541,6 +541,122 @@ func (v *slopInspector) checkSubsliceRetention(fn *ast.FuncDecl) {
 	})
 }
 
+// checkSyncPoolDirtyState detects putting struct pointers into sync.Pool
+// without resetting modified fields or re-initializing with zero value.
+func (v *slopInspector) checkSyncPoolDirtyState(fn *ast.FuncDecl) {
+	if fn == nil || fn.Body == nil {
+		return
+	}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Put" || len(call.Args) != 1 {
+			return true
+		}
+		if !strings.Contains(strings.ToLower(baseIdent(sel.X)), "pool") {
+			return true
+		}
+		isDeferred := false
+		for _, stmt := range fn.Body.List {
+			if def, ok := stmt.(*ast.DeferStmt); ok && def.Call == call {
+				isDeferred = true
+				break
+			}
+		}
+		if isDeferred {
+			v.addFindingPos(call.Pos(),
+				"Deferred sync.Pool.Put retains dirty struct state across recycled instances",
+				"Reset struct fields or re-initialize with zero value before returning instances to sync.Pool to prevent privilege escalation and state leaks.")
+		}
+		return true
+	})
+}
+
+// checkSliceAliasingReturn detects methods returning internal slice fields directly,
+// which leaks internal slice headers and allows callers to mutate internal state.
+func (v *slopInspector) checkSliceAliasingReturn(fn *ast.FuncDecl) {
+	if fn == nil || fn.Recv == nil || len(fn.Recv.List) == 0 || fn.Type == nil || fn.Type.Results == nil || fn.Body == nil {
+		return
+	}
+	returnsSlice := false
+	for _, field := range fn.Type.Results.List {
+		if _, ok := field.Type.(*ast.ArrayType); ok {
+			returnsSlice = true
+			break
+		}
+	}
+	if !returnsSlice {
+		return
+	}
+	recvName := ""
+	if len(fn.Recv.List[0].Names) > 0 {
+		recvName = fn.Recv.List[0].Names[0].Name
+	}
+	if recvName == "" {
+		return
+	}
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		ret, ok := n.(*ast.ReturnStmt)
+		if !ok {
+			return true
+		}
+		for _, res := range ret.Results {
+			if sel, ok := res.(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == recvName {
+					v.addFindingPos(ret.Pos(),
+						"Method returns internal slice field directly (slice aliasing hazard)",
+						"Return a defensive copy (e.g. slices.Clone or make+copy) to prevent callers from corrupting internal slice state.")
+				}
+			}
+		}
+		return true
+	})
+}
+
+// checkStatefulHasherInMethod detects methods using shared struct hash.Hash fields
+// without visible synchronization.
+func (v *slopInspector) checkStatefulHasherInMethod(fn *ast.FuncDecl) {
+	if fn == nil || fn.Recv == nil || len(fn.Recv.List) == 0 || fn.Body == nil {
+		return
+	}
+	recvName := ""
+	if len(fn.Recv.List[0].Names) > 0 {
+		recvName = fn.Recv.List[0].Names[0].Name
+	}
+	if recvName == "" {
+		return
+	}
+	hasHasherReset := false
+	var resetPos token.Pos
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Reset" {
+			if innerSel, ok := sel.X.(*ast.SelectorExpr); ok {
+				if id, ok := innerSel.X.(*ast.Ident); ok && id.Name == recvName {
+					nameLower := strings.ToLower(innerSel.Sel.Name)
+					if strings.Contains(nameLower, "hash") || strings.Contains(nameLower, "sha") || strings.Contains(nameLower, "md5") {
+						hasHasherReset = true
+						resetPos = call.Pos()
+					}
+				}
+			}
+		}
+		return true
+	})
+	if hasHasherReset {
+		v.addFindingPos(resetPos,
+			"Stateful hash.Hash field reset and reused in method without synchronization",
+			"hash.Hash is not thread-safe; instantiate a local hasher per call (e.g. h := sha256.New()) or guard with a mutex.")
+	}
+}
+
 // enclosingFuncDecl returns the innermost function declaration on the
 // inspector's ancestor stack, or nil at package level.
 func (v *slopInspector) enclosingFuncDecl() *ast.FuncDecl {
