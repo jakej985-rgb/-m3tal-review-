@@ -641,6 +641,84 @@ new file mode 100644
 	}
 }
 
+func TestAsyncGapRule_CompoundPositiveGuardWithNegationAndParens(t *testing.T) {
+	diff := `diff --git a/lib/presentation/compound_parens.dart b/lib/presentation/compound_parens.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/compound_parens.dart
+@@ -0,0 +1,19 @@
++class _CompoundParensState extends State<CompoundParensScreen> {
++  Future<void> _update(bool busy, bool changed, bool force) async {
++    await api.sync();
++    if (mounted && !busy) {
++      setState(() {});
++    }
++    await api.sync2();
++    if (mounted && (changed || force)) {
++      setState(() {});
++    }
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings for safe compound mounted guards, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestWatchOutsideBuild_InlineCallbackWithWatch(t *testing.T) {
+	diff := `diff --git a/lib/presentation/inline_cb.dart b/lib/presentation/inline_cb.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/inline_cb.dart
+@@ -0,0 +1,12 @@
++class _InlineCbState extends State<InlineCbScreen> {
++  @override
++  Widget build(BuildContext context) {
++    return ElevatedButton(
++      onPressed: () { context.watch<Data>(); },
++      child: Text('OK'),
++    );
++  }
++}
++`
+	rule := WatchOutsideBuildRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for context.watch inside inline callback, got %d: %+v", len(findings), findings)
+	}
+	if findings[0].Rule != "watch-outside-build" {
+		t.Errorf("expected rule watch-outside-build, got %s", findings[0].Rule)
+	}
+}
+
+func TestWatchOutsideBuild_WatchAfterNestedCallbackInsideHandler(t *testing.T) {
+	diff := `diff --git a/lib/presentation/nested_cb.dart b/lib/presentation/nested_cb.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/nested_cb.dart
+@@ -0,0 +1,15 @@
++class _NestedCbState extends State<NestedCbScreen> {
++  @override
++  Widget build(BuildContext context) {
++    return ElevatedButton(
++      onPressed: () {
++        nested(() {});
++        context.watch<Data>();
++      },
++      child: Text('OK'),
++    );
++  }
++}
++`
+	rule := WatchOutsideBuildRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for context.watch after nested callback inside handler, got %d: %+v", len(findings), findings)
+	}
+}
+
 func TestFlutterRules_WorkingTreeAware(t *testing.T) {
 	asyncGap := &AsyncGapRule{}
 	asyncGap.EnableWorkingTree()

@@ -17,6 +17,11 @@ import (
 	"github.com/jakej985-rgb/m3tal-review/internal/review/language"
 )
 
+// SlopRule is a static analyzer that detects code-quality slop and language-specific
+// correctness defects across supported languages. For Go, it includes AST-level
+// correctness checks (unclosed HTTP responses/files/rows, deferred close before err check,
+// typed-nil traps, subslice memory pinning leaks, dirty sync.Pool state, slice aliasing,
+// and stateful hasher reuse) enabled by default in reviews.
 type SlopRule struct {
 	RepositoryRoot string
 	WorkingTree    bool

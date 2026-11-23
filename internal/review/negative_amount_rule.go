@@ -10,9 +10,7 @@ import (
 )
 
 var (
-	balanceDebitRe     = regexp.MustCompile(`(?i)\b(?:Balance|balance)\w*\s*[-+]=`)
-	amountUpperBoundRe = regexp.MustCompile(`(?i)\b\w*(?:amount|balance|cents|payment|transfer)\w*\s*>\s*(?:[0-9]+|\w+(?:\.\w+)*)`)
-	amountLowerBoundRe = regexp.MustCompile(`(?i)\b\w*(?:amount|balance|cents|payment|transfer)\w*\s*(?:<=|<)\s*0|\b\w*(?:amount|balance|cents|payment|transfer)\w*\s*(?:<=|<)\s*1\b|\bzero\b|\bnegative\b`)
+	balanceDebitRe = regexp.MustCompile(`(?i)\b(?:Balance|balance)\w*\s*(?:[-+]=|=(?:[^\n=;]+[-+]))\s*([a-zA-Z0-9_.]+)`)
 )
 
 // NegativeAmountRule detects financial transactions and balance modifications where
@@ -53,9 +51,17 @@ func (r *NegativeAmountRule) CheckContext(ctx context.Context, diff string) []Fi
 
 		for i, line := range lines {
 			lineNum := block.firstLine + i
-			if !balanceDebitRe.MatchString(line) {
+			m := balanceDebitRe.FindStringSubmatch(line)
+			if len(m) < 2 {
 				continue
 			}
+
+			targetExpr := m[1]
+			parts := strings.Split(targetExpr, ".")
+			shortName := parts[len(parts)-1]
+
+			upperCheckRe := regexp.MustCompile(`(?i)\b(?:` + regexp.QuoteMeta(targetExpr) + `|` + regexp.QuoteMeta(shortName) + `)\b\s*>\s*(?:[0-9]+|\w+(?:\.\w+)*)`)
+			lowerCheckRe := regexp.MustCompile(`(?i)\b(?:` + regexp.QuoteMeta(targetExpr) + `|` + regexp.QuoteMeta(shortName) + `)\b\s*(?:<=|<)\s*[01]\b|\b(?:0|zero)\s*(?:>=|>)\s*(?:` + regexp.QuoteMeta(targetExpr) + `|` + regexp.QuoteMeta(shortName) + `)\b`)
 
 			hasUpper := false
 			hasLower := false
@@ -66,11 +72,11 @@ func (r *NegativeAmountRule) CheckContext(ctx context.Context, diff string) []Fi
 				start = 0
 			}
 			for j := start; j <= i; j++ {
-				if amountLowerBoundRe.MatchString(lines[j]) {
+				if lowerCheckRe.MatchString(lines[j]) {
 					hasLower = true
 					break
 				}
-				if !hasUpper && amountUpperBoundRe.MatchString(lines[j]) {
+				if !hasUpper && upperCheckRe.MatchString(lines[j]) {
 					hasUpper = true
 					upperLine = block.firstLine + j
 				}

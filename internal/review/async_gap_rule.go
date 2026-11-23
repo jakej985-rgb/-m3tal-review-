@@ -109,22 +109,96 @@ func isSafePositiveMountedGuard(line string) bool {
 		return false
 	}
 	cond := line[parenStart+1 : parenEnd]
-
-	// Disjunctions (||) cannot guarantee mounted is true
-	if strings.Contains(cond, "||") {
-		return false
-	}
-	// Must not be negated
-	if strings.Contains(cond, "!") {
-		return false
-	}
-	// Must not compare to false
-	if mountedFalseRe.MatchString(cond) {
-		return false
-	}
-	// Must reference mounted or context.mounted
-	return mountedRefRe.MatchString(cond)
+	return impliesMounted(cond)
 }
+
+func impliesMounted(expr string) bool {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return false
+	}
+
+	for strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
+		depth := 0
+		enclosesAll := true
+		for i := 0; i < len(expr)-1; i++ {
+			if expr[i] == '(' {
+				depth++
+			} else if expr[i] == ')' {
+				depth--
+				if depth == 0 {
+					enclosesAll = false
+					break
+				}
+			}
+		}
+		if enclosesAll {
+			expr = strings.TrimSpace(expr[1 : len(expr)-1])
+		} else {
+			break
+		}
+	}
+
+	// 1. Top-level disjunction (||): every term must guarantee mountedness
+	orTerms := splitTopLevelOp(expr, "||")
+	if len(orTerms) > 1 {
+		for _, term := range orTerms {
+			if !impliesMounted(term) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// 2. Top-level conjunction (&&): at least one term must guarantee mountedness
+	andTerms := splitTopLevelOp(expr, "&&")
+	if len(andTerms) > 1 {
+		for _, term := range andTerms {
+			if impliesMounted(term) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 3. Atomic positive condition
+	atomic := strings.TrimSpace(expr)
+	if strings.HasPrefix(atomic, "!") {
+		return false
+	}
+	if mountedFalseRe.MatchString(atomic) {
+		return false
+	}
+	return atomicMountedRe.MatchString(atomic)
+}
+
+func splitTopLevelOp(expr string, op string) []string {
+	var parts []string
+	parenDepth := 0
+	lastIdx := 0
+	opLen := len(op)
+
+	for i := 0; i <= len(expr)-opLen; i++ {
+		ch := expr[i]
+		if ch == '(' {
+			parenDepth++
+		} else if ch == ')' {
+			parenDepth--
+		} else if parenDepth == 0 && expr[i:i+opLen] == op {
+			parts = append(parts, expr[lastIdx:i])
+			lastIdx = i + opLen
+			i += opLen - 1
+		}
+	}
+	if lastIdx < len(expr) {
+		parts = append(parts, expr[lastIdx:])
+	}
+	return parts
+}
+
+var (
+	atomicMountedRe = regexp.MustCompile(`^(?:context\.)?mounted(?:\s*==\s*true|\s*!=\s*false)?$`)
+)
 
 func isUnconditionalEarlyExit(lines []string, j int) bool {
 	line := lines[j]

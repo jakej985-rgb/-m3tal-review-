@@ -166,8 +166,7 @@ func (r WatchOutsideBuildRule) checkBlock(block diffSourceBlock, seen map[string
 
 	currentMethod := ""
 	methodBaseDepth := 0
-	inEventCallback := false
-	eventCallbackBraceDepth := 0
+	var callbackDepthStack []int
 	currentBraceDepth := 0
 
 	for i, line := range lines {
@@ -178,30 +177,58 @@ func (r WatchOutsideBuildRule) checkBlock(block diffSourceBlock, seen map[string
 			methodBaseDepth = currentBraceDepth
 		}
 
-		for _, ch := range line {
-			if ch == '{' {
-				currentBraceDepth++
-			} else if ch == '}' {
-				currentBraceDepth--
-				if currentMethod != "" && currentBraceDepth <= methodBaseDepth {
-					currentMethod = ""
-				}
-			}
-		}
+		// Check any watch expressions on this line
+		if block.addedLines[lineNum] {
+			for _, match := range watchOutsideBuildRe.FindAllStringIndex(line, -1) {
+				watchStart := match[0]
 
-		if eventCallbackRe.MatchString(line) {
-			if strings.Contains(line, "{") {
-				openIdx := strings.Index(line, "{")
-				afterOpen := line[openIdx:]
-				if strings.Count(afterOpen, "{") <= strings.Count(afterOpen, "}") {
-					inEventCallback = false
-				} else {
-					inEventCallback = true
-					eventCallbackBraceDepth = currentBraceDepth
+				// Simulate depth and callback stack from line start up to watchStart
+				simDepth := currentBraceDepth
+				simStack := append([]int(nil), callbackDepthStack...)
+				inArrowCallback := false
+
+				for j := 0; j < watchStart; {
+					sub := line[j:]
+					if cbLoc := eventCallbackRe.FindStringIndex(sub); len(cbLoc) > 0 && cbLoc[0] == 0 {
+						cbStr := sub[:cbLoc[1]]
+						if strings.Contains(cbStr, "=>") {
+							inArrowCallback = true
+						} else if strings.Contains(cbStr, "{") {
+							simDepth++
+							simStack = append(simStack, simDepth)
+						}
+						j += cbLoc[1]
+						continue
+					}
+
+					ch := line[j]
+					if ch == '{' {
+						simDepth++
+					} else if ch == '}' {
+						if len(simStack) > 0 && simDepth <= simStack[len(simStack)-1] {
+							simStack = simStack[:len(simStack)-1]
+						}
+						simDepth--
+					} else if ch == ';' || ch == ',' {
+						inArrowCallback = false
+					}
+					j++
 				}
-			} else if strings.Contains(line, "=>") {
-				if watchOutsideBuildRe.MatchString(line) && block.addedLines[lineNum] {
-					key := fmt.Sprintf("%s:%d:watch-in-callback", block.file, lineNum)
+
+				inCallback := len(simStack) > 0 || inArrowCallback
+				isWatchViolation := false
+				violationMsg := ""
+
+				if inCallback {
+					isWatchViolation = true
+					violationMsg = "Calling context.watch() inside an event callback runs on user interaction rather than during build, causing runtime exceptions; use context.read() instead"
+				} else if currentMethod != "" && currentMethod != "build" {
+					isWatchViolation = true
+					violationMsg = "Calling context.watch() or ref.watch() outside of Widget build() causes runtime exceptions and leaks subscriptions; use context.read() or ref.read() instead"
+				}
+
+				if isWatchViolation {
+					key := fmt.Sprintf("%s:%d:watch-outside-build", block.file, lineNum)
 					if !seen[key] {
 						seen[key] = true
 						findings = append(findings, Finding{
@@ -210,12 +237,12 @@ func (r WatchOutsideBuildRule) checkBlock(block diffSourceBlock, seen map[string
 							Category:    "quality",
 							File:        block.file,
 							Line:        lineNum,
-							Message:     "Calling context.watch() inside an event callback runs on user interaction rather than during build, causing runtime exceptions; use context.read() instead",
-							Remediation: "Use context.read() instead of context.watch() in event callbacks and action handlers.",
+							Message:     violationMsg,
+							Remediation: "Use context.read() or ref.read() in callbacks and async methods.",
 							Confidence:  "High",
 							Explanation: &model.FindingExplanation{
-								RuleRationale:   "context.watch() creates reactive dependencies and can only be used during widget build(). Using it in callbacks throws runtime exceptions.",
-								EvidenceSummary: "context.watch() invoked in event callback.",
+								RuleRationale:   "Reactive subscriptions (watch) must only be registered during Widget build().",
+								EvidenceSummary: "watch() invoked outside build().",
 								EvidenceKind:    "lifecycle-violation",
 							},
 						})
@@ -223,43 +250,33 @@ func (r WatchOutsideBuildRule) checkBlock(block diffSourceBlock, seen map[string
 				}
 			}
 		}
-		if inEventCallback && currentBraceDepth < eventCallbackBraceDepth {
-			inEventCallback = false
-		}
 
-		if block.addedLines[lineNum] && watchOutsideBuildRe.MatchString(line) {
-			isWatchViolation := false
-			violationMsg := ""
-
-			if inEventCallback {
-				isWatchViolation = true
-				violationMsg = "Calling context.watch() inside an event callback runs on user interaction rather than during build, causing runtime exceptions; use context.read() instead"
-			} else if currentMethod != "" && currentMethod != "build" {
-				isWatchViolation = true
-				violationMsg = "Calling context.watch() or ref.watch() outside of Widget build() causes runtime exceptions and leaks subscriptions; use context.read() or ref.read() instead"
+		// Update actual line-level brace depth and callback depth stack for subsequent lines
+		for j := 0; j < len(line); {
+			sub := line[j:]
+			if cbLoc := eventCallbackRe.FindStringIndex(sub); len(cbLoc) > 0 && cbLoc[0] == 0 {
+				cbStr := sub[:cbLoc[1]]
+				if strings.Contains(cbStr, "{") {
+					currentBraceDepth++
+					callbackDepthStack = append(callbackDepthStack, currentBraceDepth)
+				}
+				j += cbLoc[1]
+				continue
 			}
 
-			if isWatchViolation {
-				key := fmt.Sprintf("%s:%d:watch-outside-build", block.file, lineNum)
-				if !seen[key] {
-					seen[key] = true
-					findings = append(findings, Finding{
-						Rule:        "watch-outside-build",
-						Severity:    "high",
-						Category:    "quality",
-						File:        block.file,
-						Line:        lineNum,
-						Message:     violationMsg,
-						Remediation: "Use context.read() or ref.read() in callbacks and async methods.",
-						Confidence:  "High",
-						Explanation: &model.FindingExplanation{
-							RuleRationale:   "Reactive subscriptions (watch) must only be registered during Widget build().",
-							EvidenceSummary: "watch() invoked outside build().",
-							EvidenceKind:    "lifecycle-violation",
-						},
-					})
+			ch := line[j]
+			if ch == '{' {
+				currentBraceDepth++
+			} else if ch == '}' {
+				if len(callbackDepthStack) > 0 && currentBraceDepth <= callbackDepthStack[len(callbackDepthStack)-1] {
+					callbackDepthStack = callbackDepthStack[:len(callbackDepthStack)-1]
+				}
+				currentBraceDepth--
+				if currentMethod != "" && currentBraceDepth <= methodBaseDepth {
+					currentMethod = ""
 				}
 			}
+			j++
 		}
 	}
 
