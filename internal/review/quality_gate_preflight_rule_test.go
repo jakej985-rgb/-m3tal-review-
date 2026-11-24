@@ -80,4 +80,53 @@ new file mode 100755
 			t.Errorf("expected 0 findings for deletion-only diff, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags added test command after unchanged linter without preflight", func(t *testing.T) {
+		diff := `diff --git a/scripts/quality_gate.sh b/scripts/quality_gate.sh
+--- a/scripts/quality_gate.sh
++++ b/scripts/quality_gate.sh
+@@ -1,3 +1,4 @@
+ #!/usr/bin/env bash
+ set -e
+ ruff check .
++python3 -m unittest discover
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for added test command after unchanged linter, got 0")
+		}
+	})
+
+	t.Run("ignores pytest or linter mentions in comments and echo", func(t *testing.T) {
+		diff := `diff --git a/scripts/quality_gate.sh b/scripts/quality_gate.sh
+new file mode 100755
+--- /dev/null
++++ b/scripts/quality_gate.sh
+@@ -0,0 +1,5 @@
++#!/usr/bin/env bash
++set -e
++# run pytest later
++echo "skipping pytest and flake8"
++`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings for comments and echo mentions, got %d", len(findings))
+		}
+	})
+
+	t.Run("flags unchanged runner when preflight check is deleted", func(t *testing.T) {
+		diff := `diff --git a/scripts/quality_gate.sh b/scripts/quality_gate.sh
+--- a/scripts/quality_gate.sh
++++ b/scripts/quality_gate.sh
+@@ -1,4 +1,3 @@
+ #!/usr/bin/env bash
+ set -e
+-python3 -c 'import package'
+ python3 -m unittest discover
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding when preflight check is deleted, got 0")
+		}
+	})
 }

@@ -109,4 +109,28 @@ new file mode 100644
 			t.Fatalf("expected 1 finding when preceded by string with comment delimiter, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags CallbackShortcuts even when quoted string mentions MaterialApp.router", func(t *testing.T) {
+		diff := `
+diff --git a/lib/presentation/shared/scaffold/main_scaffold.dart b/lib/presentation/shared/scaffold/main_scaffold.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/shared/scaffold/main_scaffold.dart
+@@ -0,0 +1,12 @@
++const docExample = '// MaterialApp.router(...)';
++class MainScaffold extends StatelessWidget {
++  @override
++  Widget build(BuildContext context) {
++    return CallbackShortcuts(
++      bindings: {},
++      child: Scaffold(),
++    );
++  }
++}
++`
+		findings := rule.Check(diff)
+		if len(findings) != 1 {
+			t.Fatalf("expected 1 finding when MaterialApp.router is only in a string, got %d", len(findings))
+		}
+	})
 }

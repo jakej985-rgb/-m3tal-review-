@@ -288,7 +288,7 @@ func (r RedundantJsonDecodeRule) checkProfileHelpers(dCtx jsonDecodeContext, i i
 }
 
 func (r RedundantJsonDecodeRule) checkDecoderCalls(dCtx jsonDecodeContext, i int) {
-	trimmed := strings.TrimSpace(dCtx.lines[i])
+	trimmed := strings.TrimSpace(stripStringsAndComments(dCtx.lines[i]))
 	indices := repeatedDecoderCallRe.FindAllStringSubmatchIndex(trimmed, -1)
 	if len(indices) == 0 {
 		return
@@ -321,8 +321,8 @@ func (r RedundantJsonDecodeRule) scanForwardDecoder(
 	lineNum int,
 ) {
 	for offset := 1; offset <= maxLookahead; offset++ {
-		next := strings.TrimSpace(dCtx.lines[i+offset])
-		if strings.HasPrefix(next, "//") {
+		next := strings.TrimSpace(stripStringsAndComments(dCtx.lines[i+offset]))
+		if next == "" {
 			continue
 		}
 		if shouldStopSequentialScan(next, arg, shadowed) ||
@@ -416,11 +416,11 @@ func isMethodOrFuncHeader(line string) (string, bool) {
 	return "", false
 }
 
-func methodDeclaresParam(line, arg string) bool {
+func methodDeclaresParam(line, arg string) (declared bool) {
 	if params, isHeader := isMethodOrFuncHeader(line); isHeader {
 		return containsBareIdent(params, arg) || matchExtractedIdent(paramDeclExtractRe, line, arg)
 	}
-	return false
+	return declared
 }
 
 func updateBraceDepth(clean string, depth *int) {
@@ -433,13 +433,21 @@ func updateBraceDepth(clean string, depth *int) {
 	}
 }
 
-func isArgShadowed(lines []string, currentLineIdx int, arg string) bool {
-	start := currentLineIdx - 1
-	limit := start - 40
-	if limit < 0 {
-		limit = 0
+func isMethodBoundary(lines []string, k int, arg string) (isMethod bool, declares bool) {
+	if _, ok := isMethodOrFuncHeader(lines[k]); ok {
+		return true, methodDeclaresParam(lines[k], arg)
 	}
-	shadowed := false
+	if k > 0 {
+		if _, ok := isMethodOrFuncHeader(lines[k-1]); ok {
+			return true, methodDeclaresParam(lines[k-1], arg)
+		}
+	}
+	return
+}
+
+func isArgShadowed(lines []string, currentLineIdx int, arg string) (shadowed bool) {
+	start := currentLineIdx - 1
+	limit := max(0, start-40)
 	depth := 0
 	for k := start; k >= limit; k-- {
 		line := lines[k]
@@ -450,14 +458,17 @@ func isArgShadowed(lines []string, currentLineIdx int, arg string) bool {
 		clean := stripStringsAndComments(line)
 		updateBraceDepth(clean, &depth)
 		if depth < 0 {
-			return methodDeclaresParam(line, arg) || (k > 0 && methodDeclaresParam(lines[k-1], arg))
+			if isMethod, declares := isMethodBoundary(lines, k, arg); isMethod {
+				return declares
+			}
+			depth = 0
+			continue
 		}
-		if methodDeclaresParam(line, arg) {
+		if depth > 0 {
+			continue
+		}
+		if methodDeclaresParam(line, arg) || matchExtractedIdent(localDeclExtractRe, line, arg) {
 			return true
-		}
-		if depth == 0 && matchExtractedIdent(localDeclExtractRe, line, arg) {
-			shadowed = true
-			break
 		}
 	}
 	return shadowed

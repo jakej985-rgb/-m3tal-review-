@@ -55,7 +55,15 @@ var (
 	fallbackTrueRe = regexp.MustCompile(`\?\?\s*true\b`)
 
 	goAffirmativeAckPredRe = regexp.MustCompile(`(?i)\b([a-zA-Z0-9_]+)\s*!=\s*false\b`)
+
+	ackRelatedNameRe = regexp.MustCompile(`(?i)(?:ack|reply|pong|stop|confirm|resp)`)
 )
+
+type ackCheckCtx struct {
+	isGo  bool
+	lines []string
+	k     int
+}
 
 func (r UnverifiedHardwareActuationRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
@@ -103,11 +111,34 @@ func splitTopLevel(s string, op string) []string {
 	return append(parts, s[start:])
 }
 
-func guaranteesAffirmativeAck(cond string, isGo bool) bool {
+func guaranteesAffirmativeLeaf(cond string, ackCtx ackCheckCtx) bool {
+	if strings.HasPrefix(cond, "!") {
+		inner := unwrapOuterParens(strings.TrimSpace(cond[1:]))
+		if negativeAckPredRe.MatchString(inner) ||
+			affirmativeAckPredRe.MatchString(inner) ||
+			guaranteesAffirmativeAck(inner, ackCtx) {
+			return false
+		}
+	}
+	leaf := strings.TrimSpace(cond)
+	if fallbackTrueRe.MatchString(leaf) || negativeAckPredRe.MatchString(leaf) {
+		return false
+	}
+	if affirmativeAckPredRe.MatchString(leaf) {
+		return true
+	}
+	if !ackCtx.isGo || ackCtx.lines == nil || strings.HasPrefix(leaf, "!") {
+		return false
+	}
+	m := goAffirmativeAckPredRe.FindStringSubmatch(leaf)
+	return len(m) > 1 && isProvenGoBool(ackCtx.lines, ackCtx.k, m[1])
+}
+
+func guaranteesAffirmativeAck(cond string, ackCtx ackCheckCtx) bool {
 	cond = unwrapOuterParens(strings.TrimSpace(cond))
 	if branches := splitTopLevel(cond, "||"); len(branches) > 0 {
 		for _, b := range branches {
-			if !guaranteesAffirmativeAck(b, isGo) {
+			if !guaranteesAffirmativeAck(b, ackCtx) {
 				return false
 			}
 		}
@@ -120,25 +151,13 @@ func guaranteesAffirmativeAck(cond string, isGo bool) bool {
 			if negativeAckPredRe.MatchString(trimmed) {
 				return false
 			}
-			if guaranteesAffirmativeAck(trimmed, isGo) {
+			if guaranteesAffirmativeAck(trimmed, ackCtx) {
 				hasAffirmative = true
 			}
 		}
 		return hasAffirmative
 	}
-	if strings.HasPrefix(cond, "!") {
-		inner := unwrapOuterParens(strings.TrimSpace(cond[1:]))
-		if negativeAckPredRe.MatchString(inner) ||
-			affirmativeAckPredRe.MatchString(inner) ||
-			guaranteesAffirmativeAck(inner, isGo) {
-			return false
-		}
-	}
-	leaf := strings.TrimSpace(cond)
-	if fallbackTrueRe.MatchString(leaf) || negativeAckPredRe.MatchString(leaf) {
-		return false
-	}
-	return affirmativeAckPredRe.MatchString(leaf)
+	return guaranteesAffirmativeLeaf(cond, ackCtx)
 }
 
 func isVarChecked(cond string, varName string) (bool, bool) {
@@ -191,7 +210,7 @@ func extractGoAssignStmt(stmt string) (string, string, bool) {
 	return "", "", false
 }
 
-func checkGoInitializer(cond string, isGo bool) (bool, bool) {
+func checkGoInitializer(cond string, ackCtx ackCheckCtx) (bool, bool) {
 	semiParts := splitTopLevel(cond, ";")
 	if len(semiParts) <= 1 {
 		return false, false
@@ -199,7 +218,7 @@ func checkGoInitializer(cond string, isGo bool) (bool, bool) {
 	initStmt := strings.TrimSpace(semiParts[0])
 	controllingCond := strings.TrimSpace(semiParts[len(semiParts)-1])
 	if varName, expr, ok := extractGoAssignStmt(initStmt); ok {
-		if guaranteesAffirmativeAck(expr, isGo) {
+		if guaranteesAffirmativeAck(expr, ackCtx) {
 			isPos, isNeg := isVarChecked(controllingCond, varName)
 			if isNeg {
 				return true, false
@@ -209,88 +228,113 @@ func checkGoInitializer(cond string, isGo bool) (bool, bool) {
 			}
 		}
 	}
-	return true, guaranteesAffirmativeAck(controllingCond, isGo)
+	return true, guaranteesAffirmativeAck(controllingCond, ackCtx)
 }
 
-func isLikelyAckHeader(header string) (hasIf bool, isDirect bool) {
-	if strings.Contains(header, "onack") || strings.Contains(header, "onstopack") {
+func isLikelyAckHeader(lowerHeader string) (hasIf bool, isDirect bool) {
+	if strings.Contains(lowerHeader, "onack") || strings.Contains(lowerHeader, "onstopack") {
 		return true, true
 	}
-	hasIf = strings.HasPrefix(header, "if") || strings.Contains(header, "if ") ||
-		strings.Contains(header, "if (") || strings.Contains(header, "if(")
+	hasIf = strings.HasPrefix(lowerHeader, "if") || strings.Contains(lowerHeader, "if ") ||
+		strings.Contains(lowerHeader, "if (") || strings.Contains(lowerHeader, "if(")
 	return hasIf, false
 }
 
-func normalizeGuardCondition(header string) (string, bool) {
-	if strings.Contains(header, "else") {
-		idx := strings.Index(header, "else if")
+func normalizeGuardCondition(rawHeader string) (string, bool) {
+	lower := strings.ToLower(rawHeader)
+	if strings.Contains(lower, "else") {
+		idx := strings.Index(lower, "else if")
 		if idx == -1 {
 			return "", false
 		}
-		header = strings.TrimSpace(header[idx+4:])
+		rawHeader = strings.TrimSpace(rawHeader[idx+4:])
+		lower = strings.ToLower(rawHeader)
 	}
-	if strings.Contains(header, "send") && !strings.Contains(header, ".issuccess") &&
-		!strings.Contains(header, ".isack") {
+	if strings.Contains(lower, "send") && !strings.Contains(lower, ".issuccess") &&
+		!strings.Contains(lower, ".isack") {
 		return "", false
 	}
-	cond := header
-	if idx := strings.Index(header, "if "); idx != -1 {
-		cond = header[idx+2:]
-	} else if idx := strings.Index(header, "if("); idx != -1 {
-		cond = header[idx+2:]
+	cond := rawHeader
+	if idx := strings.Index(lower, "if "); idx != -1 {
+		cond = rawHeader[idx+2:]
+	} else if idx := strings.Index(lower, "if("); idx != -1 {
+		cond = rawHeader[idx+2:]
 	}
 	cond = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cond), "{"))
 	return unwrapOuterParens(cond), true
 }
 
-func isAckGuardHeader(header string, isGo bool, lines []string, k int) bool {
-	hasIf, isDirect := isLikelyAckHeader(header)
+func isAckGuardHeader(rawHeader string, isGo bool, lines []string, k int) bool {
+	hasIf, isDirect := isLikelyAckHeader(strings.ToLower(rawHeader))
 	if isDirect {
 		return true
 	}
 	if !hasIf {
 		return false
 	}
-	cond, ok := normalizeGuardCondition(header)
+	cond, ok := normalizeGuardCondition(rawHeader)
 	if !ok {
 		return false
 	}
-	if hasInit, ackOk := checkGoInitializer(cond, isGo); hasInit {
+	ackCtx := ackCheckCtx{isGo: isGo, lines: lines, k: k}
+	if hasInit, ackOk := checkGoInitializer(cond, ackCtx); hasInit {
 		return ackOk
 	}
-	if guaranteesAffirmativeAck(cond, isGo) {
-		return true
-	}
-	if !isGo || strings.HasPrefix(cond, "!") {
-		return false
-	}
-	m := goAffirmativeAckPredRe.FindStringSubmatch(cond)
-	return len(m) > 1 && isProvenGoBool(lines, k, m[1])
+	return guaranteesAffirmativeAck(cond, ackCtx)
 }
 
 func isProvenGoBool(lines []string, index int, varName string) (proven bool) {
-	limit := max(0, index-20)
+	limit := max(0, index-40)
+	depth := 0
 	for k := index - 1; k >= limit; k-- {
 		trimmed := strings.TrimSpace(stripLineComment(lines[k]))
-		if strings.HasPrefix(trimmed, "func ") || strings.HasPrefix(trimmed, "}") {
-			return false
+		if trimmed == "" {
+			continue
+		}
+		updateBraceDepth(stripStringsAndComments(lines[k]), &depth)
+		if depth < 0 {
+			if strings.HasPrefix(trimmed, "func ") {
+				return matchGoBoolDecl(trimmed, varName)
+			}
+			depth = 0
+		} else if depth > 0 {
+			continue
 		}
 		if matchGoBoolDecl(trimmed, varName) {
 			return true
+		}
+		if strings.HasPrefix(trimmed, "func ") {
+			break
 		}
 	}
 	return proven
 }
 
-func matchGoBoolDecl(line, varName string) bool {
-	return strings.HasPrefix(line, "var "+varName+" bool") ||
-		strings.Contains(line, varName+" bool") ||
-		strings.Contains(line, varName+", ok :=") ||
-		strings.Contains(line, varName+", ok =") ||
-		strings.Contains(line, varName+" := ack.IsSuccess()") ||
-		strings.Contains(line, varName+" = ack.IsSuccess()") ||
-		strings.Contains(line, varName+" := true") ||
-		strings.Contains(line, varName+" := false")
+func isBoolWordBoundary(s string, idx int) bool {
+	if idx < 0 || idx+len("bool") > len(s) {
+		return false
+	}
+	end := idx + len("bool")
+	return end == len(s) || !isIdentOrDot(s[end])
+}
+
+func matchGoBoolDecl(line, varName string) (matched bool) {
+	hasAckName := ackRelatedNameRe.MatchString(varName)
+	if strings.HasPrefix(line, "var "+varName+" bool") && isBoolWordBoundary(line, len("var "+varName+" ")) {
+		return hasAckName
+	}
+	if idx := strings.Index(line, varName+" bool"); idx != -1 && isBoolWordBoundary(line, idx+len(varName+" ")) {
+		return hasAckName
+	}
+	isAssign := strings.Contains(line, varName+",") || strings.Contains(line, varName+" :=") ||
+		strings.Contains(line, varName+" =")
+	if !isAssign {
+		return false
+	}
+	if strings.Contains(line, ".(bool)") {
+		return hasAckName || ackRelatedNameRe.MatchString(line)
+	}
+	return strings.Contains(line, "ack.IsSuccess()") || strings.Contains(line, ".IsAck()")
 }
 
 func isAckSwitchCaseLabel(lowerCase string) bool {
@@ -344,10 +388,10 @@ func checkCaseAck(trimmed string, inNonAckCase *bool) bool {
 
 func handleEnclosingBrace(lines []string, k int, trimmed string, isGo bool) (bool, bool) {
 	header := collectOpeningBraceHeader(lines, k, trimmed)
-	lowerHeader := strings.ToLower(header)
-	if isAckGuardHeader(lowerHeader, isGo, lines, k) {
+	if isAckGuardHeader(header, isGo, lines, k) {
 		return true, false
 	}
+	lowerHeader := strings.ToLower(header)
 	stop := strings.Contains(lowerHeader, "void ") ||
 		strings.Contains(lowerHeader, "class ") ||
 		strings.Contains(lowerHeader, "=>") ||

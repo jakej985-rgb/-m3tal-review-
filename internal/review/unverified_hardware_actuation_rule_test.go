@@ -632,6 +632,105 @@ func TestUnverifiedHardwareActuationRule(t *testing.T) {
 		}
 	})
 
+	t.Run("flags stop confirmation in Go when reply != false is OR-ed with timedOut", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	var reply bool
++	if reply != false || timedOut {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding when reply != false is OR-ed with timedOut, got 0")
+		}
+	})
+
+	t.Run("flags stop confirmation in Go on unrelated readiness flag", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	ready := true
++	if ready != false {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for unrelated readiness flag, got 0")
+		}
+	})
+
+	t.Run("flags stop confirmation in Go on comma-ok map lookup without bool assertion", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	reply, ok := decoded["ack"]
++	if reply != false {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for comma-ok map lookup without bool assertion, got 0")
+		}
+	})
+
+	t.Run("allows stop confirmation in Go on comma-ok bool type assertion of ACK", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	reply, ok := decoded["ack"].(bool)
++	if reply != false {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for comma-ok bool assertion of ACK, got %d", len(findings))
+		}
+	})
+
+	t.Run("allows stop confirmation in Go with camel-case stopAck != false", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	var stopAck bool
++	if stopAck != false {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for camel-case stopAck != false, got %d", len(findings))
+		}
+	})
+
+	t.Run("allows stop confirmation in Go when error check precedes reply != false", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,8 +100,8 @@
++	var reply bool
++	if err != nil {
++		return
++	}
++	if reply != false {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings when error check precedes reply != false, got %d", len(findings))
+		}
+	})
+
 	t.Run("ignores test files", func(t *testing.T) {
 		diff := `diff --git a/test/widget/hardware_control_test.dart b/test/widget/hardware_control_test.dart
 --- a/test/widget/hardware_control_test.dart

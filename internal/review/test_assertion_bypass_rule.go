@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -51,9 +52,19 @@ func hasTestAssertion(lines []string, start int) bool {
 	return hasAssert
 }
 
+func hasDeletedTestAssertion(deletedLines []string) bool {
+	return slices.ContainsFunc(deletedLines, func(line string) bool {
+		trimmed := strings.TrimSpace(line)
+		return !strings.HasPrefix(trimmed, "//") &&
+			!strings.HasPrefix(trimmed, "#") &&
+			testActionOrAssertRe.MatchString(trimmed)
+	})
+}
+
 func checkTestBypassBlock(b diffSourceBlock, text string, start int, wt bool, seen map[string]bool) []Finding {
 	var bypassFindings []Finding
 	lines := strings.Split(text, "\n")
+	deletedAssert := hasDeletedTestAssertion(b.deletedLines)
 	for i, line := range lines {
 		lineNum := start + i
 		trimmed := strings.TrimSpace(line)
@@ -67,7 +78,7 @@ func checkTestBypassBlock(b diffSourceBlock, text string, start int, wt bool, se
 		if !hasTestAssertion(lines, i) {
 			continue
 		}
-		if !shouldReportAddedFinding(b, lineNum, wt, seen) {
+		if !shouldReportAddedFinding(b, lineNum, wt || deletedAssert, seen) {
 			continue
 		}
 		bypassFindings = append(bypassFindings, Finding{

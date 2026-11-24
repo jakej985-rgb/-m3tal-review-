@@ -310,4 +310,37 @@ func TestRedundantJsonDecodeRule(t *testing.T) {
 			t.Fatalf("expected 0 findings when mutating field in method without parameter, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags duplicate decode in nested conditional when method param shadows field", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,8 +80,8 @@
++  void load(String raw) {
++    if (ready) {
++      final before = jsonDecode(raw);
++      this.raw = fallback;
++      final after = jsonDecode(raw);
++    }
++  }
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for duplicate decode in nested conditional block, got 0")
+		}
+	})
+
+	t.Run("ignores quoted decoder calls inside log strings", func(t *testing.T) {
+		diff := `diff --git a/web/route_loader.js b/web/route_loader.js
+--- a/web/route_loader.js
++++ b/web/route_loader.js
+@@ -80,4 +80,4 @@
++  log("calling JSON.parse(raw)");
++  const data = JSON.parse(raw);
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings when decoder call only appears in log string, got %d", len(findings))
+		}
+	})
 }

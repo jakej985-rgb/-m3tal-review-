@@ -12,11 +12,23 @@ import (
 )
 
 type diffSourceBlock struct {
-	file       string
-	firstLine  int
-	text       string
-	addedLines map[int]bool
-	lineCount  int
+	file         string
+	firstLine    int
+	text         string
+	addedLines   map[int]bool
+	deletedLines []string
+	lineCount    int
+	sourceLoaded bool
+}
+
+func extractDeletedLines(fileDiff FileDiff) []string {
+	var deleted []string
+	for _, l := range fileDiff.Lines {
+		if l.Type == "-" {
+			deleted = append(deleted, l.Content)
+		}
+	}
+	return deleted
 }
 
 // fileDiffSourceBlocks constructs contiguous source blocks directly for a single FileDiff.
@@ -38,10 +50,16 @@ func fileDiffSourceBlocks(fileDiff FileDiff) []diffSourceBlock {
 		}
 	}
 	sort.Ints(lineNumbers)
+	deleted := extractDeletedLines(fileDiff)
 	var blocks []diffSourceBlock
 	for _, line := range lineNumbers {
 		if len(blocks) == 0 || line != blocks[len(blocks)-1].firstLine+blocks[len(blocks)-1].lineCount {
-			blocks = append(blocks, diffSourceBlock{file: fileDiff.Path, firstLine: line, addedLines: make(map[int]bool)})
+			blocks = append(blocks, diffSourceBlock{
+				file:         fileDiff.Path,
+				firstLine:    line,
+				addedLines:   make(map[int]bool),
+				deletedLines: deleted,
+			})
 		}
 		block := &blocks[len(blocks)-1]
 		if block.lineCount > 0 {
@@ -328,7 +346,12 @@ func sourceBlocksUncached(diff, repositoryRoot string, workingTree bool) []diffS
 		// eliminating O(N^2) diff re-parsing and linear searches for multi-file reviews.
 		fileBlocks := fileDiffSourceBlocks(fileDiff)
 		if source, err := readRuleSource(repositoryRoot, fileDiff.Path, workingTree); err == nil {
-			fileBlocks = []diffSourceBlock{fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)}
+			fb := fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)
+			fb.deletedLines = extractDeletedLines(fileDiff)
+			fileBlocks = []diffSourceBlock{fb}
+		}
+		for idx := range fileBlocks {
+			fileBlocks[idx].sourceLoaded = true
 		}
 		blocks = append(blocks, fileBlocks...)
 	}
@@ -336,7 +359,7 @@ func sourceBlocksUncached(diff, repositoryRoot string, workingTree bool) []diffS
 }
 
 func resolveBlockSource(block diffSourceBlock, root string, workingTree bool) (string, int) {
-	if block.text != "" {
+	if block.sourceLoaded || block.text != "" {
 		return block.text, block.firstLine
 	}
 	if fullData, err := readRuleSource(root, block.file, workingTree); err == nil && len(fullData) > 0 {
@@ -397,15 +420,26 @@ func maskLineComment(src string, i int, b *strings.Builder) int {
 	return i
 }
 
+func maskBytePreservingNewline(ch byte, b *strings.Builder) {
+	if ch == '\n' {
+		b.WriteByte('\n')
+		return
+	}
+	b.WriteByte(' ')
+}
+
+func maskStringSpan(src string, start, end int, b *strings.Builder) {
+	limit := min(end+1, len(src))
+	for j := start; j < limit; j++ {
+		maskBytePreservingNewline(src[j], b)
+	}
+}
+
 func maskBlockComment(src string, i int, b *strings.Builder) int {
 	b.WriteString("  ")
 	i = i + 2
 	for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
-		if src[i] == '\n' {
-			b.WriteByte('\n')
-		} else {
-			b.WriteByte(' ')
-		}
+		maskBytePreservingNewline(src[i], b)
 		i++
 	}
 	return i + 1

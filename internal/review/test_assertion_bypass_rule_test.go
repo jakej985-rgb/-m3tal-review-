@@ -69,4 +69,22 @@ new file mode 100644
 			t.Errorf("expected 0 findings for deletion-only diff, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags remaining conditional guard when unconditional assertion is deleted", func(t *testing.T) {
+		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
+			"--- a/test/unit/gating_test.dart\n" +
+			"+++ b/test/unit/gating_test.dart\n" +
+			"@@ -1,7 +1,6 @@\n" +
+			" void main() {\n" +
+			"   test('example gating test', () async {\n" +
+			"     final result = checkGating();\n" +
+			"-    expect(result, isNotNull);\n" +
+			"     " + "if (result != null) {\n" +
+			"       expect(result.passed, isTrue);\n" +
+			"     }\n"
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding when unconditional assertion is deleted, got 0")
+		}
+	})
 }

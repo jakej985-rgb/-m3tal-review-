@@ -34,7 +34,7 @@ func stripDartComments(src string) (out string) {
 	)
 	for i, n := 0, len(src); i < n; i++ {
 		if nextI, ok := scanStringLiteral(src, i, &inString, &stringChar); ok {
-			b.WriteString(src[i:min(nextI+1, n)])
+			maskStringSpan(src, i, nextI, &b)
 			i = nextI
 			continue
 		}
