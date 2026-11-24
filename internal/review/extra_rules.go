@@ -720,6 +720,7 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&TestAssertionBypassRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&UnverifiedHardwareActuationRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&QualityGatePreflightRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&RedundantJsonDecodeRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 	}
 }
 

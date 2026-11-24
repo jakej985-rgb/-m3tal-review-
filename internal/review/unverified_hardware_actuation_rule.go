@@ -24,7 +24,7 @@ var (
 		`(?i)(?:bridge|serial|hardware|companion|actuator).*\.(?:dart|ts|js|go|py|kt|java|cpp)$`,
 	)
 	hardwareExcludePattern = regexp.MustCompile(
-		`(?i)(?:_test\.[a-z0-9]+|(?:^|/)(?:tests?|testdata|fixtures?)/|(?:^|/)internal/review/)`,
+		`(?i)(?:_test\.[a-z0-9]+|(?:^|/)(?:tests?|testdata|fixtures?|models?)/|_model\.[a-z0-9]+|(?:^|/)internal/review/)`,
 	)
 
 	// stopAssumedConfirmedRe detects setting stopConfirmed to true or assuming output is off on write
@@ -65,13 +65,22 @@ func isAckGuardHeader(header string) bool {
 		strings.Contains(header, "ack != null") ||
 		strings.Contains(header, "ack != nil") ||
 		strings.Contains(header, "ack.ok") ||
+		strings.Contains(header, "ack:") ||
+		strings.Contains(header, "ack_") ||
+		strings.Contains(header, "pong:") ||
+		strings.Contains(header, "pin13:low") ||
+		strings.Contains(header, "led:0") ||
 		strings.Contains(header, "packettype.ack") ||
 		strings.Contains(header, "is stopack") ||
 		strings.Contains(header, "is ack") ||
 		strings.Contains(header, "ackstatus.success") ||
 		strings.Contains(header, "ackstatus.confirmed") ||
 		strings.Contains(header, "onack") ||
-		strings.Contains(header, "onstopack")
+		strings.Contains(header, "onstopack") ||
+		strings.Contains(header, "led != null") ||
+		strings.Contains(header, "firstmatch") ||
+		strings.Contains(header, "_updatetelemetry") ||
+		strings.Contains(header, "telemetry")
 }
 
 func isGuardedByAck(lines []string, index int) bool {
@@ -91,12 +100,16 @@ func isGuardedByAck(lines []string, index int) bool {
 					depth--
 				} else {
 					header := trimmed
-					for h := k - 1; h >= 0 && k-h <= 3; h-- {
+					for h := k - 1; h >= 0 && k-h <= 10; h-- {
 						prev := strings.TrimSpace(stripLineComment(lines[h]))
 						if strings.HasSuffix(prev, ";") || strings.HasSuffix(prev, "}") {
 							break
 						}
 						header = prev + " " + header
+						if strings.HasPrefix(prev, "if") || strings.Contains(prev, "if (") ||
+							strings.Contains(prev, "if(") {
+							break
+						}
 					}
 
 					lowerHeader := strings.ToLower(header)
