@@ -357,6 +357,10 @@ func stripStringsAndComments(line string) string {
 	var stringChar byte
 
 	for i := 0; i < len(line); i++ {
+		if !inString && line[i] == '`' {
+			i = keepTemplateInterpolations(line, i, &b)
+			continue
+		}
 		if nextI, ok := scanStringLiteral(line, i, &inString, &stringChar); ok {
 			i = nextI
 			continue
@@ -376,6 +380,43 @@ func stripStringsAndComments(line string) string {
 		b.WriteByte(ch)
 	}
 	return b.String()
+}
+
+// keepTemplateInterpolations masks the literal text of a JS/TS template string starting at
+// the opening backtick in line[open], but writes executable `${...}` expressions to b
+// (separated by spaces). It returns the index of the closing backtick (or end of line).
+func keepTemplateInterpolations(line string, open int, b *strings.Builder) int {
+	i := open + 1
+	for i < len(line) {
+		switch {
+		case line[i] == '\\':
+			i += 2
+			continue
+		case line[i] == '`':
+			b.WriteByte(' ')
+			return i
+		case line[i] == '$' && i+1 < len(line) && line[i+1] == '{':
+			b.WriteByte(' ')
+			depth := 1
+			j := i + 2
+			for ; j < len(line) && depth > 0; j++ {
+				if line[j] == '{' {
+					depth++
+				} else if line[j] == '}' {
+					depth--
+					if depth == 0 {
+						break
+					}
+				}
+				b.WriteByte(line[j])
+			}
+			b.WriteByte(' ')
+			i = j + 1
+			continue
+		}
+		i++
+	}
+	return len(line)
 }
 
 func containsBareIdent(s string, ident string) bool {

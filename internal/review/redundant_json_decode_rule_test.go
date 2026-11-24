@@ -343,4 +343,29 @@ func TestRedundantJsonDecodeRule(t *testing.T) {
 			t.Fatalf("expected 0 findings when decoder call only appears in log string, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags duplicate decodes inside template interpolations", func(t *testing.T) {
+		diff := "diff --git a/web/route_loader.js b/web/route_loader.js\n" +
+			"--- a/web/route_loader.js\n" +
+			"+++ b/web/route_loader.js\n" +
+			"@@ -80,1 +80,1 @@\n" +
+			"+  return `${JSON.parse(raw).id}: ${JSON.parse(raw).name}`;\n"
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for duplicate decodes in template interpolation, got 0")
+		}
+	})
+
+	t.Run("ignores decoder text in template literal body", func(t *testing.T) {
+		diff := "diff --git a/web/route_loader.js b/web/route_loader.js\n" +
+			"--- a/web/route_loader.js\n" +
+			"+++ b/web/route_loader.js\n" +
+			"@@ -80,2 +80,2 @@\n" +
+			"+  log(`calling JSON.parse(raw)`);\n" +
+			"+  const data = JSON.parse(raw);\n"
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for decoder text in template body, got %d", len(findings))
+		}
+	})
 }

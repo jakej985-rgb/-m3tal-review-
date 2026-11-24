@@ -17,8 +17,10 @@ type diffSourceBlock struct {
 	text         string
 	addedLines   map[int]bool
 	deletedLines []string
-	lineCount    int
-	sourceLoaded bool
+	// deletedAnchors[i] is the new-side line number immediately following deletedLines[i].
+	deletedAnchors []int
+	lineCount      int
+	sourceLoaded   bool
 }
 
 func extractDeletedLines(fileDiff FileDiff) []string {
@@ -29,6 +31,16 @@ func extractDeletedLines(fileDiff FileDiff) []string {
 		}
 	}
 	return deleted
+}
+
+func extractDeletedAnchors(fileDiff FileDiff) []int {
+	var anchors []int
+	for _, l := range fileDiff.Lines {
+		if l.Type == "-" {
+			anchors = append(anchors, l.NewLineNumber)
+		}
+	}
+	return anchors
 }
 
 // fileDiffSourceBlocks constructs contiguous source blocks directly for a single FileDiff.
@@ -51,14 +63,16 @@ func fileDiffSourceBlocks(fileDiff FileDiff) []diffSourceBlock {
 	}
 	sort.Ints(lineNumbers)
 	deleted := extractDeletedLines(fileDiff)
+	anchors := extractDeletedAnchors(fileDiff)
 	var blocks []diffSourceBlock
 	for _, line := range lineNumbers {
 		if len(blocks) == 0 || line != blocks[len(blocks)-1].firstLine+blocks[len(blocks)-1].lineCount {
 			blocks = append(blocks, diffSourceBlock{
-				file:         fileDiff.Path,
-				firstLine:    line,
-				addedLines:   make(map[int]bool),
-				deletedLines: deleted,
+				file:           fileDiff.Path,
+				firstLine:      line,
+				addedLines:     make(map[int]bool),
+				deletedLines:   deleted,
+				deletedAnchors: anchors,
 			})
 		}
 		block := &blocks[len(blocks)-1]
@@ -348,6 +362,7 @@ func sourceBlocksUncached(diff, repositoryRoot string, workingTree bool) []diffS
 		if source, err := readRuleSource(repositoryRoot, fileDiff.Path, workingTree); err == nil {
 			fb := fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)
 			fb.deletedLines = extractDeletedLines(fileDiff)
+			fb.deletedAnchors = extractDeletedAnchors(fileDiff)
 			fileBlocks = []diffSourceBlock{fb}
 		}
 		for idx := range fileBlocks {

@@ -87,4 +87,26 @@ new file mode 100644
 			t.Fatalf("expected finding when unconditional assertion is deleted, got 0")
 		}
 	})
+
+	t.Run("does not flag guard in another test when assertion is replaced elsewhere", func(t *testing.T) {
+		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
+			"--- a/test/unit/gating_test.dart\n" +
+			"+++ b/test/unit/gating_test.dart\n" +
+			"@@ -1,10 +1,10 @@\n" +
+			" void main() {\n" +
+			"   test('first', () {\n" +
+			"-    expect(value, 1);\n" +
+			"+    expect(value, 2);\n" +
+			"   });\n" +
+			"   test('second', () {\n" +
+			"     " + "if (result != null) {\n" +
+			"       expect(result.passed, isTrue);\n" +
+			"     }\n" +
+			"   });\n" +
+			" }\n"
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for untouched guard in another test, got %d", len(findings))
+		}
+	})
 }

@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"regexp"
-	"slices"
 	"strings"
 )
 
@@ -52,19 +51,52 @@ func hasTestAssertion(lines []string, start int) bool {
 	return hasAssert
 }
 
-func hasDeletedTestAssertion(deletedLines []string) bool {
-	return slices.ContainsFunc(deletedLines, func(line string) bool {
-		trimmed := strings.TrimSpace(line)
-		return !strings.HasPrefix(trimmed, "//") &&
-			!strings.HasPrefix(trimmed, "#") &&
-			testActionOrAssertRe.MatchString(trimmed)
-	})
+var testCaseStartRe = regexp.MustCompile(`^\s*(?:test|testWidgets|it|group|def\s+test_\w*|func\s+Test\w*)\s*\(`)
+
+func isDeletedTestAssertion(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return !strings.HasPrefix(trimmed, "//") &&
+		!strings.HasPrefix(trimmed, "#") &&
+		testActionOrAssertRe.MatchString(trimmed)
+}
+
+// testCaseBounds returns the [first, last] new-side line numbers of the test case enclosing lines[idx].
+func testCaseBounds(lines []string, idx, start int) (int, int) {
+	first, last := start, start+len(lines)
+	for k := idx; k >= 0; k-- {
+		if testCaseStartRe.MatchString(lines[k]) {
+			first = start + k
+			break
+		}
+	}
+	for k := idx + 1; k < len(lines); k++ {
+		if testCaseStartRe.MatchString(lines[k]) {
+			last = start + k - 1
+			break
+		}
+	}
+	return first, last
+}
+
+// hasRelevantDeletedAssertion reports whether an unconditional assertion was removed
+// from the same test case as the guard at lines[idx].
+func hasRelevantDeletedAssertion(b diffSourceBlock, lines []string, idx, start int) bool {
+	if len(b.deletedAnchors) != len(b.deletedLines) {
+		return false
+	}
+	first, last := testCaseBounds(lines, idx, start)
+	for i, del := range b.deletedLines {
+		anchor := b.deletedAnchors[i]
+		if anchor >= first && anchor <= last && isDeletedTestAssertion(del) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkTestBypassBlock(b diffSourceBlock, text string, start int, wt bool, seen map[string]bool) []Finding {
 	var bypassFindings []Finding
 	lines := strings.Split(text, "\n")
-	deletedAssert := hasDeletedTestAssertion(b.deletedLines)
 	for i, line := range lines {
 		lineNum := start + i
 		trimmed := strings.TrimSpace(line)
@@ -78,6 +110,7 @@ func checkTestBypassBlock(b diffSourceBlock, text string, start int, wt bool, se
 		if !hasTestAssertion(lines, i) {
 			continue
 		}
+		deletedAssert := hasRelevantDeletedAssertion(b, lines, i, start)
 		if !shouldReportAddedFinding(b, lineNum, wt || deletedAssert, seen) {
 			continue
 		}
