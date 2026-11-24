@@ -38,7 +38,7 @@ at commit time and blocks the commit (non-zero exit) when findings exceed the
 
 ## CI usage
 
-See [CI.md](CI.md) for the full guide. In short, build the binary in CI and
+See [RELEASE.md](RELEASE.md) for CI gates and release steps. In short, build the binary in CI and
 pick one reporting channel:
 
 ```yaml
@@ -58,7 +58,7 @@ API for known CVEs in `go.mod`/`package.json`/`requirements.txt`.
 
 Each ecosystem repo can tune behavior with a root `.m3tal-review-policy.json`
 (`risk_paths`, `forbidden_paths`, `require_together`, per-rule and per-path
-overrides) plus `.m3tal-review-ignore` — see [fp-tuning.md](fp-tuning.md).
+overrides) plus `.m3tal-review-ignore` — see [history/fp-tuning.md](history/fp-tuning.md).
 The policy is read from the local working tree, so it works on staged reviews
 even before the policy file itself is committed.
 

@@ -214,4 +214,4 @@
 
 ### Notes
 - Detector rules are heuristic; see `docs/threat-model.md` for scope and
-  `docs/fp-tuning.md` for managing false positives.
+  `docs/history/fp-tuning.md` for managing false positives.

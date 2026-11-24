@@ -24,7 +24,7 @@ You are the **JavaScript & TypeScript Specialist** for `m3tal-review`. You speci
 ## Scope & Target Codebase Areas
 - **JS / TS Slop & Heuristics**:
   - `internal/review/slop/javascript_slop.go`
-  - `internal/review/slop/typescript_slop.go`
+  - `internal/review/slop/brace_languages.go`
   - `internal/review/slop/brace_language_slop.go`
 - **Taint & Security Rules**:
   - `internal/review/js_taint_rule.go` (Intra-file taint from request parameters to DOM sinks / eval)

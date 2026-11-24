@@ -23,7 +23,7 @@ You are the **Swift Language Specialist** for `m3tal-review`. You specialize in 
 
 ## Scope & Target Codebase Areas
 - **Swift Slop & Heuristics**:
-  - `internal/review/slop/swift_slop.go`
+  - `internal/review/slop/brace_languages.go`
   - `internal/review/slop/swift_slop_test.go`
 - **Apple Platform Security**:
   - `Info.plist` permission strings and ATS (App Transport Security) exemptions

@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/review/fsutil"
 )
 
 func TestPlatformPathNormalization(t *testing.T) {
@@ -69,9 +71,9 @@ func TestPlatformAtomicReportWrites(t *testing.T) {
 func TestPlatformDirectorySyncBehavior(t *testing.T) {
 	tempDir := t.TempDir()
 
-	// defaultSyncDir should succeed or safely handle unsupported platform behavior
-	if err := defaultSyncDir(tempDir); err != nil {
-		t.Errorf("defaultSyncDir returned unexpected error on %s: %v", runtime.GOOS, err)
+	// SyncDir should succeed or safely handle unsupported platform behavior
+	if err := fsutil.SyncDir(tempDir); err != nil {
+		t.Errorf("SyncDir returned unexpected error on %s: %v", runtime.GOOS, err)
 	}
 }
 
@@ -112,8 +114,8 @@ func TestPlatformRenameRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := defaultRename(src, dst); err != nil {
-		t.Fatalf("defaultRename failed: %v", err)
+	if err := fsutil.Rename(src, dst); err != nil {
+		t.Fatalf("Rename failed: %v", err)
 	}
 
 	data, err := osReadFile(dst)

@@ -1,10 +1,10 @@
 package review
 
 import (
-	"fmt"
 	"path"
 	"strings"
-	"unicode"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/review/safetext"
 )
 
 func isCommentOnlyLine(file, text string) bool {
@@ -24,20 +24,5 @@ func isCommentOnlyLine(file, text string) bool {
 }
 
 func safeTerminalText(value string) string {
-	var displayed strings.Builder
-	for _, r := range value {
-		if !unicode.IsControl(r) {
-			displayed.WriteRune(r)
-			continue
-		}
-		switch {
-		case r <= 0xff:
-			fmt.Fprintf(&displayed, "\\x%02x", r)
-		case r <= 0xffff:
-			fmt.Fprintf(&displayed, "\\u%04x", r)
-		default:
-			fmt.Fprintf(&displayed, "\\U%08x", r)
-		}
-	}
-	return displayed.String()
+	return safetext.Terminal(value)
 }

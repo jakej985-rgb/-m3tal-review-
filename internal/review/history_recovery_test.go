@@ -92,7 +92,7 @@ func TestRecoverHistorySerializesConcurrentAppend(t *testing.T) {
 	recoveryWriting := make(chan struct{})
 	releaseRecovery := make(chan struct{})
 	ops := fsOps{
-		writeFile: func(file *os.File, data []byte) (int, error) {
+		WriteFile: func(file *os.File, data []byte) (int, error) {
 			close(recoveryWriting)
 			<-releaseRecovery
 			return file.Write(data)
@@ -394,14 +394,14 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 		}
 	}
 
-	// 1. Injected syncFile failure
-	t.Run("syncFile failure preserves history and cleans up", func(t *testing.T) {
+	// 1. Injected SyncFile failure
+	t.Run("SyncFile failure preserves history and cleans up", func(t *testing.T) {
 		if err := os.WriteFile(historyPath, origHistory, 0644); err != nil {
 			t.Fatal(err)
 		}
 
 		ops := fsOps{
-			syncFile: func(f *os.File) error {
+			SyncFile: func(f *os.File) error {
 				return fmt.Errorf("injected sync failure")
 			},
 		}
@@ -410,17 +410,17 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "injected sync failure") {
 			t.Fatalf("expected injected sync failure, got: %v", err)
 		}
-		assertNoTempFilesAndHistoryPreserved("syncFile failure")
+		assertNoTempFilesAndHistoryPreserved("SyncFile failure")
 	})
 
-	// 2. Injected closeFile failure
-	t.Run("closeFile failure preserves history and cleans up", func(t *testing.T) {
+	// 2. Injected CloseFile failure
+	t.Run("CloseFile failure preserves history and cleans up", func(t *testing.T) {
 		if err := os.WriteFile(historyPath, origHistory, 0644); err != nil {
 			t.Fatal(err)
 		}
 
 		ops := fsOps{
-			closeFile: func(f *os.File) error {
+			CloseFile: func(f *os.File) error {
 				_ = f.Close()
 				return fmt.Errorf("injected close failure")
 			},
@@ -430,17 +430,17 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "injected close failure") {
 			t.Fatalf("expected injected close failure, got: %v", err)
 		}
-		assertNoTempFilesAndHistoryPreserved("closeFile failure")
+		assertNoTempFilesAndHistoryPreserved("CloseFile failure")
 	})
 
-	// 3. Injected renameFile failure
-	t.Run("renameFile failure preserves history and cleans up", func(t *testing.T) {
+	// 3. Injected RenameFile failure
+	t.Run("RenameFile failure preserves history and cleans up", func(t *testing.T) {
 		if err := os.WriteFile(historyPath, origHistory, 0644); err != nil {
 			t.Fatal(err)
 		}
 
 		ops := fsOps{
-			renameFile: func(oldpath, newpath string) error {
+			RenameFile: func(oldpath, newpath string) error {
 				return fmt.Errorf("injected rename failure")
 			},
 		}
@@ -449,13 +449,13 @@ func TestRecoverHistoryInjectedFailures(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "injected rename failure") {
 			t.Fatalf("expected injected rename failure, got: %v", err)
 		}
-		assertNoTempFilesAndHistoryPreserved("renameFile failure")
+		assertNoTempFilesAndHistoryPreserved("RenameFile failure")
 	})
 
-	// 4. Injected syncDir failure is non-fatal warning
-	t.Run("syncDir failure is non-fatal warning", func(t *testing.T) {
+	// 4. Injected SyncDir failure is non-fatal warning
+	t.Run("SyncDir failure is non-fatal warning", func(t *testing.T) {
 		ops := fsOps{
-			syncDir: func(dir string) error {
+			SyncDir: func(dir string) error {
 				return fmt.Errorf("injected sync dir failure")
 			},
 		}

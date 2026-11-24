@@ -31,7 +31,7 @@ memory allocation, algorithmic complexity attacks, or catastrophic backtracking:
 ## 3. Mutation Testing & Sensitivity Measurement
 
 To verify that tests do not simply pass vacuously, mutation testing
-(`internal/mutation/mutation.go`) measures the suite's sensitivity by injecting synthetic
+(`internal/experimental/mutation/mutation.go`) measures the suite's sensitivity by injecting synthetic
 faults into verified code:
 - **Lock Removal Mutants**: Eliminating critical-section locks to ensure concurrency
   analyzers detect unprotected read-after-write.
@@ -41,7 +41,7 @@ faults into verified code:
 ### Mutation Score Metric:
 $$\text{Mutation Score} = \frac{\text{Mutants Killed}}{\text{Total Mutants Evaluated}}$$
 
-Automated verification in `internal/mutation/mutation_test.go` achieved a **100% kill rate**
+Automated verification in `internal/experimental/mutation/mutation_test.go` achieved a **100% kill rate**
 against evaluated concurrency mutants.
 
 ---

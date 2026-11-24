@@ -43,10 +43,10 @@ var (
 	// excludes member calls like regex.exec(...).
 	jsExecSinkRe = regexp.MustCompile(`(?:^|[^\w$.])(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(`)
 	jsEvalSinkRe = regexp.MustCompile(`\beval\s*\(|new\s+Function\s*\(`)
-	jsFsSinkRe   = regexp.MustCompile(`\b(?:fs|fsPromises|fsp|nodeFs)\.(?:readFile|writeFile|appendFile|createReadStream|createWriteStream|unlink|rename|rm|mkdir|copyFile|open)(?:Sync)?\s*\(`)
+	jsFsSinkRe   = regexp.MustCompile(`\b(?:fs|fsPromises|fsp|nodeFs)\.(?:readFile|WriteFile|appendFile|createReadStream|createWriteStream|unlink|rename|rm|mkdir|copyFile|open)(?:Sync)?\s*\(`)
 	// Bare fs function names (readFileSync etc.) only count when the file
 	// imports fs — otherwise they are too ambiguous.
-	jsBareFsRe    = regexp.MustCompile(`(?:^|[^\w$.])(?:readFile|writeFile|appendFile|createReadStream|createWriteStream|unlink|rename|rm|copyFile)(?:Sync)?\s*\(`)
+	jsBareFsRe    = regexp.MustCompile(`(?:^|[^\w$.])(?:readFile|WriteFile|appendFile|createReadStream|createWriteStream|unlink|rename|rm|copyFile)(?:Sync)?\s*\(`)
 	jsServeSinkRe = regexp.MustCompile(`\b(?:res|response|reply)\.(?:sendFile|download|sendfile)\s*\(|\bsendFile\s*\(`)
 	jsFsImportRe  = regexp.MustCompile(`(?:require\s*\(\s*['"](?:node:)?fs['"]|from\s+['"](?:node:)?fs['"]|from\s+['"](?:node:)?fs/promises['"])`)
 	jsKeywords    = map[string]bool{

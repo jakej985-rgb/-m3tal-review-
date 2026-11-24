@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/review/history"
 )
 
 type SuppressionAction string
@@ -119,7 +121,7 @@ func AppendSuppressionEvent(auditPath string, event SuppressionEvent) (Suppressi
 	}
 
 	lockPath := auditPath + ".lock"
-	unlock, err := lockHistory(lockPath)
+	unlock, err := history.Lock(lockPath)
 	if err != nil {
 		return event, fmt.Errorf("lock suppression audit: %w", err)
 	}
@@ -277,7 +279,7 @@ func PruneSuppressionAudit(auditPath string, retainCount int) (int, error) {
 	defer suppressionAuditMu.Unlock()
 
 	lockPath := auditPath + ".lock"
-	unlock, err := lockHistory(lockPath)
+	unlock, err := history.Lock(lockPath)
 	if err != nil {
 		return 0, fmt.Errorf("lock suppression audit for pruning: %w", err)
 	}

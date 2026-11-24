@@ -25,7 +25,7 @@ You are the **Rust Language Specialist** for `m3tal-review`. You specialize in s
 - **Rust Frontend & Slop**:
   - `internal/review/rust_frontend.go`
   - `internal/review/rust_frontend_test.go`
-  - `internal/review/slop/rust_slop.go`
+  - `internal/review/slop/brace_languages.go`
 - **Rust Safety & Rules**:
   - Unsafe code detection: `unsafe fn`, `unsafe {}` blocks without safety documentation
   - Resource leaks and unclosed file/socket descriptors

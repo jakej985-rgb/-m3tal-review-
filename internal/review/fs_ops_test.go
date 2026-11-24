@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/review/fsutil"
 )
 
 // TestParallelReportWrites verifies concurrent report writes execute safely without races or contention.
@@ -59,11 +61,11 @@ func TestParallelIsolatedFSOps(t *testing.T) {
 			var closeCount int64
 
 			isolatedOps := fsOps{
-				syncFile: func(f *os.File) error {
+				SyncFile: func(f *os.File) error {
 					atomic.AddInt64(&syncCount, 1)
 					return f.Sync()
 				},
-				closeFile: func(f *os.File) error {
+				CloseFile: func(f *os.File) error {
 					atomic.AddInt64(&closeCount, 1)
 					return f.Close()
 				},
@@ -97,14 +99,14 @@ func TestFSOpsInjectedFailures(t *testing.T) {
 	errInjectedRename := errors.New("injected rename failure")
 	errInjectedDirSync := errors.New("injected dir sync failure")
 
-	t.Run("syncFile failure", func(t *testing.T) {
+	t.Run("SyncFile failure", func(t *testing.T) {
 		t.Parallel()
 		tempDir := t.TempDir()
 		reportPath := filepath.Join(tempDir, "report.json")
 		report := NewReport("run-sync-fail", tempDir, "main", "sha", "", "", "1.0.0", nil, nil)
 
 		ops := fsOps{
-			syncFile: func(f *os.File) error {
+			SyncFile: func(f *os.File) error {
 				return errInjectedSync
 			},
 		}
@@ -115,14 +117,14 @@ func TestFSOpsInjectedFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("closeFile failure", func(t *testing.T) {
+	t.Run("CloseFile failure", func(t *testing.T) {
 		t.Parallel()
 		tempDir := t.TempDir()
 		reportPath := filepath.Join(tempDir, "report.json")
 		report := NewReport("run-close-fail", tempDir, "main", "sha", "", "", "1.0.0", nil, nil)
 
 		ops := fsOps{
-			closeFile: func(f *os.File) error {
+			CloseFile: func(f *os.File) error {
 				_ = f.Close()
 				return errInjectedClose
 			},
@@ -134,14 +136,14 @@ func TestFSOpsInjectedFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("renameFile failure", func(t *testing.T) {
+	t.Run("RenameFile failure", func(t *testing.T) {
 		t.Parallel()
 		tempDir := t.TempDir()
 		reportPath := filepath.Join(tempDir, "report.json")
 		report := NewReport("run-rename-fail", tempDir, "main", "sha", "", "", "1.0.0", nil, nil)
 
 		ops := fsOps{
-			renameFile: func(oldpath, newpath string) error {
+			RenameFile: func(oldpath, newpath string) error {
 				return errInjectedRename
 			},
 		}
@@ -152,14 +154,14 @@ func TestFSOpsInjectedFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("syncDir failure is non-fatal warning", func(t *testing.T) {
+	t.Run("SyncDir failure is non-fatal warning", func(t *testing.T) {
 		t.Parallel()
 		tempDir := t.TempDir()
 		reportPath := filepath.Join(tempDir, "report.json")
 		report := NewReport("run-dirsync-fail", tempDir, "main", "sha", "", "", "1.0.0", nil, nil)
 
 		ops := fsOps{
-			syncDir: func(dir string) error {
+			SyncDir: func(dir string) error {
 				return errInjectedDirSync
 			},
 		}
@@ -179,17 +181,17 @@ func TestFSOpsInjectedFailures(t *testing.T) {
 func TestFSOpsWithDefaults(t *testing.T) {
 	t.Parallel()
 	emptyOps := fsOps{}
-	populated := emptyOps.withDefaults()
+	populated := fsutil.WithDefaults(emptyOps)
 
-	if populated.openFile == nil ||
-		populated.statFile == nil ||
-		populated.writeFile == nil ||
-		populated.syncFile == nil ||
-		populated.closeFile == nil ||
-		populated.truncateFile == nil ||
-		populated.removeFile == nil ||
-		populated.renameFile == nil ||
-		populated.syncDir == nil {
+	if populated.OpenFile == nil ||
+		populated.StatFile == nil ||
+		populated.WriteFile == nil ||
+		populated.SyncFile == nil ||
+		populated.CloseFile == nil ||
+		populated.TruncateFile == nil ||
+		populated.RemoveFile == nil ||
+		populated.RenameFile == nil ||
+		populated.SyncDir == nil {
 		t.Fatal("expected all operations to be populated by withDefaults")
 	}
 }

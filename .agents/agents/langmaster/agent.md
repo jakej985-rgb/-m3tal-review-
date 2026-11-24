@@ -43,13 +43,13 @@ When processing files or diffs for specific programming languages, you can invok
 - `go_lang`: Go AST, typed callgraph, SSA analyzers (`internal/semantic/golang`)
 - `python_lang`: Python AST heuristics and Python slop (`internal/review/slop/python_slop.go`)
 - `javascript_lang`: JS/TS AST heuristics, prototype pollution, DOM taint
-- `rust_lang`: Rust AST frontend (`internal/review/rust_frontend.go`, `rust_slop.go`)
-- `jvm_lang`: Java/Kotlin frontends (`internal/review/jvm_frontend.go`, `java_slop.go`, `kotlin_slop.go`)
-- `cpp_lang`: C/C++ frontends (`internal/review/cpp_frontend.go`, `c_slop.go`, `cpp_slop.go`)
-- `csharp_lang`: C# / .NET heuristics (`internal/review/slop/csharp_slop.go`)
-- `swift_lang`: Swift AST heuristics (`internal/review/slop/swift_slop.go`)
+- `rust_lang`: Rust AST frontend (`internal/review/rust_frontend.go`, `internal/review/slop/brace_languages.go`)
+- `jvm_lang`: Java/Kotlin frontends (`internal/review/jvm_frontend.go`, `internal/review/slop/brace_languages.go`)
+- `cpp_lang`: C/C++ frontends (`internal/review/cpp_frontend.go`, `internal/review/slop/brace_languages.go`)
+- `csharp_lang`: C# / .NET heuristics (`internal/review/slop/brace_languages.go`)
+- `swift_lang`: Swift AST heuristics (`internal/review/slop/brace_languages.go`)
 - `dart_flutter_lang`: Flutter UI & a11y heuristics (`internal/review/flutter_semantics_rule.go`)
-- `php_lang`: PHP AST heuristics (`internal/review/slop/php_slop.go`)
+- `php_lang`: PHP AST heuristics (`internal/review/slop/brace_languages.go`)
 - `shell_lang`: Shell / Bash scripts and CI workflows (`internal/review/shell_rule.go`)
 
 ---
