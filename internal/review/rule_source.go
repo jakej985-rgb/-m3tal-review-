@@ -96,5 +96,5 @@ func fullSourceBlock(file string, source []byte, addedLines []int) diffSourceBlo
 	for _, line := range addedLines {
 		added[line] = true
 	}
-	return diffSourceBlock{file: file, firstLine: 1, text: string(source), addedLines: added}
+	return diffSourceBlock{file: file, firstLine: 1, text: string(source), addedLines: added, fullSource: true}
 }

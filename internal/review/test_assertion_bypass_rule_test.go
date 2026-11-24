@@ -1,0 +1,193 @@
+package review
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestTestAssertionBypassRule(t *testing.T) {
+	rule := TestAssertionBypassRule{}
+
+	t.Run("flags conditional wrap around test action", func(t *testing.T) {
+		diff := `diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart
+new file mode 100644
+--- /dev/null
++++ b/test/unit/gating_test.dart
+@@ -0,0 +1,10 @@
++void main() {
++  test('example gating test', () async {
++    final isGated = checkGating();
++    if (!isGated) {
++      await progressRepo.completeLesson('learner', 'l01_02', 10);
++    }
++    expect(progressRepo.totalXp, 0);
++  });
++}
++`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for conditional test action bypass, got 0")
+		}
+		if findings[0].Rule != "test-assertion-bypass" {
+			t.Errorf("expected rule test-assertion-bypass, got %s", findings[0].Rule)
+		}
+	})
+
+	t.Run("allows platform or web checks", func(t *testing.T) {
+		diff := `diff --git a/test/unit/platform_test.dart b/test/unit/platform_test.dart
+new file mode 100644
+--- /dev/null
++++ b/test/unit/platform_test.dart
+@@ -0,0 +1,9 @@
++void main() {
++  test('web test', () {
++    if (kIsWeb) {
++      expect(findWeb(), isTrue);
++    }
++  });
++}
++`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings for kIsWeb check, got %d", len(findings))
+		}
+	})
+
+	t.Run("passes for deletion-only diff in test file", func(t *testing.T) {
+		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
+			"--- a/test/unit/gating_test.dart\n" +
+			"+++ b/test/unit/gating_test.dart\n" +
+			"@@ -1,7 +1,6 @@\n" +
+			" void main() {\n" +
+			"   test('example gating test', () async {\n" +
+			"     final isGated = checkGating();\n" +
+			"-    // remove comment\n" +
+			"     " + "if (!isGated) {\n" +
+			"       await progressRepo.completeLesson('learner', 'l01_02', 10);\n" +
+			"     }\n"
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings for deletion-only diff, got %d", len(findings))
+		}
+	})
+
+	t.Run("full source test bounds exclude a deletion in another test", func(t *testing.T) {
+		lines := strings.Split(`void main() {
+  test('first test', () {
+    expect(value, 1);
+  });
+
+  test('second test', () {
+    final result = checkGating();
+    // unrelated comment
+    if (result != null) {
+      expect(result.passed, isTrue);
+    }
+  });
+}`, "\n")
+		block := diffSourceBlock{
+			firstLine:  1,
+			fullSource: true,
+			deletedLines: []deletedDiffLine{
+				{content: "expect(value, equals(1));", newLine: 3},
+			},
+		}
+		if hasRelevantDeletedAssertion(block, lines, 8) {
+			t.Errorf("expected deletion in the first test not to justify the second test's guard")
+		}
+		if !hasRelevantDeletedAssertion(block, lines, 2) {
+			t.Errorf("expected deletion inside the first test to justify that test's guard")
+		}
+		block.deletedLines = []deletedDiffLine{{content: "expect(result.passed, isTrue);", newLine: 10}}
+		if !hasRelevantDeletedAssertion(block, lines, 8) {
+			t.Errorf("expected deletion inside the second test to justify its guard")
+		}
+		if hasRelevantDeletedAssertion(block, lines, 2) {
+			t.Errorf("expected deletion in the second test not to justify the first test's guard")
+		}
+	})
+
+	t.Run("does not correlate a deletion in another test across a hunk gap", func(t *testing.T) {
+		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
+			"--- a/test/unit/gating_test.dart\n" +
+			"+++ b/test/unit/gating_test.dart\n" +
+			"@@ -1,4 +1,4 @@\n" +
+			" void main() {\n" +
+			"   test('first test', () {\n" +
+			"-    expect(value, equals(1));\n" +
+			"+    expect(value, 1);\n" +
+			"   });\n" +
+			"@@ -10,5 +10,6 @@\n" +
+			"     final result = checkGating();\n" +
+			"+    // unrelated comment\n" +
+			"     " + "if (result != null) {\n" +
+			"       expect(result.passed, isTrue);\n" +
+			"     }\n" +
+			"   });\n"
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings for a deletion in a different test, got %d", len(findings))
+		}
+	})
+
+	t.Run("flags remaining conditional guard when unconditional assertion is deleted", func(t *testing.T) {
+		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
+			"--- a/test/unit/gating_test.dart\n" +
+			"+++ b/test/unit/gating_test.dart\n" +
+			"@@ -1,7 +1,6 @@\n" +
+			" void main() {\n" +
+			"   test('example gating test', () async {\n" +
+			"     final result = checkGating();\n" +
+			"-    expect(result, isNotNull);\n" +
+			"     " + "if (result != null) {\n" +
+			"       expect(result.passed, isTrue);\n" +
+			"     }\n"
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding when unconditional assertion is deleted, got 0")
+		}
+	})
+
+	t.Run("does not flag unchanged guard when its test declaration is outside the hunk", func(t *testing.T) {
+		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
+			"--- a/test/unit/gating_test.dart\n" +
+			"+++ b/test/unit/gating_test.dart\n" +
+			"@@ -1,4 +1,3 @@\n" +
+			"   test('long', () {\n" +
+			"     final result = run();\n" +
+			"-    expect(result, isNotNull);\n" +
+			"     step1();\n" +
+			"@@ -40,4 +39,4 @@\n" +
+			"     " + "if (result != null) {\n" +
+			"-      expect(result.passed, isFalse);\n" +
+			"+      expect(result.passed, isTrue);\n" +
+			"     }\n" +
+			"   });\n"
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings when the guard's test declaration is outside the hunk, got %d", len(findings))
+		}
+	})
+
+	t.Run("does not flag guard in another test when assertion is replaced elsewhere", func(t *testing.T) {
+		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
+			"--- a/test/unit/gating_test.dart\n" +
+			"+++ b/test/unit/gating_test.dart\n" +
+			"@@ -1,10 +1,10 @@\n" +
+			" void main() {\n" +
+			"   test('first', () {\n" +
+			"-    expect(value, 1);\n" +
+			"+    expect(value, 2);\n" +
+			"   });\n" +
+			"   test('second', () {\n" +
+			"     " + "if (result != null) {\n" +
+			"       expect(result.passed, isTrue);\n" +
+			"     }\n" +
+			"   });\n" +
+			" }\n"
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for untouched guard in another test, got %d", len(findings))
+		}
+	})
+}

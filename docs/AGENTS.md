@@ -63,6 +63,7 @@ This enables developers and AI assistants to delegate specific tasks to targeted
 | **`github_agent`** | Pull Request lifecycle, CodeRabbit-style markdown summaries, inline suggestions, `@m3tal-review` bot commands, GitHub CLI (`gh`), CI workflows | `internal/prreview/`, `internal/prreview/github/`, `.github/workflows/` |
 | **`security_audit`** | High-entropy secret scanning, credential leaks, package-scoped taint, OSV supply-chain vulnerability database queries, threat model | `internal/review/entropy_rule.go`, `internal/review/secret_rule.go`, `docs/threat-model.md` |
 | **`repair_agent`** | Deterministic automated repair proposals, isolated ephemeral sandboxes, AST patch synthesis, durable repair audit logs | `internal/repair/` (`fixer.go`, `engine.go`, `sandbox.go`, `proposal.go`) |
+| **`ai_review_agent`** | Ingest AI review findings, expand rules, repair PR code | `.agents/agents/ai_review_agent/` |
 
 ---
 

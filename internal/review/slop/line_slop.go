@@ -301,6 +301,7 @@ func isTestOrToolingFile(file string) bool {
 	testDirs := []string{
 		"/testdata/", "/tests/", "/test/", "/fixtures/", "/fixture/",
 		"/.github/", "/scripts/", "/tools/", "/examples/", "/benchmarks/",
+		"/.agents/", "/.jules/", "/docs/",
 	}
 	for _, seg := range testDirs {
 		if strings.Contains(slashPath, seg) || strings.Contains(lower, seg) {
@@ -311,6 +312,7 @@ func isTestOrToolingFile(file string) bool {
 		"_test.go", "_test.py", "_test.rb", "_test.java", "_test.kt",
 		".test.js", ".test.ts", ".test.jsx", ".test.tsx",
 		".spec.js", ".spec.ts", ".spec.jsx", ".spec.tsx",
+		".md", ".markdown", ".txt", ".json", ".yaml", ".yml",
 	} {
 		if strings.HasSuffix(base, suffix) {
 			return true

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"os"
 	"path"
 	"path/filepath"
@@ -10,12 +11,44 @@ import (
 	"sync"
 )
 
+type deletedDiffLine struct {
+	content string
+	newLine int
+}
+
 type diffSourceBlock struct {
-	file       string
-	firstLine  int
-	text       string
-	addedLines map[int]bool
-	lineCount  int
+	file         string
+	firstLine    int
+	text         string
+	addedLines   map[int]bool
+	deletedLines []deletedDiffLine
+	lineCount    int
+	sourceLoaded bool
+	fullSource   bool
+}
+
+func extractDeletedLines(fileDiff FileDiff) []deletedDiffLine {
+	var deleted []deletedDiffLine
+	for _, l := range fileDiff.Lines {
+		if l.Type == "-" {
+			deleted = append(deleted, deletedDiffLine{content: l.Content, newLine: l.NewLineNumber})
+		}
+	}
+	return deleted
+}
+
+// deletedLinesForBlock keeps each hunk's deletions with that hunk. New-side
+// positions make this possible without a separate hunk index: a deletion
+// between context lines has the new-side line it was removed before.
+func deletedLinesForBlock(deleted []deletedDiffLine, firstLine, lineCount int) []deletedDiffLine {
+	var blockDeleted []deletedDiffLine
+	last := firstLine + lineCount - 1
+	for _, d := range deleted {
+		if d.newLine >= firstLine && d.newLine <= last+1 {
+			blockDeleted = append(blockDeleted, d)
+		}
+	}
+	return blockDeleted
 }
 
 // fileDiffSourceBlocks constructs contiguous source blocks directly for a single FileDiff.
@@ -37,10 +70,15 @@ func fileDiffSourceBlocks(fileDiff FileDiff) []diffSourceBlock {
 		}
 	}
 	sort.Ints(lineNumbers)
+	deleted := extractDeletedLines(fileDiff)
 	var blocks []diffSourceBlock
 	for _, line := range lineNumbers {
 		if len(blocks) == 0 || line != blocks[len(blocks)-1].firstLine+blocks[len(blocks)-1].lineCount {
-			blocks = append(blocks, diffSourceBlock{file: fileDiff.Path, firstLine: line, addedLines: make(map[int]bool)})
+			blocks = append(blocks, diffSourceBlock{
+				file:       fileDiff.Path,
+				firstLine:  line,
+				addedLines: make(map[int]bool),
+			})
 		}
 		block := &blocks[len(blocks)-1]
 		if block.lineCount > 0 {
@@ -52,6 +90,9 @@ func fileDiffSourceBlocks(fileDiff FileDiff) []diffSourceBlock {
 			block.addedLines[line] = true
 		}
 	}
+	for idx := range blocks {
+		blocks[idx].deletedLines = deletedLinesForBlock(deleted, blocks[idx].firstLine, blocks[idx].lineCount)
+	}
 	return blocks
 }
 
@@ -62,8 +103,11 @@ func sourceCodeMask(file, source string) []bool {
 	ext := strings.ToLower(path.Ext(file))
 	python := extIs(ext, ".py")
 	php := extIs(ext, ".php", ".phtml")
-	hashComments := python || php || extIs(ext, ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env",
-		".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf", ".hcl", ".graphql", ".gql", ".fish")
+	hashComments := python || php || extIs(
+		ext, ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env",
+		".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf", ".hcl", ".graphql", ".gql",
+		".fish",
+	)
 	lineComment, blockComment := false, false
 	var quote byte
 	triple := false
@@ -142,8 +186,11 @@ func offsetInComment(file, source string, offset int) bool {
 	}
 	ext := strings.ToLower(path.Ext(file))
 	php := extIs(ext, ".php", ".phtml")
-	hashComments := extIs(ext, ".py", ".php", ".phtml", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env",
-		".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf", ".hcl", ".graphql", ".gql", ".fish")
+	hashComments := extIs(
+		ext, ".py", ".php", ".phtml", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg",
+		".properties", ".env", ".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf",
+		".hcl", ".graphql", ".gql", ".fish",
+	)
 	var quote byte
 	triple := false
 	lineComment := false
@@ -191,7 +238,8 @@ func offsetInComment(file, source string, offset int) bool {
 				continue
 			}
 		}
-		if (hashComments && c == '#') || (extIs(ext, ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env") && c == ';') {
+		isSemiComment := extIs(ext, ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env") && c == ';'
+		if (hashComments && c == '#') || isSemiComment {
 			if php && c == '#' && i+1 < offset && source[i+1] == '[' {
 				// PHP 8 attribute: do not treat as comment
 			} else {
@@ -272,7 +320,8 @@ func sourceContentStamp(repositoryRoot, file string, workingTree bool) string {
 	}
 	if workingTree {
 		if info, err := os.Stat(filepath.Join(repositoryRoot, file)); err == nil {
-			return "wt:" + info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z") + ":" + strconv.FormatInt(info.Size(), 10)
+			modTime := info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z")
+			return "wt:" + modTime + ":" + strconv.FormatInt(info.Size(), 10)
 		}
 		return "wt:missing"
 	}
@@ -319,11 +368,175 @@ func sourceBlocksUncached(diff, repositoryRoot string, workingTree bool) []diffS
 		// eliminating O(N^2) diff re-parsing and linear searches for multi-file reviews.
 		fileBlocks := fileDiffSourceBlocks(fileDiff)
 		if source, err := readRuleSource(repositoryRoot, fileDiff.Path, workingTree); err == nil {
-			fileBlocks = []diffSourceBlock{fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)}
+			fb := fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)
+			fb.deletedLines = extractDeletedLines(fileDiff)
+			fileBlocks = []diffSourceBlock{fb}
+		}
+		for idx := range fileBlocks {
+			fileBlocks[idx].sourceLoaded = true
 		}
 		blocks = append(blocks, fileBlocks...)
 	}
 	return blocks
+}
+
+func resolveBlockSource(block diffSourceBlock, root string, workingTree bool) (string, int) {
+	if block.sourceLoaded || block.text != "" {
+		return block.text, block.firstLine
+	}
+	if fullData, err := readRuleSource(root, block.file, workingTree); err == nil && len(fullData) > 0 {
+		return string(fullData), 1
+	}
+	return block.text, block.firstLine
+}
+
+func iterateRuleBlocks(
+	ctx context.Context,
+	diff, root string,
+	workingTree bool,
+	fileFilter func(string) bool,
+	fn func(block diffSourceBlock, scanText string, startLine int),
+) error {
+	for _, block := range sourceBlocks(diff, root, workingTree) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if fileFilter != nil && !fileFilter(block.file) {
+			continue
+		}
+		scanText, startLine := resolveBlockSource(block, root, workingTree)
+		fn(block, scanText, startLine)
+	}
+	return nil
+}
+
+func dedupeFinding(seen map[string]bool, file string, lineNum int) bool {
+	key := file + ":" + strconv.Itoa(lineNum)
+	if seen[key] {
+		return true
+	}
+	seen[key] = true
+	return false
+}
+
+func decrementDepth(depth *int) bool {
+	if *depth <= 0 {
+		return false
+	}
+	*depth = *depth - 1
+	return true
+}
+
+func isCommentPrefix(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*")
+}
+
+func maskLineComment(src string, i int, b *strings.Builder) int {
+	for i < len(src) && src[i] != '\n' {
+		b.WriteByte(' ')
+		i++
+	}
+	if i < len(src) {
+		b.WriteByte('\n')
+	}
+	return i
+}
+
+func maskBytePreservingNewline(ch byte, b *strings.Builder) {
+	if ch == '\n' {
+		b.WriteByte('\n')
+		return
+	}
+	b.WriteByte(' ')
+}
+
+func maskStringSpan(src string, start, end int, b *strings.Builder) {
+	limit := min(end+1, len(src))
+	for j := start; j < limit; j++ {
+		maskBytePreservingNewline(src[j], b)
+	}
+}
+
+func maskBlockComment(src string, i int, b *strings.Builder) int {
+	b.WriteString("  ")
+	i = i + 2
+	for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
+		maskBytePreservingNewline(src[i], b)
+		i++
+	}
+	return i + 1
+}
+
+func maskDartSlashComment(src string, i int, b *strings.Builder) (int, bool) {
+	if i+1 >= len(src) {
+		return i, false
+	}
+	switch src[i+1] {
+	case '/':
+		return maskLineComment(src, i, b), true
+	case '*':
+		return maskBlockComment(src, i, b), true
+	default:
+		return i, false
+	}
+}
+
+func checkReportCondition(allowUnchanged bool, b diffSourceBlock, lineNum int, wt bool, seen map[string]bool) bool {
+	if !wt {
+		if allowUnchanged {
+			if len(b.addedLines) > 0 && !b.addedLines[lineNum] {
+				return false
+			}
+		} else if !b.addedLines[lineNum] {
+			return false
+		}
+	}
+	return !dedupeFinding(seen, b.file, lineNum)
+}
+
+func shouldReportFinding(b diffSourceBlock, lineNum int, wt bool, seen map[string]bool) bool {
+	return checkReportCondition(true, b, lineNum, wt, seen)
+}
+
+func shouldReportAddedFinding(b diffSourceBlock, lineNum int, wt bool, seen map[string]bool) bool {
+	return checkReportCondition(false, b, lineNum, wt, seen)
+}
+
+type ruleCheckFn func(b diffSourceBlock, text string, start int, seen map[string]bool) []Finding
+
+func executeBlockRule(
+	ctx context.Context,
+	diff, root string,
+	wt bool,
+	filter func(string) bool,
+	fn ruleCheckFn,
+) []Finding {
+	var result []Finding
+	seen := make(map[string]bool)
+	if err := iterateRuleBlocks(ctx, diff, root, wt, filter, func(b diffSourceBlock, text string, start int) {
+		result = append(result, fn(b, text, start, seen)...)
+	}); err != nil {
+		return result
+	}
+	return result
+}
+
+func scanStringLiteral(s string, i int, inString *bool, stringChar *byte) (int, bool) {
+	ch := s[i]
+	if *inString {
+		if ch == '\\' {
+			return i + 1, true
+		}
+		if ch == *stringChar {
+			*inString = false
+		}
+		return i, true
+	}
+	if ch == '"' || ch == '\'' || ch == '`' {
+		*inString, *stringChar = true, ch
+		return i, true
+	}
+	return i, false
 }
 
 func extIs(ext string, values ...string) bool {
