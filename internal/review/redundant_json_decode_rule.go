@@ -38,6 +38,9 @@ var (
 	containsProfileRe = regexp.MustCompile(
 		`(?i)_containsLoadableProfile\s*\(\s*([a-zA-Z0-9_]+)\s*[,)]`,
 	)
+	nullableCastSuffixRe = regexp.MustCompile(
+		`\b(?:as|is)\s+[A-Za-z0-9_<>,\s]+$`,
+	)
 )
 
 func (r RedundantJsonDecodeRule) Check(diff string) []Finding {
@@ -93,6 +96,9 @@ func parseTernaryPairs(line string) []ternaryPair {
 				continue
 			}
 			if i > 0 && line[i-1] == '?' {
+				continue
+			}
+			if nullableCastSuffixRe.MatchString(line[:i]) {
 				continue
 			}
 			pendingQ[depth] = append(pendingQ[depth], i)
@@ -151,18 +157,12 @@ func pickReportLine(l1, l2 int, added map[int]bool) int {
 	return l1
 }
 
-func areLinesAddedOrWholeScan(block diffSourceBlock, line1, line2 int) bool {
-	if len(block.addedLines) > 0 {
-		return block.addedLines[line1] || block.addedLines[line2]
-	}
-	return true
+func areLinesAdded(block diffSourceBlock, line1, line2 int) bool {
+	return block.addedLines[line1] || block.addedLines[line2]
 }
 
-func isLineAddedOrWholeScan(block diffSourceBlock, lineNum int) bool {
-	if len(block.addedLines) > 0 {
-		return block.addedLines[lineNum]
-	}
-	return true
+func isLineAdded(block diffSourceBlock, lineNum int) bool {
+	return block.addedLines[lineNum]
 }
 
 type jsonDecodeContext struct {
@@ -252,7 +252,7 @@ func (r RedundantJsonDecodeRule) checkProfileHelpers(dCtx jsonDecodeContext, i i
 			break
 		}
 		lineNum2 := dCtx.startLine + j
-		if !areLinesAddedOrWholeScan(dCtx.block, lineNum, lineNum2) {
+		if !areLinesAdded(dCtx.block, lineNum, lineNum2) {
 			break
 		}
 		dCtx.emit(
@@ -273,7 +273,7 @@ func (r RedundantJsonDecodeRule) checkDecoderCalls(dCtx jsonDecodeContext, i int
 	}
 	lineNum := dCtx.startLine + i
 
-	if len(indices) > 1 && isLineAddedOrWholeScan(dCtx.block, lineNum) && hasSameLineDuplicate(trimmed, indices) {
+	if len(indices) > 1 && isLineAdded(dCtx.block, lineNum) && hasSameLineDuplicate(trimmed, indices) {
 		dCtx.emit(
 			lineNum,
 			"Redundant JSON decoding: same variable decoded multiple times in expression",
@@ -301,26 +301,49 @@ func (r RedundantJsonDecodeRule) checkDecoderCalls(dCtx jsonDecodeContext, i int
 	}
 }
 
-func shouldStopSequentialScan(line string, arg string) bool {
-	if strings.HasPrefix(line, "else") || strings.Contains(line, "} else") || strings.HasPrefix(line, "}") {
-		return true
+func isIdentOrDot(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+		(ch >= '0' && ch <= '9') || ch == '_' || ch == '.'
+}
+
+var assignOpPrefixes = []string{
+	"??=", "||=", "&&=", ":=", "+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=",
+}
+
+func isAssignmentOperator(s string) bool {
+	for _, p := range assignOpPrefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
 	}
-	assignPatterns := []string{
-		arg + " =",
-		arg + " :=",
-		arg + " ??=",
-		arg + "??=",
-		arg + " +=",
-		arg + " -=",
-		arg + " ||=",
-		arg + " &&=",
-	}
-	for _, p := range assignPatterns {
-		if strings.Contains(line, p) {
+	return len(s) > 0 && s[0] == '=' && (len(s) == 1 || (s[1] != '=' && s[1] != '>'))
+}
+
+func isLocalVarAssignment(line string, arg string) bool {
+	argLen := len(arg)
+	for i := 0; i+argLen <= len(line); i++ {
+		if line[i:i+argLen] != arg {
+			continue
+		}
+		if i > 0 && isIdentOrDot(line[i-1]) {
+			continue
+		}
+		if i+argLen < len(line) && isIdentOrDot(line[i+argLen]) {
+			continue
+		}
+		rest := strings.TrimLeft(line[i+argLen:], " \t")
+		if isAssignmentOperator(rest) {
 			return true
 		}
 	}
 	return false
+}
+
+func shouldStopSequentialScan(line string, arg string) bool {
+	if strings.HasPrefix(line, "else") || strings.Contains(line, "} else") || strings.HasPrefix(line, "}") {
+		return true
+	}
+	return isLocalVarAssignment(line, arg)
 }
 
 func (r RedundantJsonDecodeRule) matchNextSequentialDecode(
@@ -334,7 +357,7 @@ func (r RedundantJsonDecodeRule) matchNextSequentialDecode(
 		if line[nIdx[4]:nIdx[5]] != arg {
 			continue
 		}
-		if !areLinesAddedOrWholeScan(dCtx.block, lineNum1, lineNum2) {
+		if !areLinesAdded(dCtx.block, lineNum1, lineNum2) {
 			return true
 		}
 		dCtx.emit(

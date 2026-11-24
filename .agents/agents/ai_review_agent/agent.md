@@ -41,8 +41,8 @@ in `.jules/`, verify detection loop, and repair the target repository.
   Resolve the base branch and upstream repository, fetch the needed history, and mandate a non-empty `MERGE_BASE` SHA
   before invoking `review`:
   ```bash
-  BASE_REPO=$(gh pr view "$PR_NUMBER" --json baseRefName,baseRepository \
-    --jq '.baseRepository.owner.login + "/" + .baseRepository.name' 2>/dev/null || echo "")
+  BASE_REPO=$(gh pr view "$PR_NUMBER" --json url \
+    --jq '.url | split("/") | .[3] + "/" + .[4]' 2>/dev/null || echo "")
   BASE_REF=$(gh pr view "$PR_NUMBER" --json baseRefName --jq '.baseRefName' 2>/dev/null || echo "<base-ref>")
   if [ -n "$BASE_REPO" ]; then
     git fetch "https://github.com/${BASE_REPO}.git" "${BASE_REF}"

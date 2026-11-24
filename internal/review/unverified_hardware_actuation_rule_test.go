@@ -357,6 +357,53 @@ func TestUnverifiedHardwareActuationRule(t *testing.T) {
 		}
 	})
 
+	t.Run("flags hardware output controls with optional verification nested under AND", func(t *testing.T) {
+		diff := `diff --git a/lib/physical_serial_bridge.dart b/lib/physical_serial_bridge.dart
+--- a/lib/physical_serial_bridge.dart
++++ b/lib/physical_serial_bridge.dart
+@@ -100,5 +100,5 @@
++  ElevatedButton(
++    onPressed: isConnected && (isProtocolVerified || isReconnecting)
++        ? () => bridge.send('LED:ON')
++        : null,
++  )
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for optional verification nested under AND, got 0")
+		}
+	})
+
+	t.Run("flags stop confirmation guarded by nullable boolean ACK failure comparison", func(t *testing.T) {
+		diff := `diff --git a/lib/physical_serial_bridge.dart b/lib/physical_serial_bridge.dart
+--- a/lib/physical_serial_bridge.dart
++++ b/lib/physical_serial_bridge.dart
+@@ -525,5 +525,5 @@
++    if (ack != null && !ack) {
++      _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for stop confirmation on nullable ACK failure (!ack), got 0")
+		}
+	})
+
+	t.Run("allows stop confirmation guarded by ACK combined with deduplication check", func(t *testing.T) {
+		diff := `diff --git a/lib/physical_serial_bridge.dart b/lib/physical_serial_bridge.dart
+--- a/lib/physical_serial_bridge.dart
++++ b/lib/physical_serial_bridge.dart
+@@ -525,5 +525,5 @@
++    if (ack.isSuccess && !confirmed) {
++      _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for ACK combined with deduplication check, got %d", len(findings))
+		}
+	})
+
 	t.Run("ignores test files", func(t *testing.T) {
 		diff := `diff --git a/test/widget/hardware_control_test.dart b/test/widget/hardware_control_test.dart
 --- a/test/widget/hardware_control_test.dart

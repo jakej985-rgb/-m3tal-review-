@@ -140,4 +140,45 @@ func TestRedundantJsonDecodeRule(t *testing.T) {
 			t.Fatalf("expected 0 findings for unchanged duplicate decode in context, got %d", len(findings))
 		}
 	})
+
+	t.Run("does not flag mutually exclusive ternary decodes with nullable cast", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,1 +80,1 @@
++  return useMap ? jsonDecode(raw) as Map<String, dynamic>? : jsonDecode(raw);
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for ternary with nullable cast in first arm, got %d", len(findings))
+		}
+	})
+
+	t.Run("flags sequential decode when write targets same-named property rather than local", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,3 +80,3 @@
++  final a = jsonDecode(raw);
++  cache.raw ??= fallback;
++  final b = jsonDecode(raw);
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for duplicate decode across member write, got 0")
+		}
+	})
+
+	t.Run("does not flag untouched decodes in deletion-only diff", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -10,3 +10,0 @@
+-import 'unused_import.dart';
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for deletion-only diff, got %d", len(findings))
+		}
+	})
 }

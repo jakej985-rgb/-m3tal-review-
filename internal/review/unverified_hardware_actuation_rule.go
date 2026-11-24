@@ -32,10 +32,23 @@ var (
 		`(?i)(?:stopConfirmed\s*:\s*(?:true|_protocolNegotiated|confirmed)|pin13Led\s*:\s*confirmed\s*\?\s*false\s*:)`,
 	)
 
-	negativeAckCheckRe = regexp.MustCompile(
-		`(?i)(?:!\s*(?:[a-zA-Z0-9_]+\.)?(?:isSuccess|success|isAck|ok|confirmed)\b|` +
-			`\b(?:[a-zA-Z0-9_]+\.)?(?:isSuccess|success|isAck|ok|confirmed)\s*(?:==\s*false|!=\s*true)|` +
-			`!=\s*(?:PacketType\.(?:ack|pong|stopAck)|AckStatus\.(?:success|confirmed)|['"](?:ack|pong)['"]|stopAck|ack)\b)`,
+	negativeAckPredRe = regexp.MustCompile(
+		`(?i)(?:!\s*(?:[a-zA-Z0-9_]+\.)?(?:issuccess|success|isack|ok)\b|` +
+			`\b(?:[a-zA-Z0-9_]+\.)?(?:issuccess|success|isack|ok)\s*(?:==\s*false|!=\s*true)|` +
+			`^!\s*(?:ack|reply|packet|stopack)\b|` +
+			`\b(?:ack|reply|packet|stopack)\s*(?:==\s*false|!=\s*true|==\s*null|==\s*nil)\b|` +
+			`\bis!\s+(?:ack|stopack)\b|` +
+			`!=\s*(?:packettype\.(?:ack|pong|stopack)|ackstatus\.(?:success|confirmed)|['"](?:ack|pong)['"]|stopack|ack)\b)`,
+	)
+
+	affirmativeAckPredRe = regexp.MustCompile(
+		`(?i)(?:\b(?:[a-zA-Z0-9_]+\.)?(?:issuccess|success|isack)\b|` +
+			`\b(?:ack|reply|packet|stopack)\s*(?:==\s*true|!=\s*false|!=\s*null|!=\s*nil)\b|` +
+			`^(?:ack|reply|stopack)$|` +
+			`\bis\s+(?:ack|stopack)\b|` +
+			`==\s*(?:packettype\.(?:ack|pong|stopack)|ackstatus\.(?:success|confirmed)|['"](?:ack|pong)['"]|stopack)\b|` +
+			`\b(?:packettype\.ack|packettype\.pong|ackstatus\.success|ackstatus\.confirmed)\b|` +
+			`\b(?:ack:|pong:|pin13:low|led:0|firstmatch)\b)`,
 	)
 )
 
@@ -50,11 +63,96 @@ func stripLineComment(line string) string {
 	return line
 }
 
+func adjustTopLevelDepth(ch byte, depth *int) {
+	switch ch {
+	case '(', '[', '{':
+		*depth = *depth + 1
+	case ')', ']', '}':
+		if *depth > 0 {
+			*depth = *depth - 1
+		}
+	}
+}
+
+func isQuoteByte(ch byte) bool {
+	return ch == '"' || ch == '\'' || ch == '`'
+}
+
+func splitTopLevel(s string, op string) []string {
+	var parts []string
+	parenDepth := 0
+	inString := false
+	var stringChar byte
+	start := 0
+	opLen := len(op)
+
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if inString {
+			if ch == '\\' {
+				i = i + 1
+			} else if ch == stringChar {
+				inString = false
+			}
+			continue
+		}
+		if isQuoteByte(ch) {
+			inString = true
+			stringChar = ch
+			continue
+		}
+		adjustTopLevelDepth(ch, &parenDepth)
+		if parenDepth == 0 && i+opLen <= len(s) && s[i:i+opLen] == op {
+			parts = append(parts, s[start:i])
+			start = i + opLen
+			i = start - 1
+		}
+	}
+	if start > 0 {
+		parts = append(parts, s[start:])
+		return parts
+	}
+	return nil
+}
+
+func guaranteesAffirmativeAck(cond string) bool {
+	cond = unwrapOuterParens(strings.TrimSpace(cond))
+	if branches := splitTopLevel(cond, "||"); len(branches) > 0 {
+		for _, b := range branches {
+			if !guaranteesAffirmativeAck(b) {
+				return false
+			}
+		}
+		return true
+	}
+	if terms := splitTopLevel(cond, "&&"); len(terms) > 0 {
+		hasAffirmative := false
+		for _, t := range terms {
+			trimmed := strings.TrimSpace(t)
+			if negativeAckPredRe.MatchString(trimmed) {
+				return false
+			}
+			if affirmativeAckPredRe.MatchString(trimmed) {
+				hasAffirmative = true
+			}
+		}
+		return hasAffirmative
+	}
+	leaf := strings.TrimSpace(cond)
+	if negativeAckPredRe.MatchString(leaf) {
+		return false
+	}
+	return affirmativeAckPredRe.MatchString(leaf)
+}
+
 func isAckGuardHeader(header string) bool {
 	if !strings.HasPrefix(header, "if") && !strings.Contains(header, "if (") &&
 		!strings.Contains(header, "if(") && !strings.Contains(header, "onack") &&
 		!strings.Contains(header, "onstopack") {
 		return false
+	}
+	if strings.Contains(header, "onack") || strings.Contains(header, "onstopack") {
+		return true
 	}
 	if strings.Contains(header, "else") {
 		idx := strings.Index(header, "else if")
@@ -69,36 +167,15 @@ func isAckGuardHeader(header string) bool {
 		return false
 	}
 
-	// Reject negative checks that confirm non-acknowledgment
-	if negativeAckCheckRe.MatchString(header) ||
-		strings.Contains(header, "!= packettype.ack") ||
-		strings.Contains(header, "!= packettype.pong") ||
-		strings.Contains(header, "!= stopack") ||
-		strings.Contains(header, "!= ack") {
-		return false
+	cond := header
+	if openParen := strings.Index(header, "("); openParen != -1 {
+		if closeParen := strings.LastIndex(header, ")"); closeParen > openParen {
+			cond = header[openParen+1 : closeParen]
+		}
+	} else if strings.HasPrefix(header, "if ") {
+		cond = strings.TrimPrefix(header, "if ")
 	}
-
-	return strings.Contains(header, ".issuccess") ||
-		strings.Contains(header, ".success") ||
-		strings.Contains(header, ".isack") ||
-		strings.Contains(header, "ack == true") ||
-		strings.Contains(header, "ack != null") ||
-		strings.Contains(header, "ack != nil") ||
-		strings.Contains(header, "ack.ok") ||
-		strings.Contains(header, "ack:") ||
-		strings.Contains(header, "ack_") ||
-		strings.Contains(header, "pong:") ||
-		strings.Contains(header, "pin13:low") ||
-		strings.Contains(header, "led:0") ||
-		strings.Contains(header, "packettype.ack") ||
-		strings.Contains(header, "is stopack") ||
-		strings.Contains(header, "is ack") ||
-		strings.Contains(header, "ackstatus.success") ||
-		strings.Contains(header, "ackstatus.confirmed") ||
-		strings.Contains(header, "onack") ||
-		strings.Contains(header, "onstopack") ||
-		strings.Contains(header, "led != null") ||
-		strings.Contains(header, "firstmatch")
+	return guaranteesAffirmativeAck(cond)
 }
 
 func isAckSwitchCaseLabel(lowerCase string) bool {
@@ -250,41 +327,33 @@ func scanLineBraces(lineScan string, braceDepth *int, inBlock *bool) {
 }
 
 func isVerificationMandatory(cond string) bool {
-	cond = unwrapOuterParens(cond)
-	parenDepth := 0
-	start := 0
-	var branches []string
-
-	for i := 0; i < len(cond); i++ {
-		if cond[i] == '(' {
-			parenDepth++
-		} else if cond[i] == ')' {
-			if parenDepth > 0 {
-				parenDepth--
+	cond = unwrapOuterParens(strings.TrimSpace(cond))
+	if branches := splitTopLevel(cond, "||"); len(branches) > 0 {
+		for _, b := range branches {
+			if !isVerificationMandatory(b) {
+				return false
 			}
-		} else if parenDepth == 0 && i+1 < len(cond) && cond[i] == '|' && cond[i+1] == '|' {
-			branches = append(branches, cond[start:i])
-			start = i + 2
-			i++
 		}
+		return true
 	}
-	branches = append(branches, cond[start:])
-
-	hasVerificationWord := func(s string) bool {
-		lower := strings.ToLower(s)
-		return strings.Contains(lower, "protocol") ||
-			strings.Contains(lower, "verified") ||
-			strings.Contains(lower, "handshake") ||
-			strings.Contains(lower, "authorized") ||
-			strings.Contains(lower, "ready")
-	}
-
-	for _, branch := range branches {
-		if !hasVerificationWord(branch) {
-			return false
+	if terms := splitTopLevel(cond, "&&"); len(terms) > 0 {
+		for _, t := range terms {
+			if isVerificationMandatory(t) {
+				return true
+			}
 		}
+		return false
 	}
-	return true
+	leaf := strings.TrimSpace(cond)
+	if strings.HasPrefix(leaf, "!") || strings.Contains(leaf, "== false") || strings.Contains(leaf, "!= true") {
+		return false
+	}
+	lower := strings.ToLower(leaf)
+	return strings.Contains(lower, "protocol") ||
+		strings.Contains(lower, "verified") ||
+		strings.Contains(lower, "handshake") ||
+		strings.Contains(lower, "authorized") ||
+		strings.Contains(lower, "ready")
 }
 
 func checkUnverifiedOutputControl(
