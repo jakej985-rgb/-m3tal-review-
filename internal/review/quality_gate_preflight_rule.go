@@ -150,8 +150,11 @@ func findShellRunnerLines(text string, start int) []int {
 	var lines []int
 	for i, raw := range strings.Split(text, "\n") {
 		segs := splitShellCommands(stripShellCommentAndQuotes(raw))
-		if slices.ContainsFunc(segs, isPreflightCommand) {
-			break
+		if j := slices.IndexFunc(segs, isPreflightCommand); j != -1 {
+			if slices.ContainsFunc(segs[:j], isPythonRunnerCommand) {
+				lines = append(lines, start+i)
+			}
+			return lines
 		}
 		if slices.ContainsFunc(segs, isPythonRunnerCommand) {
 			lines = append(lines, start+i)

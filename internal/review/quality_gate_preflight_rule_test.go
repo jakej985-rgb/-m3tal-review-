@@ -170,6 +170,12 @@ new file mode 100755
 		}
 	})
 
+	t.Run("flags runner before same-line preflight", func(t *testing.T) {
+		if findings := rule.Check(gateDiff("pytest && python3.12 -c 'import yaml'")); len(findings) == 0 {
+			t.Fatalf("expected finding for runner preceding same-line preflight, got 0")
+		}
+	})
+
 	t.Run("commented preflight does not count", func(t *testing.T) {
 		if findings := rule.Check(gateDiff("# python3 -c 'import pytest'\n+pytest")); len(findings) == 0 {
 			t.Fatalf("expected finding when preflight is only a comment, got 0")

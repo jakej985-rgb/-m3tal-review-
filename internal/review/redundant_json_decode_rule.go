@@ -396,25 +396,46 @@ func keepTemplateInterpolations(line string, open int, b *strings.Builder) int {
 			b.WriteByte(' ')
 			return i
 		case line[i] == '$' && i+1 < len(line) && line[i+1] == '{':
+			end := findInterpolationEnd(line, i+2)
 			b.WriteByte(' ')
-			depth := 1
-			j := i + 2
-			for ; j < len(line) && depth > 0; j++ {
-				if line[j] == '{' {
-					depth++
-				} else if line[j] == '}' {
-					depth--
-					if depth == 0 {
-						break
-					}
-				}
-				b.WriteByte(line[j])
-			}
+			// Re-sanitize the expression so strings/comments inside it stay masked.
+			b.WriteString(stripStringsAndComments(line[i+2 : end]))
 			b.WriteByte(' ')
-			i = j + 1
+			i = end + 1
 			continue
 		}
 		i++
+	}
+	return len(line)
+}
+
+// findInterpolationEnd returns the index of the `}` closing a `${` expression whose body
+// starts at from, counting only structural braces (not those in strings or comments).
+func findInterpolationEnd(line string, from int) int {
+	depth := 1
+	inString := false
+	var stringChar byte
+	for j := from; j < len(line); j++ {
+		if nextJ, ok := scanStringLiteral(line, j, &inString, &stringChar); ok {
+			j = nextJ
+			continue
+		}
+		if line[j] == '/' && j+1 < len(line) && line[j+1] == '*' {
+			if end := strings.Index(line[j+2:], "*/"); end != -1 {
+				j = j + 2 + end + 1
+				continue
+			}
+			return len(line)
+		}
+		switch line[j] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return j
+			}
+		}
 	}
 	return len(line)
 }

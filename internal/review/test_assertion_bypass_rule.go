@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"math"
 	"regexp"
 	"strings"
 )
@@ -61,8 +62,10 @@ func isDeletedTestAssertion(line string) bool {
 }
 
 // testCaseBounds returns the [first, last] new-side line numbers of the test case enclosing lines[idx].
+// When no boundary is visible in the block (e.g. truncated patch context), that side is
+// treated as unknown and left open rather than clamped to the block edge.
 func testCaseBounds(lines []string, idx, start int) (int, int) {
-	first, last := start, start+len(lines)
+	first, last := math.MinInt, math.MaxInt
 	for k := idx; k >= 0; k-- {
 		if testCaseStartRe.MatchString(lines[k]) {
 			first = start + k

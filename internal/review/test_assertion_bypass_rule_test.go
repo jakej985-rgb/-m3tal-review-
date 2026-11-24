@@ -88,6 +88,27 @@ new file mode 100644
 		}
 	})
 
+	t.Run("flags unchanged guard when assertion is deleted in an earlier hunk of the same test", func(t *testing.T) {
+		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
+			"--- a/test/unit/gating_test.dart\n" +
+			"+++ b/test/unit/gating_test.dart\n" +
+			"@@ -1,4 +1,3 @@\n" +
+			"   test('long', () {\n" +
+			"     final result = run();\n" +
+			"-    expect(result, isNotNull);\n" +
+			"     step1();\n" +
+			"@@ -40,4 +39,4 @@\n" +
+			"     " + "if (result != null) {\n" +
+			"-      expect(result.passed, isFalse);\n" +
+			"+      expect(result.passed, isTrue);\n" +
+			"     }\n" +
+			"   });\n"
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for guard after cross-hunk assertion deletion, got 0")
+		}
+	})
+
 	t.Run("does not flag guard in another test when assertion is replaced elsewhere", func(t *testing.T) {
 		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
 			"--- a/test/unit/gating_test.dart\n" +

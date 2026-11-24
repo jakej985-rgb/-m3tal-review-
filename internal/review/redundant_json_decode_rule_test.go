@@ -356,6 +356,18 @@ func TestRedundantJsonDecodeRule(t *testing.T) {
 		}
 	})
 
+	t.Run("ignores decoder text in string inside interpolation", func(t *testing.T) {
+		diff := "diff --git a/web/route_loader.js b/web/route_loader.js\n" +
+			"--- a/web/route_loader.js\n" +
+			"+++ b/web/route_loader.js\n" +
+			"@@ -80,1 +80,1 @@\n" +
+			"+  return `${label('JSON.parse(raw)')}: ${JSON.parse(raw).id}`;\n"
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for decoder text in interpolated string, got %d", len(findings))
+		}
+	})
+
 	t.Run("ignores decoder text in template literal body", func(t *testing.T) {
 		diff := "diff --git a/web/route_loader.js b/web/route_loader.js\n" +
 			"--- a/web/route_loader.js\n" +
