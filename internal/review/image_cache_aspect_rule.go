@@ -69,8 +69,20 @@ func (r ImageCacheAspectRule) CheckContext(ctx context.Context, diff string) []F
 
 			if hasCacheWidth && hasCacheHeight {
 				lineNum := startLine + strings.Count(scanText[:m[0]], "\n")
-				if len(block.addedLines) > 0 && !block.addedLines[lineNum] {
-					continue
+				if len(block.addedLines) > 0 {
+					if !matchTouchesAdded(block, scanText, m[0], chunkEnd) {
+						continue
+					}
+					if !block.addedLines[lineNum] {
+						first := lineAtOffset(startLine, scanText, m[0])
+						last := lineAtOffset(startLine, scanText, chunkEnd)
+						for l := first; l <= last; l++ {
+							if block.addedLines[l] {
+								lineNum = l
+								break
+							}
+						}
+					}
 				}
 				key := block.file + ":" + strconv.Itoa(lineNum)
 				if !seen[key] {

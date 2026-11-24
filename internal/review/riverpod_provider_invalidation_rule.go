@@ -32,7 +32,7 @@ var (
 	repoMutationCallRe = regexp.MustCompile(`\b_?(?:\w*repo|\w*repository|\w*datasource)\s*\.\s*(?:save\w*|delete\w*|create\w*|remove\w*)\s*\(`)
 
 	// providerInvalidateCallRe detects cache invalidation or refresh of providers on ref
-	providerInvalidateCallRe = regexp.MustCompile(`\b_?ref\s*\.\s*(?:invalidate|refresh)\s*\(\s*([a-zA-Z0-9_]+)`)
+	providerInvalidateCallRe = regexp.MustCompile(`\b_?ref\s*\.{1,2}\s*(?:invalidate|refresh)\s*\(\s*([a-zA-Z0-9_]+)`)
 )
 
 func extractMethodBody(src string, braceStart int) string {
@@ -134,8 +134,21 @@ func (r RiverpodProviderInvalidationRule) CheckContext(ctx context.Context, diff
 			afterMutation := body[loc[1]:]
 			if !providerInvalidateCallRe.MatchString(afterMutation) {
 				lineNum := startLine + strings.Count(scanText[:m[0]], "\n")
-				if len(block.addedLines) > 0 && !block.addedLines[lineNum] {
-					continue
+				methodEnd := braceStart + len(body)
+				if len(block.addedLines) > 0 {
+					if !matchTouchesAdded(block, scanText, m[0], methodEnd) {
+						continue
+					}
+					if !block.addedLines[lineNum] {
+						first := lineAtOffset(startLine, scanText, m[0])
+						last := lineAtOffset(startLine, scanText, methodEnd)
+						for l := first; l <= last; l++ {
+							if block.addedLines[l] {
+								lineNum = l
+								break
+							}
+						}
+					}
 				}
 				key := block.file + ":" + strconv.Itoa(lineNum)
 				if !seen[key] {

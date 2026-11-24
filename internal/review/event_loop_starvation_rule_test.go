@@ -57,4 +57,23 @@ new file mode 100644
 			t.Fatalf("expected 0 findings, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags wrapping unchanged microtask yield in newly added loop", func(t *testing.T) {
+		diff := `diff --git a/lib/data/engine/batch_processor.dart b/lib/data/engine/batch_processor.dart
+--- a/lib/data/engine/batch_processor.dart
++++ b/lib/data/engine/batch_processor.dart
+@@ -1,5 +1,7 @@
+ class BatchProcessor {
+   Future<void> run() async {
++    while (true) {
+       await Future.microtask(() {});
++    }
+   }
+ }
+`
+		findings := rule.Check(diff)
+		if len(findings) != 1 {
+			t.Fatalf("expected 1 finding when unchanged microtask is wrapped in new loop, got %d", len(findings))
+		}
+	})
 }

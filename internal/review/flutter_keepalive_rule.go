@@ -110,8 +110,21 @@ func (r FlutterKeepAliveRule) CheckContext(ctx context.Context, diff string) []F
 			}
 
 			lineNum := startLine + strings.Count(scanText[:m[0]], "\n")
-			if len(block.addedLines) > 0 && !block.addedLines[lineNum] {
-				continue
+			classEnd := braceStart + len(classBody)
+			if len(block.addedLines) > 0 {
+				if !matchTouchesAdded(block, scanText, m[0], classEnd) {
+					continue
+				}
+				if !block.addedLines[lineNum] {
+					first := lineAtOffset(startLine, scanText, m[0])
+					last := lineAtOffset(startLine, scanText, classEnd)
+					for l := first; l <= last; l++ {
+						if block.addedLines[l] {
+							lineNum = l
+							break
+						}
+					}
+				}
 			}
 
 			key := block.file + ":" + strconv.Itoa(lineNum)

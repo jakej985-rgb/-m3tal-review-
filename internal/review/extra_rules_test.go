@@ -833,6 +833,12 @@ func TestNewRulesDetections(t *testing.T) {
 		if hasFinding(r.Check(extraDiff("main.go", disjunctWithAndCode)), "negative-amount-bypass") {
 			t.Errorf("expected negative-amount-bypass to not flag when valid lower bound is in separate || branch from &&")
 		}
+
+		// Vulnerable: lower bound inside nested disjunction conjoined with outer &&
+		nestedDisjunctionWithAndCode := "package main\nfunc f(req Request, acc *Account, limited, expired bool) {\n\tif limited && (expired || req.Amount <= 0) {\n\t\treturn\n\t}\n\tif req.Amount > acc.Balance {\n\t\treturn\n\t}\n\tacc.Balance -= req.Amount\n}\n"
+		if !hasFinding(r.Check(extraDiff("main.go", nestedDisjunctionWithAndCode)), "negative-amount-bypass") {
+			t.Errorf("expected negative-amount-bypass to flag debit when lower bound is in nested || conjoined with outer &&")
+		}
 	})
 
 	t.Run("idor-unverified-access", func(t *testing.T) {

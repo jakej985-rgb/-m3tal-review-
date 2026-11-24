@@ -56,11 +56,6 @@ func (r EventLoopStarvationRule) CheckContext(ctx context.Context, diff string) 
 
 		lines := strings.Split(scanText, "\n")
 		for i, line := range lines {
-			lineNum := startLine + i
-			if len(block.addedLines) > 0 && !block.addedLines[lineNum] {
-				continue
-			}
-
 			if microtaskYieldRe.MatchString(line) {
 				// Check surrounding context (previous 15 lines and next 15 lines) for loop or batch context
 				startIdx := i - 15
@@ -74,6 +69,25 @@ func (r EventLoopStarvationRule) CheckContext(ctx context.Context, diff string) 
 				contextSnippet := strings.Join(lines[startIdx:endIdx], "\n")
 
 				if loopOrBatchContextRe.MatchString(contextSnippet) {
+					lineNum := startLine + i
+					if len(block.addedLines) > 0 {
+						touchesAdded := false
+						firstAdded := -1
+						for l := startLine + startIdx; l < startLine+endIdx; l++ {
+							if block.addedLines[l] {
+								touchesAdded = true
+								if firstAdded == -1 {
+									firstAdded = l
+								}
+							}
+						}
+						if !touchesAdded {
+							continue
+						}
+						if !block.addedLines[lineNum] && firstAdded != -1 {
+							lineNum = firstAdded
+						}
+					}
 					key := block.file + ":" + strconv.Itoa(lineNum)
 					if !seen[key] {
 						seen[key] = true

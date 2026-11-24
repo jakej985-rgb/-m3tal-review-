@@ -1161,3 +1161,69 @@ new file mode 100644
 		t.Fatalf("expected 1 finding for ref.read guarded only by route context, got %d: %+v", len(findings), findings)
 	}
 }
+
+func TestAsyncGapRule_OneLineMountedGuardDoesNotProtectFollowingLines(t *testing.T) {
+	diff := `diff --git a/lib/presentation/one_line_guard_screen.dart b/lib/presentation/one_line_guard_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/one_line_guard_screen.dart
+@@ -0,0 +1,14 @@
++class _OneLineGuardState extends State<OneLineGuardScreen> {
++  Future<void> reload() async {
++    await api.fetch();
++    if (mounted) { logReady(); }
++    setState(() {});
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding because single-line mounted guard closes on same line, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_CallbackAwaitDoesNotLeakIntoSiblingHandler(t *testing.T) {
+	diff := `diff --git a/lib/presentation/button_screen.dart b/lib/presentation/button_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/button_screen.dart
+@@ -0,0 +1,18 @@
++class _ButtonScreenState extends State<ButtonScreen> {
++  @override
++  Widget build(BuildContext context) {
++    return ElevatedButton(
++      onPressed: () async {
++        await reload();
++      },
++      onLongPress: () {
++        setState(() {});
++      },
++    );
++  }
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 0 {
+		t.Fatalf("expected 0 findings because sibling callback onLongPress does not cross onPressed's await, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestAsyncGapRule_AwaitedArrowExpressionDoesNotHideLaterSinks(t *testing.T) {
+	diff := `diff --git a/lib/presentation/arrow_screen.dart b/lib/presentation/arrow_screen.dart
+new file mode 100644
+--- /dev/null
++++ b/lib/presentation/arrow_screen.dart
+@@ -0,0 +1,12 @@
++computeTask(BuildContext context) async {
++  await Future.microtask(() => compute());
++  Navigator.pop(context);
++}
++`
+	rule := AsyncGapRule{}
+	findings := rule.Check(diff)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for Navigator.pop across await with arrow expression, got %d: %+v", len(findings), findings)
+	}
+}
