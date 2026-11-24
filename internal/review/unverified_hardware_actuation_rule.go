@@ -42,13 +42,17 @@ var (
 	)
 
 	affirmativeAckPredRe = regexp.MustCompile(
-		`(?i)(?:\b(?:[a-zA-Z0-9_]+\.)?(?:issuccess|success|isack|ok)\b|\back\.ok\b|` +
+		`(?i)(?:\b(?:[a-zA-Z0-9_]+\.)?(?:issuccess|success|isack)\b|\back\.ok\b|` +
 			`\b(?:ack|reply|packet|stopack)\s*(?:==\s*true|!=\s*null|!=\s*nil)\b|` +
 			`^(?:ack|reply|stopack)$|` +
 			`\bis\s+(?:ack|stopack)\b|` +
 			`==\s*(?:packettype\.(?:ack|pong|stopack)|ackstatus\.(?:success|confirmed)|['"](?:ack|pong)['"]|stopack)\b|` +
 			`\b(?:packettype\.ack|packettype\.pong|ackstatus\.success|ackstatus\.confirmed)\b|` +
 			`\b(?:ack:|pong:|pin13:low|led:0|firstmatch)\b)`,
+	)
+
+	goAffirmativeAckPredRe = regexp.MustCompile(
+		`(?i)\b(?:ack|reply|packet|stopack)\s*!=\s*false\b`,
 	)
 )
 
@@ -115,11 +119,11 @@ func splitTopLevel(s string, op string) []string {
 	return nil
 }
 
-func guaranteesAffirmativeAck(cond string) bool {
+func guaranteesAffirmativeAck(cond string, isGo bool) bool {
 	cond = unwrapOuterParens(strings.TrimSpace(cond))
 	if branches := splitTopLevel(cond, "||"); len(branches) > 0 {
 		for _, b := range branches {
-			if !guaranteesAffirmativeAck(b) {
+			if !guaranteesAffirmativeAck(b, isGo) {
 				return false
 			}
 		}
@@ -132,7 +136,7 @@ func guaranteesAffirmativeAck(cond string) bool {
 			if negativeAckPredRe.MatchString(trimmed) {
 				return false
 			}
-			if affirmativeAckPredRe.MatchString(trimmed) {
+			if guaranteesAffirmativeAck(trimmed, isGo) {
 				hasAffirmative = true
 			}
 		}
@@ -142,10 +146,67 @@ func guaranteesAffirmativeAck(cond string) bool {
 	if negativeAckPredRe.MatchString(leaf) {
 		return false
 	}
-	return affirmativeAckPredRe.MatchString(leaf)
+	if affirmativeAckPredRe.MatchString(leaf) {
+		return true
+	}
+	return isGo && goAffirmativeAckPredRe.MatchString(leaf)
 }
 
-func isAckGuardHeader(header string) bool {
+func isVarChecked(cond string, varName string) (bool, bool) {
+	varLen := len(varName)
+	for i := 0; i+varLen <= len(cond); i++ {
+		if cond[i:i+varLen] != varName {
+			continue
+		}
+		if i > 0 && isIdentOrDot(cond[i-1]) {
+			continue
+		}
+		if i+varLen < len(cond) && isIdentOrDot(cond[i+varLen]) {
+			continue
+		}
+		prefix := strings.TrimRight(cond[:i], " \t")
+		if strings.HasSuffix(prefix, "!") {
+			return false, true
+		}
+		rest := strings.TrimLeft(cond[i+varLen:], " \t")
+		if strings.HasPrefix(rest, "== false") || strings.HasPrefix(rest, "==false") ||
+			strings.HasPrefix(rest, "!= true") || strings.HasPrefix(rest, "!=true") {
+			return false, true
+		}
+		if strings.HasPrefix(rest, "== true") || strings.HasPrefix(rest, "==true") ||
+			strings.HasPrefix(rest, "!= false") || strings.HasPrefix(rest, "!=false") {
+			return true, false
+		}
+		return true, false
+	}
+	return false, false
+}
+
+func checkGoInitializer(cond string, isGo bool) (bool, bool) {
+	semiParts := splitTopLevel(cond, ";")
+	if len(semiParts) <= 1 {
+		return false, false
+	}
+	initStmt := strings.TrimSpace(semiParts[0])
+	controllingCond := strings.TrimSpace(semiParts[len(semiParts)-1])
+	idx := strings.Index(initStmt, ":=")
+	if idx != -1 {
+		varName := strings.TrimSpace(initStmt[:idx])
+		expr := strings.TrimSpace(initStmt[idx+2:])
+		if guaranteesAffirmativeAck(expr, isGo) {
+			isPos, isNeg := isVarChecked(controllingCond, varName)
+			if isNeg {
+				return true, false
+			}
+			if isPos {
+				return true, true
+			}
+		}
+	}
+	return true, guaranteesAffirmativeAck(controllingCond, isGo)
+}
+
+func isAckGuardHeader(header string, isGo bool) bool {
 	if !strings.HasPrefix(header, "if") && !strings.Contains(header, "if (") &&
 		!strings.Contains(header, "if(") && !strings.Contains(header, "onack") &&
 		!strings.Contains(header, "onstopack") {
@@ -176,7 +237,10 @@ func isAckGuardHeader(header string) bool {
 	cond = strings.TrimSpace(cond)
 	cond = strings.TrimSuffix(cond, "{")
 	cond = unwrapOuterParens(strings.TrimSpace(cond))
-	return guaranteesAffirmativeAck(cond)
+	if hasInit, ok := checkGoInitializer(cond, isGo); hasInit {
+		return ok
+	}
+	return guaranteesAffirmativeAck(cond, isGo)
 }
 
 func isAckSwitchCaseLabel(lowerCase string) bool {
@@ -209,10 +273,10 @@ func collectOpeningBraceHeader(lines []string, k int, trimmed string) string {
 	return header
 }
 
-func handleEnclosingBrace(lines []string, k int, trimmed string) (isAck bool, stop bool) {
+func handleEnclosingBrace(lines []string, k int, trimmed string, isGo bool) (isAck bool, stop bool) {
 	header := collectOpeningBraceHeader(lines, k, trimmed)
 	lowerHeader := strings.ToLower(header)
-	if isAckGuardHeader(lowerHeader) {
+	if isAckGuardHeader(lowerHeader, isGo) {
 		return true, false
 	}
 	if strings.Contains(lowerHeader, "void ") ||
@@ -224,7 +288,7 @@ func handleEnclosingBrace(lines []string, k int, trimmed string) (isAck bool, st
 	return false, false
 }
 
-func isGuardedByAck(lines []string, index int) bool {
+func isGuardedByAck(lines []string, index int, isGo bool) bool {
 	depth := 0
 	inNonAckCase := false
 
@@ -259,7 +323,7 @@ func isGuardedByAck(lines []string, index int) bool {
 				continue
 			}
 			inNonAckCase = false
-			isAck, stop := handleEnclosingBrace(lines, k, trimmed)
+			isAck, stop := handleEnclosingBrace(lines, k, trimmed, isGo)
 			if isAck {
 				return true
 			}
@@ -460,6 +524,7 @@ func (r UnverifiedHardwareActuationRule) CheckContext(ctx context.Context, diff 
 		}
 
 		lines := strings.Split(scanText, "\n")
+		isGo := strings.HasSuffix(block.file, ".go")
 		for i, line := range lines {
 			lineNum := startLine + i
 			trimmed := strings.TrimSpace(line)
@@ -468,7 +533,7 @@ func (r UnverifiedHardwareActuationRule) CheckContext(ctx context.Context, diff 
 				continue
 			}
 
-			if stopAssumedConfirmedRe.MatchString(trimmed) && !isGuardedByAck(lines, i) {
+			if stopAssumedConfirmedRe.MatchString(trimmed) && !isGuardedByAck(lines, i, isGo) {
 				if block.addedLines[lineNum] || r.workingTree {
 					key := block.file + ":" + strconv.Itoa(lineNum) + ":stop"
 					if !seen[key] {

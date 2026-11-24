@@ -228,4 +228,49 @@ func TestRedundantJsonDecodeRule(t *testing.T) {
 			t.Fatalf("expected finding for duplicate decode across string containing raw=, got 0")
 		}
 	})
+
+	t.Run("flags sequential decode across this field assignment when parameter shadows field", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,5 +80,5 @@
++  void process(String raw) {
++    final before = jsonDecode(raw);
++    this.raw = fallback;
++    final after = jsonDecode(raw);
++  }
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for duplicate decode when parameter shadows this.raw, got 0")
+		}
+	})
+
+	t.Run("does not flag opposing ternary arms with nullable cast followed by null-coalescing", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -50,1 +50,1 @@
++  return useString ? jsonDecode(raw) as String? ?? '' : jsonDecode(raw);
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for Dart ternary with cast and null-coalescing, got %d", len(findings))
+		}
+	})
+
+	t.Run("does not flag sequential decode across payload assignment with preceding quoted URL", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,5 +80,5 @@
++  final before = jsonDecode(raw);
++  if (url.startsWith("https://")) raw = fallback;
++  final after = jsonDecode(raw);
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings when payload is assigned after quoted URL, got %d", len(findings))
+		}
+	})
 }

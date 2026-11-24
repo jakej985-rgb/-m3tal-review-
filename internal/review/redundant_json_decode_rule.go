@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -40,6 +41,15 @@ var (
 	)
 	nullableCastSuffixRe = regexp.MustCompile(
 		`\b(?:as|is)\s+[A-Za-z0-9_<>,\s]+$`,
+	)
+	paramDeclExtractRe = regexp.MustCompile(
+		`(?:\(|,\s*)(?:[a-zA-Z0-9_<>?]+\s+)([a-zA-Z0-9_]+)\s*[,)]`,
+	)
+	funcHeaderPatternRe = regexp.MustCompile(
+		`\(([^)]*)\)\s*(?:async\s*)?[{=]`,
+	)
+	localDeclExtractRe = regexp.MustCompile(
+		`\b(?:final|var|String|int|double|bool|Map|dynamic|[A-Z][a-zA-Z0-9_<>?]*)\s+([a-zA-Z0-9_]+)\s*=`,
 	)
 )
 
@@ -99,7 +109,7 @@ func parseTernaryPairs(line string) []ternaryPair {
 				continue
 			}
 			rest := strings.TrimLeft(line[i+1:], " \t")
-			if nullableCastSuffixRe.MatchString(line[:i]) && strings.HasPrefix(rest, ":") {
+			if nullableCastSuffixRe.MatchString(line[:i]) && isCastTypeSuffixFollower(rest) {
 				continue
 			}
 			pendingQ[depth] = append(pendingQ[depth], i)
@@ -127,6 +137,15 @@ func parseTernaryPairs(line string) []ternaryPair {
 		}
 	}
 	return pairs
+}
+
+func isCastTypeSuffixFollower(rest string) bool {
+	return strings.HasPrefix(rest, ":") ||
+		strings.HasPrefix(rest, "??") ||
+		strings.HasPrefix(rest, ",") ||
+		strings.HasPrefix(rest, ")") ||
+		strings.HasPrefix(rest, "]") ||
+		strings.HasPrefix(rest, ";")
 }
 
 func isTernaryArms(line string, start1, end1, start2, end2 int) bool {
@@ -284,6 +303,7 @@ func (r RedundantJsonDecodeRule) checkDecoderCalls(dCtx jsonDecodeContext, i int
 	}
 
 	arg := trimmed[indices[0][4]:indices[0][5]]
+	shadowed := isArgShadowed(dCtx.lines, i, arg)
 	maxLookahead := 3
 	if remaining := len(dCtx.lines) - 1 - i; remaining < maxLookahead {
 		maxLookahead = remaining
@@ -293,7 +313,7 @@ func (r RedundantJsonDecodeRule) checkDecoderCalls(dCtx jsonDecodeContext, i int
 		if strings.HasPrefix(next, "//") {
 			continue
 		}
-		if shouldStopSequentialScan(next, arg) {
+		if shouldStopSequentialScan(next, arg, shadowed) {
 			break
 		}
 		if r.matchNextSequentialDecode(dCtx, next, arg, lineNum, dCtx.startLine+i+offset) {
@@ -321,7 +341,6 @@ func isAssignmentOperator(s string) bool {
 }
 
 func stripStringsAndComments(line string) string {
-	line = stripLineComment(line)
 	var b strings.Builder
 	b.Grow(len(line))
 	inString := false
@@ -337,6 +356,9 @@ func stripStringsAndComments(line string) string {
 			}
 			continue
 		}
+		if ch == '/' && i+1 < len(line) && line[i+1] == '/' {
+			break
+		}
 		if ch == '"' || ch == '\'' || ch == '`' {
 			inString = true
 			stringChar = ch
@@ -347,7 +369,39 @@ func stripStringsAndComments(line string) string {
 	return b.String()
 }
 
-func isLocalVarAssignment(line string, arg string) bool {
+func containsBareIdent(s string, ident string) bool {
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_')
+	})
+	return slices.Contains(fields, ident)
+}
+
+func matchExtractedIdent(re *regexp.Regexp, line string, arg string) bool {
+	m := re.FindStringSubmatch(line)
+	return len(m) > 1 && m[1] == arg
+}
+
+func isArgShadowed(lines []string, currentLineIdx int, arg string) bool {
+	start := currentLineIdx - 1
+	limit := start - 40
+	if limit < 0 {
+		limit = 0
+	}
+	for k := start; k >= limit; k-- {
+		line := lines[k]
+		if strings.HasPrefix(strings.TrimSpace(line), "class ") {
+			return false
+		}
+		if matchExtractedIdent(localDeclExtractRe, line, arg) ||
+			matchExtractedIdent(paramDeclExtractRe, line, arg) ||
+			(funcHeaderPatternRe.MatchString(line) && containsBareIdent(line, arg)) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLocalVarAssignment(line string, arg string, shadowed bool) bool {
 	cleanLine := stripStringsAndComments(line)
 	argLen := len(arg)
 	for i := 0; i+argLen <= len(cleanLine); i++ {
@@ -355,7 +409,7 @@ func isLocalVarAssignment(line string, arg string) bool {
 			continue
 		}
 		if i > 0 && isIdentOrDot(cleanLine[i-1]) {
-			if i < 5 || cleanLine[i-5:i] != "this." {
+			if shadowed || i < 5 || cleanLine[i-5:i] != "this." {
 				continue
 			}
 			if i > 5 && isIdentOrDot(cleanLine[i-6]) {
@@ -373,11 +427,11 @@ func isLocalVarAssignment(line string, arg string) bool {
 	return false
 }
 
-func shouldStopSequentialScan(line string, arg string) bool {
+func shouldStopSequentialScan(line string, arg string, shadowed bool) bool {
 	if strings.HasPrefix(line, "else") || strings.Contains(line, "} else") || strings.HasPrefix(line, "}") {
 		return true
 	}
-	return isLocalVarAssignment(line, arg)
+	return isLocalVarAssignment(line, arg, shadowed)
 }
 
 func (r RedundantJsonDecodeRule) matchNextSequentialDecode(

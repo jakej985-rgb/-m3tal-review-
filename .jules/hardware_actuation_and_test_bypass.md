@@ -12,12 +12,14 @@ protocol handshake negotiation exposes unverified firmware to corrupted states.
 ACK-guard scoping must verify affirmative acknowledgments (rejecting negative
 checks like `!ack` or `ack == false` on nullable ACKs while retaining deduplication
 checks like `!confirmed`), reject bare `reply != false` on nullable booleans (where
-Dart evaluates `null != false` to true on timeout), recognize `ack.ok`, preserve Go
-method call headers (`if ack.IsSuccess() {`) without parenthesis truncation, respect
-switch-case labels (stopping at non-ACK labels like `case PacketType.error:`), climb
+Dart evaluates `null != false` to true on timeout) while accepting non-nullable inequality
+in Go, recognize explicit device ACK predicates (such as `ack.ok` while rejecting generic
+`writeResult.ok`), preserve Go method call headers (`if ack.IsSuccess() {`), separate Go
+initializers (`if received := ack.IsSuccess(); ...`) to verify the controlling condition,
+respect switch-case labels (stopping at non-ACK labels like `case PacketType.error:`), climb
 enclosing branch scopes for nested checks (e.g. `if (mounted)` inside `if (ack.isSuccess)`),
-and require recursive conjunction (`&&`) over disjunction (`||`) so optional verification
-nested under an AND (e.g. `isConnected && (isProtocolVerified || isReconnecting)`) is flagged.
+and recursively evaluate conjunction terms (`&&`) so grouped alternatives under an AND
+(e.g. `connected && (ack.IsSuccess() || retrying)`) are strictly flagged.
 2. **Early Stop Acknowledgment Overwrite:** When stop commands are sent asynchronously,
 marking pending state after `_write` completes can overwrite an early device
 acknowledgment that arrived during transmission. Setting pending state prior to wire
@@ -36,13 +38,15 @@ interceptors that evaluate stored entities often invoke separate validator and l
 helpers that both decode the identical raw string. Decoding once with fallback and
 inspecting parsed models directly eliminates duplicate parsing overhead.
 Analysis must track decodes across consecutive statements within a block (halting on
-bare local assignments like `raw ??=` or instance writes like `this.raw =` while ignoring
-member writes like `cache.raw ??=`), strip string literals and line comments so log
-messages (e.g. `log('raw=${raw.length}')`) do not mask subsequent duplicate decodes,
-distinguish mutually exclusive branches using delimiter-aware ternary nesting while
-disambiguating TypeScript cast ternaries (`as boolean ?`) from Dart nullable type suffixes
-(`as Type? :`), verify payload argument names and aliases, and require touched added-line
-matches to avoid reporting on deletion-only diffs or unchanged base-branch code.
+bare local assignments like `raw ??=` or instance writes like `this.raw =` when unshadowed,
+while keeping sequential scans active when a same-named parameter or local shadows `this.raw`
+and continuing past unrelated member writes like `cache.raw ??=`), strip string literals
+and comments in a single pass so quoted URLs (e.g. `"https://"`) do not mask subsequent
+payload assignments, distinguish mutually exclusive branches using delimiter-aware ternary
+nesting while disambiguating TypeScript cast ternaries (`as boolean ?`) from Dart nullable
+type suffixes followed by null-coalescing (`as Type? ??`), verify payload argument names
+and aliases, and require touched added-line matches to avoid reporting on deletion-only diffs
+or unchanged base-branch code.
 6. **Remediation Agent Operating Safeguards (`ai_review_agent`):** Review remediation
 agents must run `review` from the target checkout without unsupported flags (`--path`),
 mandate resolving upstream base repositories via PR URL parsing (`gh pr view --json url`),

@@ -449,6 +449,81 @@ func TestUnverifiedHardwareActuationRule(t *testing.T) {
 		}
 	})
 
+	t.Run("flags stop confirmation guarded only by writeResult.ok", func(t *testing.T) {
+		diff := `diff --git a/lib/physical_serial_bridge.dart b/lib/physical_serial_bridge.dart
+--- a/lib/physical_serial_bridge.dart
++++ b/lib/physical_serial_bridge.dart
+@@ -525,5 +525,5 @@
++    if (writeResult.ok) {
++      _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for generic writeResult.ok guard, got 0")
+		}
+	})
+
+	t.Run("flags stop confirmation in Go with grouped alternative in conjunction", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	if connected && (ack.IsSuccess() || retrying) {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for Go grouped alternative without guaranteed ack, got 0")
+		}
+	})
+
+	t.Run("flags stop confirmation in Go when initializer is followed by negative check", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	if received := ack.IsSuccess(); !received {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for Go initializer with negative condition, got 0")
+		}
+	})
+
+	t.Run("allows stop confirmation in Go when initializer is followed by positive check", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	if received := ack.IsSuccess(); received {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for Go initializer with positive check, got %d", len(findings))
+		}
+	})
+
+	t.Run("allows stop confirmation in Go on non-nullable reply inequality with false", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	if reply != false {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for Go reply != false guard, got %d", len(findings))
+		}
+	})
+
 	t.Run("ignores test files", func(t *testing.T) {
 		diff := `diff --git a/test/widget/hardware_control_test.dart b/test/widget/hardware_control_test.dart
 --- a/test/widget/hardware_control_test.dart
