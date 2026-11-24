@@ -21,9 +21,9 @@ func (LedgerReplaySnapshotRule) Name() string {
 }
 
 var (
-	replayMethodRe   = regexp.MustCompile(`\b(?:replayFromEvents|reconstructFromLedger|replayLedger)\s*\(`)
-	ledgerBoundaryRe = regexp.MustCompile(`(?i)(?:maxLedgerEvents|trimToSize|evictOldEvents|maxEvents|ledgerCapacity)`)
-	baseSnapshotRe   = regexp.MustCompile(`(?i)\bbaseSnapshot\b`)
+	replayMethodDeclRe = regexp.MustCompile(`(?m)^\s*(?:@\w+\s+)*(?:(?:static|final)\s+)?(?:(?:void|Future<[^>]*>|[A-Za-z0-9_<>?]+)\s+)?(replayFromEvents|reconstructFromLedger|replayLedger)\s*\(`)
+	ledgerBoundaryRe   = regexp.MustCompile(`(?i)\b(?:maxLedgerEvents|trimToSize|evictOldEvents|maxEvents|ledgerCapacity)\b`)
+	baseSnapshotRe     = regexp.MustCompile(`(?i)\bbaseSnapshot\b`)
 )
 
 func (r LedgerReplaySnapshotRule) Check(diff string) []Finding {
@@ -49,44 +49,93 @@ func (r LedgerReplaySnapshotRule) CheckContext(ctx context.Context, diff string)
 			startLine = 1
 		}
 
-		if !replayMethodRe.MatchString(scanText) {
-			continue
-		}
-
 		// Only apply when the model maintains bounded/trimmed ledgers
 		if !ledgerBoundaryRe.MatchString(scanText) {
 			continue
 		}
 
-		lines := strings.Split(scanText, "\n")
-		for i, line := range lines {
-			if replayMethodRe.MatchString(line) {
-				// Check parameter declaration for baseSnapshot support
-				endIdx := i + 5
-				if endIdx > len(lines) {
-					endIdx = len(lines)
-				}
-				sigSnippet := strings.Join(lines[i:endIdx], " ")
-				if baseSnapshotRe.MatchString(sigSnippet) {
-					continue
-				}
+		declMatches := replayMethodDeclRe.FindAllStringIndex(scanText, -1)
+		if len(declMatches) == 0 {
+			continue
+		}
 
-				lineNum := startLine + i
-				if len(block.addedLines) > 0 && !block.addedLines[lineNum] {
-					continue
+		// Collect added lines for ledger boundary matches
+		var firstAddedBoundaryLine int
+		for _, bLoc := range ledgerBoundaryRe.FindAllStringIndex(scanText, -1) {
+			bLine := startLine + strings.Count(scanText[:bLoc[0]], "\n")
+			if block.addedLines[bLine] {
+				firstAddedBoundaryLine = bLine
+				break
+			}
+		}
+
+		for _, m := range declMatches {
+			declStart := m[0]
+			openParen := m[1] - 1
+			closeParen := -1
+			parenDepth := 1
+			for idx := openParen + 1; idx < len(scanText); idx++ {
+				if scanText[idx] == '(' {
+					parenDepth++
+				} else if scanText[idx] == ')' {
+					parenDepth--
+					if parenDepth == 0 {
+						closeParen = idx
+						break
+					}
 				}
-				key := block.file + ":" + strconv.Itoa(lineNum)
-				if !seen[key] {
-					seen[key] = true
-					findings = append(findings, Finding{
-						Rule:        "event-ledger-snapshot-truncation",
-						Severity:    "high",
-						File:        block.file,
-						Line:        lineNum,
-						Message:     "Trimmed event ledger replay method reconstructs state from empty without base snapshot support",
-						Remediation: "Accept a 'baseSnapshot' parameter in replayFromEvents so trimmed ledgers can accurately reconstruct state across eviction boundaries.",
-					})
+			}
+
+			if closeParen == -1 {
+				continue
+			}
+
+			// Verify this is a method declaration by checking following token
+			afterParams := strings.TrimSpace(scanText[closeParen+1:])
+			if !strings.HasPrefix(afterParams, "{") &&
+				!strings.HasPrefix(afterParams, "=>") &&
+				!strings.HasPrefix(afterParams, "async") {
+				continue
+			}
+
+			params := scanText[openParen+1 : closeParen]
+			if baseSnapshotRe.MatchString(params) {
+				continue
+			}
+
+			declStartLine := startLine + strings.Count(scanText[:declStart], "\n")
+			declEndLine := startLine + strings.Count(scanText[:closeParen], "\n")
+
+			lineNum := declStartLine
+			if len(block.addedLines) > 0 {
+				declTouchesAdded := false
+				for l := declStartLine; l <= declEndLine; l++ {
+					if block.addedLines[l] {
+						declTouchesAdded = true
+						lineNum = l
+						break
+					}
 				}
+				if !declTouchesAdded {
+					if firstAddedBoundaryLine > 0 {
+						lineNum = firstAddedBoundaryLine
+					} else {
+						continue
+					}
+				}
+			}
+
+			key := block.file + ":" + strconv.Itoa(lineNum)
+			if !seen[key] {
+				seen[key] = true
+				findings = append(findings, Finding{
+					Rule:        "event-ledger-snapshot-truncation",
+					Severity:    "high",
+					File:        block.file,
+					Line:        lineNum,
+					Message:     "Trimmed event ledger replay method reconstructs state from empty without base snapshot support",
+					Remediation: "Accept a 'baseSnapshot' parameter in replayFromEvents so trimmed ledgers can accurately reconstruct state across eviction boundaries.",
+				})
 			}
 		}
 	}

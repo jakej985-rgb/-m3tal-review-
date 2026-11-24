@@ -23,7 +23,70 @@ func (ShortcutScopeRule) Name() string {
 var (
 	callbackShortcutsRe = regexp.MustCompile(`\bCallbackShortcuts\s*\(`)
 	shellScaffoldPathRe = regexp.MustCompile(`(?i)(?:scaffold/|shell|main_scaffold)`)
+	rootMaterialAppRe   = regexp.MustCompile(`\bMaterialApp(?:\.router)?\s*\(`)
 )
+
+func stripDartComments(src string) string {
+	var b strings.Builder
+	b.Grow(len(src))
+	inLineComment := false
+	inBlockComment := false
+	inString := byte(0)
+	for i := 0; i < len(src); i++ {
+		ch := src[i]
+		if inLineComment {
+			if ch == '\n' {
+				inLineComment = false
+				b.WriteByte(ch)
+			} else {
+				b.WriteByte(' ')
+			}
+			continue
+		}
+		if inBlockComment {
+			if ch == '*' && i+1 < len(src) && src[i+1] == '/' {
+				inBlockComment = false
+				b.WriteString("  ")
+				i++
+			} else if ch == '\n' {
+				b.WriteByte(ch)
+			} else {
+				b.WriteByte(' ')
+			}
+			continue
+		}
+		if inString != 0 {
+			b.WriteByte(ch)
+			if ch == '\\' && i+1 < len(src) {
+				i++
+				b.WriteByte(src[i])
+			} else if ch == inString {
+				inString = 0
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			inString = ch
+			b.WriteByte(ch)
+			continue
+		}
+		if ch == '/' && i+1 < len(src) {
+			if src[i+1] == '/' {
+				inLineComment = true
+				b.WriteString("  ")
+				i++
+				continue
+			} else if src[i+1] == '*' {
+				inBlockComment = true
+				b.WriteString("  ")
+				i++
+				continue
+			}
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
+}
 
 func (r ShortcutScopeRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
@@ -53,11 +116,19 @@ func (r ShortcutScopeRule) CheckContext(ctx context.Context, diff string) []Find
 			startLine = 1
 		}
 
-		if !callbackShortcutsRe.MatchString(scanText) {
+		cleanText := stripDartComments(scanText)
+
+		// If this file configures the root MaterialApp / MaterialApp.router,
+		// shortcuts mounted here cover detail routes outside the shell navigator.
+		if rootMaterialAppRe.MatchString(cleanText) {
 			continue
 		}
 
-		lines := strings.Split(scanText, "\n")
+		if !callbackShortcutsRe.MatchString(cleanText) {
+			continue
+		}
+
+		lines := strings.Split(cleanText, "\n")
 		for i, line := range lines {
 			if callbackShortcutsRe.MatchString(line) {
 				lineNum := startLine + i

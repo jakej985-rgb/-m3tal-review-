@@ -717,6 +717,9 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&ShortcutScopeRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&LazyStreamSubscriptionRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&LedgerReplaySnapshotRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&TestAssertionBypassRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&UnverifiedHardwareActuationRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&QualityGatePreflightRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 	}
 }
 
