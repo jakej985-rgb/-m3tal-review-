@@ -30,6 +30,11 @@ var (
 		"uv": true, "poetry": true, "pipx": true, "pdm": true, "hatch": true, "rye": true, "pipenv": true,
 	}
 
+	// Shell function declarations are not executions: a runner in the body
+	// runs only when the function is called at top level.
+	shellFunctionParenRe   = regexp.MustCompile(`(?m)^[ \t]*(?:function[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*\([ \t]*\)[ \t]*\{`)
+	shellFunctionKeywordRe = regexp.MustCompile(`(?m)^[ \t]*function[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\{`)
+
 	runnerNames = map[string]bool{
 		"unittest": true,
 		"pytest":   true,
@@ -144,33 +149,117 @@ func isPythonRunnerCommand(seg string) bool {
 	return false
 }
 
+type shellFunctionSpan struct {
+	start int
+	end   int
+}
+
+// shellScope separates top-level shell commands from function declarations.
+// The body of a declared runner is removed from topLevel and its name is
+// recorded so a call site can be treated as a runner execution.
+type shellScope struct {
+	topLevel    string
+	runnerNames map[string]bool
+}
+
+func matchingShellBrace(masked string, open int) int {
+	depth := 0
+	for i := open; i < len(masked); i++ {
+		switch masked[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func shellBodyHasRunner(body string) bool {
+	for _, seg := range splitShellCommands(body) {
+		if isPythonRunnerCommand(seg) {
+			return true
+		}
+	}
+	return false
+}
+
+func analyzeShellScope(text string) shellScope {
+	masked := string(maskNonCode("quality_gate.sh", text))
+	spans := make([]shellFunctionSpan, 0, 2)
+	runnerNames := make(map[string]bool)
+	for _, re := range []*regexp.Regexp{shellFunctionParenRe, shellFunctionKeywordRe} {
+		for _, match := range re.FindAllStringSubmatchIndex(masked, -1) {
+			if len(match) < 4 {
+				continue
+			}
+			openRel := strings.LastIndexByte(masked[match[0]:match[1]], '{')
+			if openRel < 0 {
+				continue
+			}
+			open := match[0] + openRel
+			close := matchingShellBrace(masked, open)
+			if close < 0 {
+				close = len(masked) - 1
+			}
+			spans = append(spans, shellFunctionSpan{start: open, end: close + 1})
+			if shellBodyHasRunner(masked[open+1 : close]) {
+				runnerNames[masked[match[2]:match[3]]] = true
+			}
+		}
+	}
+	topLevel := []byte(text)
+	for _, span := range spans {
+		for i := span.start; i < span.end && i < len(topLevel); i++ {
+			if topLevel[i] != '\n' {
+				topLevel[i] = ' '
+			}
+		}
+	}
+	return shellScope{topLevel: string(topLevel), runnerNames: runnerNames}
+}
+
+func isRunnerFunctionInvocation(seg string, runnerNames map[string]bool) bool {
+	fields := commandFields(seg)
+	return len(fields) > 0 && runnerNames[commandBase(fields[0])]
+}
+
 // findShellRunnerLines returns runner lines that execute before any preflight check.
 // Runners after a preflight are covered by it; a preflight after a runner does not count.
-func findShellRunnerLines(text string, start int) []int {
+func findShellRunnerLines(text string, start int, runnerNames map[string]bool) []int {
+	isRunner := func(seg string) bool {
+		return isPythonRunnerCommand(seg) || isRunnerFunctionInvocation(seg, runnerNames)
+	}
 	var lines []int
 	for i, raw := range strings.Split(text, "\n") {
 		segs := splitShellCommands(stripShellCommentAndQuotes(raw))
 		if j := slices.IndexFunc(segs, isPreflightCommand); j != -1 {
-			if slices.ContainsFunc(segs[:j], isPythonRunnerCommand) {
+			if slices.ContainsFunc(segs[:j], isRunner) {
 				lines = append(lines, start+i)
 			}
 			return lines
 		}
-		if slices.ContainsFunc(segs, isPythonRunnerCommand) {
+		if slices.ContainsFunc(segs, isRunner) {
 			lines = append(lines, start+i)
 		}
 	}
 	return lines
 }
 
-func hasDeletedPreflight(deletedLines []string) bool {
-	return slices.ContainsFunc(deletedLines, lineHasPreflight)
+func hasDeletedPreflight(deletedLines []deletedDiffLine) bool {
+	return slices.ContainsFunc(deletedLines, func(deleted deletedDiffLine) bool {
+		return lineHasPreflight(deleted.content)
+	})
 }
 
 func checkQualityGateBlock(
 	b diffSourceBlock, text string, start int, wt bool, seen map[string]bool,
 ) (gateFindings []Finding) {
-	runnerLines := findShellRunnerLines(text, start)
+	scope := analyzeShellScope(text)
+	runnerLines := findShellRunnerLines(scope.topLevel, start, scope.runnerNames)
 	if len(runnerLines) == 0 {
 		return gateFindings
 	}

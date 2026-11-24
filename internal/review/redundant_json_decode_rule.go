@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -288,7 +289,7 @@ func (r RedundantJsonDecodeRule) checkProfileHelpers(dCtx jsonDecodeContext, i i
 }
 
 func (r RedundantJsonDecodeRule) checkDecoderCalls(dCtx jsonDecodeContext, i int) {
-	trimmed := strings.TrimSpace(stripStringsAndComments(dCtx.lines[i]))
+	trimmed := strings.TrimSpace(stripLineForRule(dCtx.block.file, dCtx.lines[i]))
 	indices := repeatedDecoderCallRe.FindAllStringSubmatchIndex(trimmed, -1)
 	if len(indices) == 0 {
 		return
@@ -321,7 +322,7 @@ func (r RedundantJsonDecodeRule) scanForwardDecoder(
 	lineNum int,
 ) {
 	for offset := 1; offset <= maxLookahead; offset++ {
-		next := strings.TrimSpace(stripStringsAndComments(dCtx.lines[i+offset]))
+		next := strings.TrimSpace(stripLineForRule(dCtx.block.file, dCtx.lines[i+offset]))
 		if next == "" {
 			continue
 		}
@@ -348,6 +349,218 @@ func isAssignmentOperator(s string) bool {
 		}
 	}
 	return len(s) > 0 && s[0] == '=' && (len(s) == 1 || (s[1] != '=' && s[1] != '>'))
+}
+
+// stripLineForRule keeps JavaScript template interpolations visible while
+// masking literal text. A JavaScript-aware scanner is required because regex
+// literals can contain quotes (for example /\"/), which are not string starts.
+func stripLineForRule(file, line string) string {
+	switch strings.ToLower(filepath.Ext(file)) {
+	case ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs":
+		return stripJSStringsAndComments(line)
+	default:
+		return stripStringsAndComments(line)
+	}
+}
+
+func jsRegexCanStart(prev byte) bool {
+	return prev == 0 || strings.ContainsRune("([{,;:=!?&|+-*%^~<>", rune(prev))
+}
+
+// jsRegexAllowed also recognizes expression-position keywords, where a slash
+// starts a regex rather than division.
+func jsRegexAllowed(line string, i int, prev byte) bool {
+	if jsRegexCanStart(prev) {
+		return true
+	}
+	j := i - 1
+	for j >= 0 && (line[j] == ' ' || line[j] == '\t') {
+		j--
+	}
+	end := j + 1
+	for j >= 0 && ((line[j] >= 'a' && line[j] <= 'z') || (line[j] >= 'A' && line[j] <= 'Z')) {
+		j--
+	}
+	switch line[j+1 : end] {
+	case "return", "typeof", "case", "delete", "void", "new", "in", "of", "yield", "instanceof", "throw", "else", "do":
+		return true
+	default:
+		return false
+	}
+}
+
+func skipJSQuoted(line string, start int, quote byte) int {
+	for i := start + 1; i < len(line); i++ {
+		if line[i] == '\\' {
+			i++
+			continue
+		}
+		if line[i] == quote {
+			return i + 1
+		}
+	}
+	return len(line)
+}
+
+func scanJSRegexLiteral(line string, start int) (int, bool) {
+	inClass := false
+	for i := start + 1; i < len(line); i++ {
+		switch line[i] {
+		case '\\':
+			i++
+		case '[':
+			inClass = true
+		case ']':
+			inClass = false
+		case '/':
+			if !inClass {
+				return i + 1, true
+			}
+		case '\n':
+			return 0, false
+		}
+	}
+	return 0, false
+}
+
+func scanJSTemplate(line string, start int) (int, string) {
+	var exprs strings.Builder
+	for i := start + 1; i < len(line); {
+		switch line[i] {
+		case '\\':
+			i += 2
+		case '`':
+			return i + 1, exprs.String()
+		case '$':
+			if i+1 < len(line) && line[i+1] == '{' {
+				next, expr := scanJSInterpolation(line, i+1)
+				exprs.WriteString(expr)
+				exprs.WriteByte(' ')
+				i = next
+			} else {
+				i++
+			}
+		default:
+			i++
+		}
+	}
+	return len(line), exprs.String()
+}
+
+func scanJSInterpolation(line string, open int) (int, string) {
+	var out strings.Builder
+	depth, i := 1, open+1
+	prev := byte(0)
+	for i < len(line) {
+		c := line[i]
+		if c == '}' {
+			depth--
+			if depth == 0 {
+				return i + 1, out.String()
+			}
+			out.WriteByte(c)
+			prev = c
+			i++
+			continue
+		}
+		if c == '{' {
+			depth++
+			out.WriteByte(c)
+			prev = c
+			i++
+			continue
+		}
+		if c == '/' && i+1 < len(line) {
+			if line[i+1] == '/' {
+				break
+			}
+			if line[i+1] == '*' {
+				if end := strings.Index(line[i+2:], "*/"); end >= 0 {
+					i += 2 + end + 2
+					out.WriteByte(' ')
+					continue
+				}
+				return len(line), out.String()
+			}
+			if jsRegexAllowed(line, i, prev) {
+				if next, ok := scanJSRegexLiteral(line, i); ok {
+					out.WriteByte(' ')
+					prev = 'r'
+					i = next
+					continue
+				}
+			}
+		}
+		if c == '"' || c == '\'' {
+			i = skipJSQuoted(line, i, c)
+			out.WriteByte(' ')
+			prev = 's'
+			continue
+		}
+		if c == '`' {
+			next, nested := scanJSTemplate(line, i)
+			out.WriteString(nested)
+			out.WriteByte(' ')
+			i = next
+			prev = 's'
+			continue
+		}
+		out.WriteByte(c)
+		if c != ' ' && c != '\t' && c != '\r' && c != '\n' {
+			prev = c
+		}
+		i++
+	}
+	return len(line), out.String()
+}
+
+func stripJSStringsAndComments(line string) string {
+	var b strings.Builder
+	b.Grow(len(line))
+	prev := byte(0)
+	for i := 0; i < len(line); {
+		c := line[i]
+		if c == '/' && i+1 < len(line) {
+			if line[i+1] == '/' {
+				break
+			}
+			if line[i+1] == '*' {
+				if end := strings.Index(line[i+2:], "*/"); end >= 0 {
+					i += 2 + end + 2
+					b.WriteByte(' ')
+					continue
+				}
+				break
+			}
+			if jsRegexAllowed(line, i, prev) {
+				if next, ok := scanJSRegexLiteral(line, i); ok {
+					b.WriteByte(' ')
+					prev = 'r'
+					i = next
+					continue
+				}
+			}
+		}
+		switch c {
+		case '"', '\'':
+			i = skipJSQuoted(line, i, c)
+			b.WriteByte(' ')
+			prev = 's'
+		case '`':
+			next, exprs := scanJSTemplate(line, i)
+			b.WriteString(exprs)
+			b.WriteByte(' ')
+			i = next
+			prev = 's'
+		default:
+			b.WriteByte(c)
+			if c != ' ' && c != '\t' && c != '\r' && c != '\n' {
+				prev = c
+			}
+			i++
+		}
+	}
+	return b.String()
 }
 
 func stripStringsAndComments(line string) string {

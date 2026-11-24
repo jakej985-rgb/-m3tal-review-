@@ -6,6 +6,40 @@ import (
 	"testing"
 )
 
+func TestFileDiffSourceBlocksScopeDeletedLinesToHunk(t *testing.T) {
+	diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
+		"--- a/test/unit/gating_test.dart\n" +
+		"+++ b/test/unit/gating_test.dart\n" +
+		"@@ -1,4 +1,4 @@\n" +
+		" void main() {\n" +
+		"   test('first test', () {\n" +
+		"-    expect(value, equals(1));\n" +
+		"+    expect(value, 1);\n" +
+		"   });\n" +
+		"@@ -10,5 +10,6 @@\n" +
+		"     final result = checkGating();\n" +
+		"+    // unrelated comment\n" +
+		"     " + "if (result != null) {\n" +
+		"       expect(result.passed, isTrue);\n" +
+		"     }\n" +
+		"   });\n"
+
+	fds := ParseDiff(diff)
+	if len(fds) != 1 {
+		t.Fatalf("expected 1 file diff, got %d", len(fds))
+	}
+	blocks := fileDiffSourceBlocks(fds[0])
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	if len(blocks[0].deletedLines) != 1 || blocks[0].deletedLines[0].content != "    expect(value, equals(1));" {
+		t.Fatalf("expected first hunk to own its deleted assertion, got %+v", blocks[0].deletedLines)
+	}
+	if len(blocks[1].deletedLines) != 0 {
+		t.Fatalf("expected second hunk to have no deletions, got %+v", blocks[1].deletedLines)
+	}
+}
+
 func TestFileDiffSourceBlocks(t *testing.T) {
 	diff := "diff --git a/pkg/sample.go b/pkg/sample.go\n" +
 		"--- a/pkg/sample.go\n" +

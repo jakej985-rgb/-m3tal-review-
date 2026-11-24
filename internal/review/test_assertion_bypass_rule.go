@@ -2,7 +2,6 @@ package review
 
 import (
 	"context"
-	"math"
 	"regexp"
 	"strings"
 )
@@ -34,6 +33,10 @@ var (
 
 	// allowedConditionalRe allows legitimate conditionals in tests (e.g. platform checks or teardown guards)
 	allowedConditionalRe = regexp.MustCompile(`(?i)\b(?:kIsWeb|Platform\.is|isClosed|mounted|isNotEmpty|isEmpty)\b`)
+
+	// testCaseDeclRe identifies the start of a test case so deletions can be
+	// correlated with the test that contains the guard, not the whole file.
+	testCaseDeclRe = regexp.MustCompile(`^\s*(?:(?:testWidgets|test|it|describe|group)\s*\(|(?:async\s+)?def\s+test\w*\s*\(|func\s+Test\w*\s*\()`)
 )
 
 func (r TestAssertionBypassRule) Check(diff string) []Finding {
@@ -52,8 +55,6 @@ func hasTestAssertion(lines []string, start int) bool {
 	return hasAssert
 }
 
-var testCaseStartRe = regexp.MustCompile(`^\s*(?:test|testWidgets|it|group|def\s+test_\w*|func\s+Test\w*)\s*\(`)
-
 func isDeletedTestAssertion(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return !strings.HasPrefix(trimmed, "//") &&
@@ -61,36 +62,44 @@ func isDeletedTestAssertion(line string) bool {
 		testActionOrAssertRe.MatchString(trimmed)
 }
 
-// testCaseBounds returns the [first, last] new-side line numbers of the test case enclosing lines[idx].
-// When no boundary is visible in the block (e.g. truncated patch context), that side is
-// treated as unknown and left open rather than clamped to the block edge.
-func testCaseBounds(lines []string, idx, start int) (int, int) {
-	first, last := math.MinInt, math.MaxInt
-	for k := idx; k >= 0; k-- {
-		if testCaseStartRe.MatchString(lines[k]) {
-			first = start + k
+// testCaseBounds returns the half-open line range of the test containing guard.
+// A guard whose declaration is outside the available hunk has no established
+// test identity, so callers must not attribute deletions to it.
+func testCaseBounds(lines []string, guardIdx int) (start, end int, ok bool) {
+	start = -1
+	for k := guardIdx; k >= 0; k-- {
+		if testCaseDeclRe.MatchString(lines[k]) {
+			start = k
 			break
 		}
 	}
-	for k := idx + 1; k < len(lines); k++ {
-		if testCaseStartRe.MatchString(lines[k]) {
-			last = start + k - 1
+	if start < 0 || start >= guardIdx {
+		return 0, 0, false
+	}
+	end = len(lines)
+	for k := start + 1; k < len(lines); k++ {
+		if testCaseDeclRe.MatchString(lines[k]) {
+			end = k
 			break
 		}
 	}
-	return first, last
+	return start, end, true
 }
 
-// hasRelevantDeletedAssertion reports whether an unconditional assertion was removed
-// from the same test case as the guard at lines[idx].
-func hasRelevantDeletedAssertion(b diffSourceBlock, lines []string, idx, start int) bool {
-	if len(b.deletedAnchors) != len(b.deletedLines) {
+func hasRelevantDeletedAssertion(b diffSourceBlock, lines []string, guardIdx int) bool {
+	start, end, ok := testCaseBounds(lines, guardIdx)
+	if !ok {
 		return false
 	}
-	first, last := testCaseBounds(lines, idx, start)
-	for i, del := range b.deletedLines {
-		anchor := b.deletedAnchors[i]
-		if anchor >= first && anchor <= last && isDeletedTestAssertion(del) {
+	for _, deleted := range b.deletedLines {
+		if !isDeletedTestAssertion(deleted.content) {
+			continue
+		}
+		idx := deleted.newLine - b.firstLine
+		if b.fullSource {
+			idx = deleted.newLine - 1
+		}
+		if idx >= start && idx < end {
 			return true
 		}
 	}
@@ -113,7 +122,7 @@ func checkTestBypassBlock(b diffSourceBlock, text string, start int, wt bool, se
 		if !hasTestAssertion(lines, i) {
 			continue
 		}
-		deletedAssert := hasRelevantDeletedAssertion(b, lines, i, start)
+		deletedAssert := hasRelevantDeletedAssertion(b, lines, i)
 		if !shouldReportAddedFinding(b, lineNum, wt || deletedAssert, seen) {
 			continue
 		}

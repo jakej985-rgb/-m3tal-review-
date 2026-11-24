@@ -11,36 +11,44 @@ import (
 	"sync"
 )
 
+type deletedDiffLine struct {
+	content string
+	newLine int
+}
+
 type diffSourceBlock struct {
 	file         string
 	firstLine    int
 	text         string
 	addedLines   map[int]bool
-	deletedLines []string
-	// deletedAnchors[i] is the new-side line number immediately following deletedLines[i].
-	deletedAnchors []int
-	lineCount      int
-	sourceLoaded   bool
+	deletedLines []deletedDiffLine
+	lineCount    int
+	sourceLoaded bool
+	fullSource   bool
 }
 
-func extractDeletedLines(fileDiff FileDiff) []string {
-	var deleted []string
+func extractDeletedLines(fileDiff FileDiff) []deletedDiffLine {
+	var deleted []deletedDiffLine
 	for _, l := range fileDiff.Lines {
 		if l.Type == "-" {
-			deleted = append(deleted, l.Content)
+			deleted = append(deleted, deletedDiffLine{content: l.Content, newLine: l.NewLineNumber})
 		}
 	}
 	return deleted
 }
 
-func extractDeletedAnchors(fileDiff FileDiff) []int {
-	var anchors []int
-	for _, l := range fileDiff.Lines {
-		if l.Type == "-" {
-			anchors = append(anchors, l.NewLineNumber)
+// deletedLinesForBlock keeps each hunk's deletions with that hunk. New-side
+// positions make this possible without a separate hunk index: a deletion
+// between context lines has the new-side line it was removed before.
+func deletedLinesForBlock(deleted []deletedDiffLine, firstLine, lineCount int) []deletedDiffLine {
+	var blockDeleted []deletedDiffLine
+	last := firstLine + lineCount - 1
+	for _, d := range deleted {
+		if d.newLine >= firstLine && d.newLine <= last+1 {
+			blockDeleted = append(blockDeleted, d)
 		}
 	}
-	return anchors
+	return blockDeleted
 }
 
 // fileDiffSourceBlocks constructs contiguous source blocks directly for a single FileDiff.
@@ -63,16 +71,13 @@ func fileDiffSourceBlocks(fileDiff FileDiff) []diffSourceBlock {
 	}
 	sort.Ints(lineNumbers)
 	deleted := extractDeletedLines(fileDiff)
-	anchors := extractDeletedAnchors(fileDiff)
 	var blocks []diffSourceBlock
 	for _, line := range lineNumbers {
 		if len(blocks) == 0 || line != blocks[len(blocks)-1].firstLine+blocks[len(blocks)-1].lineCount {
 			blocks = append(blocks, diffSourceBlock{
-				file:           fileDiff.Path,
-				firstLine:      line,
-				addedLines:     make(map[int]bool),
-				deletedLines:   deleted,
-				deletedAnchors: anchors,
+				file:       fileDiff.Path,
+				firstLine:  line,
+				addedLines: make(map[int]bool),
 			})
 		}
 		block := &blocks[len(blocks)-1]
@@ -84,6 +89,9 @@ func fileDiffSourceBlocks(fileDiff FileDiff) []diffSourceBlock {
 		if _, added := fileDiff.AddedText[line]; added {
 			block.addedLines[line] = true
 		}
+	}
+	for idx := range blocks {
+		blocks[idx].deletedLines = deletedLinesForBlock(deleted, blocks[idx].firstLine, blocks[idx].lineCount)
 	}
 	return blocks
 }
@@ -362,7 +370,6 @@ func sourceBlocksUncached(diff, repositoryRoot string, workingTree bool) []diffS
 		if source, err := readRuleSource(repositoryRoot, fileDiff.Path, workingTree); err == nil {
 			fb := fullSourceBlock(fileDiff.Path, source, fileDiff.AddedLines)
 			fb.deletedLines = extractDeletedLines(fileDiff)
-			fb.deletedAnchors = extractDeletedAnchors(fileDiff)
 			fileBlocks = []diffSourceBlock{fb}
 		}
 		for idx := range fileBlocks {

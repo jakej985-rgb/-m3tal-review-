@@ -380,4 +380,29 @@ func TestRedundantJsonDecodeRule(t *testing.T) {
 			t.Fatalf("expected 0 findings for decoder text in template body, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags duplicate decode after quote-matching regex in template interpolation", func(t *testing.T) {
+		diff := "diff --git a/web/route_loader.js b/web/route_loader.js\n" +
+			"--- a/web/route_loader.js\n" +
+			"+++ b/web/route_loader.js\n" +
+			"@@ -80,1 +80,1 @@\n" +
+			"+  return `${/\"/.test(raw)}: ${JSON.parse(raw).id} ${JSON.parse(raw).name}`;\n"
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for duplicate decodes after a regex with a quote, got 0")
+		}
+	})
+
+	t.Run("flags duplicate decode after a return regex with a quote", func(t *testing.T) {
+		diff := "diff --git a/web/route_loader.js b/web/route_loader.js\n" +
+			"--- a/web/route_loader.js\n" +
+			"+++ b/web/route_loader.js\n" +
+			"@@ -80,1 +80,1 @@\n" +
+			"+  return /\"/.test(raw) && JSON.parse(raw).id + JSON.parse(raw).name;\n"
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for duplicate decodes after a return regex, got 0")
+		}
+	})
+
 }

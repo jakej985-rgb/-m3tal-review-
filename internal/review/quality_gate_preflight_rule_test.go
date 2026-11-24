@@ -47,6 +47,90 @@ new file mode 100755
 		}
 	})
 
+	t.Run("ignores runner inside a function declaration", func(t *testing.T) {
+		diff := `diff --git a/scripts/quality_gate.sh b/scripts/quality_gate.sh
+new file mode 100755
+--- /dev/null
++++ b/scripts/quality_gate.sh
+@@ -0,0 +1,3 @@
++#!/usr/bin/env bash
++set -e
++run_tests() { cd tests && pytest; }
++`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings for an uncalled runner declaration, got %d", len(findings))
+		}
+	})
+
+	t.Run("flags top-level call to runner function without preflight", func(t *testing.T) {
+		diff := `diff --git a/scripts/quality_gate.sh b/scripts/quality_gate.sh
+new file mode 100755
+--- /dev/null
++++ b/scripts/quality_gate.sh
+@@ -0,0 +1,4 @@
++#!/usr/bin/env bash
++set -e
++run_tests() { cd tests && pytest; }
++run_tests
++`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for a runner function call without preflight, got 0")
+		}
+	})
+
+	t.Run("passes one-line runner declaration invoked after same-line preflight", func(t *testing.T) {
+		diff := `diff --git a/scripts/quality_gate.sh b/scripts/quality_gate.sh
+new file mode 100755
+--- /dev/null
++++ b/scripts/quality_gate.sh
+@@ -0,0 +1,2 @@
++#!/usr/bin/env bash
++run_tests() { cd tests && pytest; }; python3 -c 'import pytest' && run_tests
++`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings for same-line preflight before runner call, got %d", len(findings))
+		}
+	})
+
+	t.Run("passes runner function call after preflight", func(t *testing.T) {
+		diff := `diff --git a/scripts/quality_gate.sh b/scripts/quality_gate.sh
+new file mode 100755
+--- /dev/null
++++ b/scripts/quality_gate.sh
+@@ -0,0 +1,5 @@
++#!/usr/bin/env bash
++set -e
++python3 -c "import pytest"
++run_tests() { cd tests && pytest; }
++run_tests
++`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings for runner call after preflight, got %d", len(findings))
+		}
+	})
+
+	t.Run("flags runner function call before later preflight", func(t *testing.T) {
+		diff := `diff --git a/scripts/quality_gate.sh b/scripts/quality_gate.sh
+new file mode 100755
+--- /dev/null
++++ b/scripts/quality_gate.sh
+@@ -0,0 +1,5 @@
++#!/usr/bin/env bash
++set -e
++run_tests() { cd tests && pytest; }
++run_tests
++python3 -c "import pytest"
++`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for runner call before preflight, got 0")
+		}
+	})
+
 	t.Run("flags linter-only gate script missing preflight check", func(t *testing.T) {
 		diff := `diff --git a/scripts/quality_gate.sh b/scripts/quality_gate.sh
 new file mode 100755

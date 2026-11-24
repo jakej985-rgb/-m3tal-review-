@@ -1,6 +1,7 @@
 package review
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -70,6 +71,65 @@ new file mode 100644
 		}
 	})
 
+	t.Run("full source test bounds exclude a deletion in another test", func(t *testing.T) {
+		lines := strings.Split(`void main() {
+  test('first test', () {
+    expect(value, 1);
+  });
+
+  test('second test', () {
+    final result = checkGating();
+    // unrelated comment
+    if (result != null) {
+      expect(result.passed, isTrue);
+    }
+  });
+}`, "\n")
+		block := diffSourceBlock{
+			firstLine:  1,
+			fullSource: true,
+			deletedLines: []deletedDiffLine{
+				{content: "expect(value, equals(1));", newLine: 3},
+			},
+		}
+		if hasRelevantDeletedAssertion(block, lines, 8) {
+			t.Errorf("expected deletion in the first test not to justify the second test's guard")
+		}
+		if !hasRelevantDeletedAssertion(block, lines, 2) {
+			t.Errorf("expected deletion inside the first test to justify that test's guard")
+		}
+		block.deletedLines = []deletedDiffLine{{content: "expect(result.passed, isTrue);", newLine: 10}}
+		if !hasRelevantDeletedAssertion(block, lines, 8) {
+			t.Errorf("expected deletion inside the second test to justify its guard")
+		}
+		if hasRelevantDeletedAssertion(block, lines, 2) {
+			t.Errorf("expected deletion in the second test not to justify the first test's guard")
+		}
+	})
+
+	t.Run("does not correlate a deletion in another test across a hunk gap", func(t *testing.T) {
+		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
+			"--- a/test/unit/gating_test.dart\n" +
+			"+++ b/test/unit/gating_test.dart\n" +
+			"@@ -1,4 +1,4 @@\n" +
+			" void main() {\n" +
+			"   test('first test', () {\n" +
+			"-    expect(value, equals(1));\n" +
+			"+    expect(value, 1);\n" +
+			"   });\n" +
+			"@@ -10,5 +10,6 @@\n" +
+			"     final result = checkGating();\n" +
+			"+    // unrelated comment\n" +
+			"     " + "if (result != null) {\n" +
+			"       expect(result.passed, isTrue);\n" +
+			"     }\n" +
+			"   });\n"
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings for a deletion in a different test, got %d", len(findings))
+		}
+	})
+
 	t.Run("flags remaining conditional guard when unconditional assertion is deleted", func(t *testing.T) {
 		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
 			"--- a/test/unit/gating_test.dart\n" +
@@ -88,7 +148,7 @@ new file mode 100644
 		}
 	})
 
-	t.Run("flags unchanged guard when assertion is deleted in an earlier hunk of the same test", func(t *testing.T) {
+	t.Run("does not flag unchanged guard when its test declaration is outside the hunk", func(t *testing.T) {
 		diff := "diff --git a/test/unit/gating_test.dart b/test/unit/gating_test.dart\n" +
 			"--- a/test/unit/gating_test.dart\n" +
 			"+++ b/test/unit/gating_test.dart\n" +
@@ -104,8 +164,8 @@ new file mode 100644
 			"     }\n" +
 			"   });\n"
 		findings := rule.Check(diff)
-		if len(findings) == 0 {
-			t.Fatalf("expected finding for guard after cross-hunk assertion deletion, got 0")
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings when the guard's test declaration is outside the hunk, got %d", len(findings))
 		}
 	})
 
