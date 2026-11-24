@@ -42,7 +42,8 @@ var (
 
 	affirmativeAckPredRe = regexp.MustCompile(
 		`(?i)(?:\b(?:[a-zA-Z0-9_]+\.)?(?:issuccess|success|isack)\b|` +
-			`\b(?:ack|stopack)(?:\.|\?\.)ok(?:\s*==\s*true)?\b|` +
+			`\b(?:ack|stopack)\.ok(?:\s*==\s*true|\s*\?\?\s*false)?\b|` +
+			`\b(?:ack|stopack)\?\.ok\s*(?:==\s*true|\?\?\s*false)\b|` +
 			`\b(?:ack|reply|packet|stopack)\s*(?:==\s*true|!=\s*null|!=\s*nil)\b|` +
 			`^(?:ack|reply|stopack)$|` +
 			`\bis\s+(?:ack|stopack)\b|` +
@@ -51,9 +52,9 @@ var (
 			`\b(?:ack:|pong:|pin13:low|led:0|firstmatch)\b)`,
 	)
 
-	goAffirmativeAckPredRe = regexp.MustCompile(
-		`(?i)\b(?:ack|reply|packet|stopack)\s*!=\s*false\b`,
-	)
+	fallbackTrueRe = regexp.MustCompile(`\?\?\s*true\b`)
+
+	goAffirmativeAckPredRe = regexp.MustCompile(`(?i)\b([a-zA-Z0-9_]+)\s*!=\s*false\b`)
 )
 
 func (r UnverifiedHardwareActuationRule) Check(diff string) []Finding {
@@ -104,14 +105,6 @@ func splitTopLevel(s string, op string) []string {
 
 func guaranteesAffirmativeAck(cond string, isGo bool) bool {
 	cond = unwrapOuterParens(strings.TrimSpace(cond))
-	if strings.HasPrefix(cond, "!") {
-		inner := unwrapOuterParens(strings.TrimSpace(cond[1:]))
-		if negativeAckPredRe.MatchString(inner) ||
-			affirmativeAckPredRe.MatchString(inner) ||
-			guaranteesAffirmativeAck(inner, isGo) {
-			return false
-		}
-	}
 	if branches := splitTopLevel(cond, "||"); len(branches) > 0 {
 		for _, b := range branches {
 			if !guaranteesAffirmativeAck(b, isGo) {
@@ -133,14 +126,19 @@ func guaranteesAffirmativeAck(cond string, isGo bool) bool {
 		}
 		return hasAffirmative
 	}
+	if strings.HasPrefix(cond, "!") {
+		inner := unwrapOuterParens(strings.TrimSpace(cond[1:]))
+		if negativeAckPredRe.MatchString(inner) ||
+			affirmativeAckPredRe.MatchString(inner) ||
+			guaranteesAffirmativeAck(inner, isGo) {
+			return false
+		}
+	}
 	leaf := strings.TrimSpace(cond)
-	if negativeAckPredRe.MatchString(leaf) {
+	if fallbackTrueRe.MatchString(leaf) || negativeAckPredRe.MatchString(leaf) {
 		return false
 	}
-	if affirmativeAckPredRe.MatchString(leaf) {
-		return true
-	}
-	return isGo && goAffirmativeAckPredRe.MatchString(leaf)
+	return affirmativeAckPredRe.MatchString(leaf)
 }
 
 func isVarChecked(cond string, varName string) (bool, bool) {
@@ -214,41 +212,85 @@ func checkGoInitializer(cond string, isGo bool) (bool, bool) {
 	return true, guaranteesAffirmativeAck(controllingCond, isGo)
 }
 
-func isAckGuardHeader(header string, isGo bool) bool {
-	if !strings.HasPrefix(header, "if") && !strings.Contains(header, "if (") &&
-		!strings.Contains(header, "if(") && !strings.Contains(header, "onack") &&
-		!strings.Contains(header, "onstopack") {
-		return false
-	}
+func isLikelyAckHeader(header string) (hasIf bool, isDirect bool) {
 	if strings.Contains(header, "onack") || strings.Contains(header, "onstopack") {
-		return true
+		return true, true
 	}
+	hasIf = strings.HasPrefix(header, "if") || strings.Contains(header, "if ") ||
+		strings.Contains(header, "if (") || strings.Contains(header, "if(")
+	return hasIf, false
+}
+
+func normalizeGuardCondition(header string) (string, bool) {
 	if strings.Contains(header, "else") {
 		idx := strings.Index(header, "else if")
-		if idx != -1 {
-			header = strings.TrimSpace(header[idx+4:])
-		} else {
-			return false
+		if idx == -1 {
+			return "", false
 		}
+		header = strings.TrimSpace(header[idx+4:])
 	}
 	if strings.Contains(header, "send") && !strings.Contains(header, ".issuccess") &&
 		!strings.Contains(header, ".isack") {
-		return false
+		return "", false
 	}
-
 	cond := header
 	if idx := strings.Index(header, "if "); idx != -1 {
 		cond = header[idx+2:]
 	} else if idx := strings.Index(header, "if("); idx != -1 {
 		cond = header[idx+2:]
 	}
-	cond = strings.TrimSpace(cond)
-	cond = strings.TrimSuffix(cond, "{")
-	cond = unwrapOuterParens(strings.TrimSpace(cond))
-	if hasInit, ok := checkGoInitializer(cond, isGo); hasInit {
-		return ok
+	cond = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cond), "{"))
+	return unwrapOuterParens(cond), true
+}
+
+func isAckGuardHeader(header string, isGo bool, lines []string, k int) bool {
+	hasIf, isDirect := isLikelyAckHeader(header)
+	if isDirect {
+		return true
 	}
-	return guaranteesAffirmativeAck(cond, isGo)
+	if !hasIf {
+		return false
+	}
+	cond, ok := normalizeGuardCondition(header)
+	if !ok {
+		return false
+	}
+	if hasInit, ackOk := checkGoInitializer(cond, isGo); hasInit {
+		return ackOk
+	}
+	if guaranteesAffirmativeAck(cond, isGo) {
+		return true
+	}
+	if !isGo || strings.HasPrefix(cond, "!") {
+		return false
+	}
+	m := goAffirmativeAckPredRe.FindStringSubmatch(cond)
+	return len(m) > 1 && isProvenGoBool(lines, k, m[1])
+}
+
+func isProvenGoBool(lines []string, index int, varName string) (proven bool) {
+	limit := max(0, index-20)
+	for k := index - 1; k >= limit; k-- {
+		trimmed := strings.TrimSpace(stripLineComment(lines[k]))
+		if strings.HasPrefix(trimmed, "func ") || strings.HasPrefix(trimmed, "}") {
+			return false
+		}
+		if matchGoBoolDecl(trimmed, varName) {
+			return true
+		}
+	}
+	return proven
+}
+
+func matchGoBoolDecl(line, varName string) bool {
+	return strings.HasPrefix(line, "var "+varName+" bool") ||
+		strings.Contains(line, varName+" bool") ||
+		strings.Contains(line, varName+", ok :=") ||
+		strings.Contains(line, varName+", ok =") ||
+		strings.Contains(line, varName+" := ack.IsSuccess()") ||
+		strings.Contains(line, varName+" = ack.IsSuccess()") ||
+		strings.Contains(line, varName+" := true") ||
+		strings.Contains(line, varName+" := false")
 }
 
 func isAckSwitchCaseLabel(lowerCase string) bool {
@@ -266,6 +308,10 @@ func isAckSwitchCaseLabel(lowerCase string) bool {
 }
 
 func collectOpeningBraceHeader(lines []string, k int, trimmed string) string {
+	if strings.HasPrefix(trimmed, "if") || strings.Contains(trimmed, "if ") ||
+		strings.Contains(trimmed, "if(") || strings.HasPrefix(trimmed, "else") {
+		return trimmed
+	}
 	header := trimmed
 	for h := k - 1; h >= 0 && k-h <= 10; h-- {
 		prev := strings.TrimSpace(stripLineComment(lines[h]))
@@ -299,7 +345,7 @@ func checkCaseAck(trimmed string, inNonAckCase *bool) bool {
 func handleEnclosingBrace(lines []string, k int, trimmed string, isGo bool) (bool, bool) {
 	header := collectOpeningBraceHeader(lines, k, trimmed)
 	lowerHeader := strings.ToLower(header)
-	if isAckGuardHeader(lowerHeader, isGo) {
+	if isAckGuardHeader(lowerHeader, isGo, lines, k) {
 		return true, false
 	}
 	stop := strings.Contains(lowerHeader, "void ") ||
@@ -393,22 +439,11 @@ func scanLineBraces(lineScan string, braceDepth *int, inBlock *bool) {
 	inString := false
 	var stringChar byte
 	for c := 0; c < len(lineScan); c++ {
+		if nextC, ok := scanStringLiteral(lineScan, c, &inString, &stringChar); ok {
+			c = nextC
+			continue
+		}
 		ch := lineScan[c]
-		if inString {
-			if ch == '\\' {
-				c++
-				continue
-			}
-			if ch == stringChar {
-				inString = false
-			}
-			continue
-		}
-		if ch == '"' || ch == '\'' {
-			inString = true
-			stringChar = ch
-			continue
-		}
 		if ch == '{' {
 			*braceDepth++
 			*inBlock = true

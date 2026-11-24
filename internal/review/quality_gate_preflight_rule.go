@@ -20,8 +20,11 @@ func (QualityGatePreflightRule) Name() string {
 var (
 	gateScriptFileRe = regexp.MustCompile(`(?i)(?:quality_gate|gate|check|preflight).*\.sh$`)
 
-	// testDiscoveryRe matches python test discovery commands
-	testDiscoveryRe = regexp.MustCompile(`(?i)python3?\s+-m\s+unittest\s+discover\b`)
+	// qualityGateCommandRe matches python test runners and linters
+	qualityGateCommandRe = regexp.MustCompile(
+		`(?i)(?:python3?\s+-m\s+(?:unittest(?:\s+discover)?|pytest|flake8|pylint|mypy|ruff)\b|` +
+			`\b(?:pytest|flake8|pylint|mypy|ruff)\b)`,
+	)
 
 	// preflightCheckRe matches early preflight python dependency checks
 	preflightCheckRe = regexp.MustCompile(`(?i)python3?\s+-c\s+["']import\s+[^"']*["']`)
@@ -32,12 +35,12 @@ func (r QualityGatePreflightRule) Check(diff string) []Finding {
 }
 
 func checkQualityGateBlock(b diffSourceBlock, text string, start int, wt bool, seen map[string]bool) []Finding {
-	if !testDiscoveryRe.MatchString(text) || preflightCheckRe.MatchString(text) {
+	if !qualityGateCommandRe.MatchString(text) || preflightCheckRe.MatchString(text) {
 		return nil
 	}
-	loc := testDiscoveryRe.FindStringIndex(text)
+	loc := qualityGateCommandRe.FindStringIndex(text)
 	lineNum := start + strings.Count(text[:loc[0]], "\n")
-	if !shouldReportFinding(b, lineNum, wt, seen) {
+	if !shouldReportAddedFinding(b, lineNum, wt, seen) {
 		return nil
 	}
 	return []Finding{{

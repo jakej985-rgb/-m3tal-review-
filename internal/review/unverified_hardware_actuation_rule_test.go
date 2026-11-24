@@ -514,6 +514,7 @@ func TestUnverifiedHardwareActuationRule(t *testing.T) {
 --- a/internal/serial/bridge.go
 +++ b/internal/serial/bridge.go
 @@ -100,5 +100,5 @@
++	var reply bool
 +	if reply != false {
 +		b.publishTelemetry(telemetry{stopConfirmed: true})
 +	}
@@ -521,6 +522,113 @@ func TestUnverifiedHardwareActuationRule(t *testing.T) {
 		findings := rule.Check(diff)
 		if len(findings) != 0 {
 			t.Fatalf("expected 0 findings for Go reply != false guard, got %d", len(findings))
+		}
+	})
+
+	t.Run("flags stop confirmation on unproven Go reply inequality with false", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	reply := decoded["ack"]
++	if reply != false {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for unproven Go reply != false guard, got 0")
+		}
+	})
+
+	t.Run("flags stop confirmation when nullable ACK has fallback to true", func(t *testing.T) {
+		diff := `diff --git a/lib/services/hardware_bridge.dart b/lib/services/hardware_bridge.dart
+--- a/lib/services/hardware_bridge.dart
++++ b/lib/services/hardware_bridge.dart
+@@ -100,5 +100,5 @@
++    if (stopAck?.ok ?? true) {
++      _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for stopAck?.ok ?? true fallback, got 0")
+		}
+	})
+
+	t.Run("allows stop confirmation when nullable ACK has fallback to false", func(t *testing.T) {
+		diff := `diff --git a/lib/services/hardware_bridge.dart b/lib/services/hardware_bridge.dart
+--- a/lib/services/hardware_bridge.dart
++++ b/lib/services/hardware_bridge.dart
+@@ -100,5 +100,5 @@
++    if (stopAck?.ok ?? false) {
++      _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for stopAck?.ok ?? false fallback, got %d", len(findings))
+		}
+	})
+
+	t.Run("allows stop confirmation when nullable ACK is compared to true", func(t *testing.T) {
+		diff := `diff --git a/lib/services/hardware_bridge.dart b/lib/services/hardware_bridge.dart
+--- a/lib/services/hardware_bridge.dart
++++ b/lib/services/hardware_bridge.dart
+@@ -100,5 +100,5 @@
++    if (stopAck?.ok == true) {
++      _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for stopAck?.ok == true, got %d", len(findings))
+		}
+	})
+
+	t.Run("allows stop confirmation when guarded by !busy && ack.ok", func(t *testing.T) {
+		diff := `diff --git a/lib/services/hardware_bridge.dart b/lib/services/hardware_bridge.dart
+--- a/lib/services/hardware_bridge.dart
++++ b/lib/services/hardware_bridge.dart
+@@ -100,5 +100,5 @@
++    if (!busy && ack.ok) {
++      _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for !busy && ack.ok, got %d", len(findings))
+		}
+	})
+
+	t.Run("flags stop confirmation when guarded by !(ack.ok)", func(t *testing.T) {
+		diff := `diff --git a/lib/services/hardware_bridge.dart b/lib/services/hardware_bridge.dart
+--- a/lib/services/hardware_bridge.dart
++++ b/lib/services/hardware_bridge.dart
+@@ -100,5 +100,5 @@
++    if (!(ack.ok)) {
++      _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for !(ack.ok), got 0")
+		}
+	})
+
+	t.Run("flags stop confirmation when Go reply is negated inequality", func(t *testing.T) {
+		diff := `diff --git a/internal/serial/bridge.go b/internal/serial/bridge.go
+--- a/internal/serial/bridge.go
++++ b/internal/serial/bridge.go
+@@ -100,5 +100,5 @@
++	var reply bool
++	if !(reply != false) {
++		b.publishTelemetry(telemetry{stopConfirmed: true})
++	}
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for !(reply != false), got 0")
 		}
 	})
 

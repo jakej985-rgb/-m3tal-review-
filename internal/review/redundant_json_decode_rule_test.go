@@ -273,4 +273,41 @@ func TestRedundantJsonDecodeRule(t *testing.T) {
 			t.Fatalf("expected 0 findings when payload is assigned after quoted URL, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags sequential decode across field assignment when untyped JS parameter shadows field", func(t *testing.T) {
+		diff := `diff --git a/web/route_loader.js b/web/route_loader.js
+--- a/web/route_loader.js
++++ b/web/route_loader.js
+@@ -80,5 +80,5 @@
++  load(raw) {
++    const before = JSON.parse(raw);
++    this.raw = fallback;
++    const after = JSON.parse(raw);
++  }
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for duplicate decode in untyped JS method, got 0")
+		}
+	})
+
+	t.Run("does not treat sibling method parameter as in-scope local across method boundary", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,9 +80,9 @@
++  void init(String raw) {
++    this.raw = raw;
++  }
++  void reload() {
++    final before = jsonDecode(raw);
++    this.raw = '{"new":1}';
++    final after = jsonDecode(raw);
++  }
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings when mutating field in method without parameter, got %d", len(findings))
+		}
+	})
 }

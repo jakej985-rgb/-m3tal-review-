@@ -63,8 +63,11 @@ func sourceCodeMask(file, source string) []bool {
 	ext := strings.ToLower(path.Ext(file))
 	python := extIs(ext, ".py")
 	php := extIs(ext, ".php", ".phtml")
-	hashComments := python || php || extIs(ext, ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env",
-		".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf", ".hcl", ".graphql", ".gql", ".fish")
+	hashComments := python || php || extIs(
+		ext, ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env",
+		".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf", ".hcl", ".graphql", ".gql",
+		".fish",
+	)
 	lineComment, blockComment := false, false
 	var quote byte
 	triple := false
@@ -143,8 +146,11 @@ func offsetInComment(file, source string, offset int) bool {
 	}
 	ext := strings.ToLower(path.Ext(file))
 	php := extIs(ext, ".php", ".phtml")
-	hashComments := extIs(ext, ".py", ".php", ".phtml", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env",
-		".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf", ".hcl", ".graphql", ".gql", ".fish")
+	hashComments := extIs(
+		ext, ".py", ".php", ".phtml", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg",
+		".properties", ".env", ".rb", ".rake", ".pl", ".pm", ".ex", ".exs", ".r", ".jl", ".nim", ".cr", ".tf",
+		".hcl", ".graphql", ".gql", ".fish",
+	)
 	var quote byte
 	triple := false
 	lineComment := false
@@ -192,7 +198,8 @@ func offsetInComment(file, source string, offset int) bool {
 				continue
 			}
 		}
-		if (hashComments && c == '#') || (extIs(ext, ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env") && c == ';') {
+		isSemiComment := extIs(ext, ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".properties", ".env") && c == ';'
+		if (hashComments && c == '#') || isSemiComment {
 			if php && c == '#' && i+1 < offset && source[i+1] == '[' {
 				// PHP 8 attribute: do not treat as comment
 			} else {
@@ -273,7 +280,8 @@ func sourceContentStamp(repositoryRoot, file string, workingTree bool) string {
 	}
 	if workingTree {
 		if info, err := os.Stat(filepath.Join(repositoryRoot, file)); err == nil {
-			return "wt:" + info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z") + ":" + strconv.FormatInt(info.Size(), 10)
+			modTime := info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z")
+			return "wt:" + modTime + ":" + strconv.FormatInt(info.Size(), 10)
 		}
 		return "wt:missing"
 	}
@@ -328,6 +336,9 @@ func sourceBlocksUncached(diff, repositoryRoot string, workingTree bool) []diffS
 }
 
 func resolveBlockSource(block diffSourceBlock, root string, workingTree bool) (string, int) {
+	if block.text != "" {
+		return block.text, block.firstLine
+	}
 	if fullData, err := readRuleSource(root, block.file, workingTree); err == nil && len(fullData) > 0 {
 		return string(fullData), 1
 	}
@@ -400,11 +411,39 @@ func maskBlockComment(src string, i int, b *strings.Builder) int {
 	return i + 1
 }
 
-func shouldReportFinding(b diffSourceBlock, lineNum int, wt bool, seen map[string]bool) bool {
-	if len(b.addedLines) > 0 && !b.addedLines[lineNum] && !wt {
-		return false
+func maskDartSlashComment(src string, i int, b *strings.Builder) (int, bool) {
+	if i+1 >= len(src) {
+		return i, false
+	}
+	switch src[i+1] {
+	case '/':
+		return maskLineComment(src, i, b), true
+	case '*':
+		return maskBlockComment(src, i, b), true
+	default:
+		return i, false
+	}
+}
+
+func checkReportCondition(allowUnchanged bool, b diffSourceBlock, lineNum int, wt bool, seen map[string]bool) bool {
+	if !wt {
+		if allowUnchanged {
+			if len(b.addedLines) > 0 && !b.addedLines[lineNum] {
+				return false
+			}
+		} else if !b.addedLines[lineNum] {
+			return false
+		}
 	}
 	return !dedupeFinding(seen, b.file, lineNum)
+}
+
+func shouldReportFinding(b diffSourceBlock, lineNum int, wt bool, seen map[string]bool) bool {
+	return checkReportCondition(true, b, lineNum, wt, seen)
+}
+
+func shouldReportAddedFinding(b diffSourceBlock, lineNum int, wt bool, seen map[string]bool) bool {
+	return checkReportCondition(false, b, lineNum, wt, seen)
 }
 
 type ruleCheckFn func(b diffSourceBlock, text string, start int, seen map[string]bool) []Finding

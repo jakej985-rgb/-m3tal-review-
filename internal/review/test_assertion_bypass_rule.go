@@ -67,7 +67,7 @@ func checkTestBypassBlock(b diffSourceBlock, text string, start int, wt bool, se
 		if !hasTestAssertion(lines, i) {
 			continue
 		}
-		if !shouldReportFinding(b, lineNum, wt, seen) {
+		if !shouldReportAddedFinding(b, lineNum, wt, seen) {
 			continue
 		}
 		bypassFindings = append(bypassFindings, Finding{

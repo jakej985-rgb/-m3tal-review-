@@ -29,7 +29,7 @@ var (
 
 	// repeatedDecoderCallRe matches calling decoders on an input variable
 	repeatedDecoderCallRe = regexp.MustCompile(
-		`(?i)\b(tryDecodeList|jsonDecode|json\.decode|deserializeList)\s*\(\s*([a-zA-Z0-9_]+)\s*\)`,
+		`(?i)\b(tryDecodeList|jsonDecode|json\.decode|JSON\.parse|deserializeList)\s*\(\s*([a-zA-Z0-9_]+)\s*\)`,
 	)
 
 	decodesProfilesRe = regexp.MustCompile(
@@ -50,6 +50,9 @@ var (
 	)
 	constructorHeaderRe = regexp.MustCompile(
 		`\b[A-Z][a-zA-Z0-9_]*\s*\(([^)]*)\)\s*[{=]`,
+	)
+	jsMethodHeaderRe = regexp.MustCompile(
+		`^\s*(?:static\s+)?(?:async\s+)?\*?\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(([^)]*)\)\s*(?:async\s*)?[{=]`,
 	)
 	localDeclExtractRe = regexp.MustCompile(
 		`\b(?:final|var|String|int|double|bool|Map|dynamic|[A-Z][a-zA-Z0-9_<>?]*)\s+([a-zA-Z0-9_]+)\s*=`,
@@ -391,6 +394,7 @@ func isMethodOrFuncHeader(line string) (string, bool) {
 	trimmed := strings.TrimSpace(line)
 	for _, kw := range []string{
 		"if ", "if(", "for ", "for(", "while ", "while(", "switch ", "switch(", "catch ", "catch(",
+		"with ", "with(",
 	} {
 		if strings.HasPrefix(trimmed, kw) {
 			return "", false
@@ -402,7 +406,31 @@ func isMethodOrFuncHeader(line string) (string, bool) {
 	if m := constructorHeaderRe.FindStringSubmatch(line); len(m) > 1 {
 		return m[1], true
 	}
+	if m := jsMethodHeaderRe.FindStringSubmatch(trimmed); len(m) > 2 {
+		name := m[1]
+		if name != "if" && name != "for" && name != "while" && name != "switch" &&
+			name != "catch" && name != "with" && name != "function" && name != "return" {
+			return m[2], true
+		}
+	}
 	return "", false
+}
+
+func methodDeclaresParam(line, arg string) bool {
+	if params, isHeader := isMethodOrFuncHeader(line); isHeader {
+		return containsBareIdent(params, arg) || matchExtractedIdent(paramDeclExtractRe, line, arg)
+	}
+	return false
+}
+
+func updateBraceDepth(clean string, depth *int) {
+	for c := len(clean) - 1; c >= 0; c-- {
+		if clean[c] == '}' {
+			*depth++
+		} else if clean[c] == '{' {
+			*depth--
+		}
+	}
 }
 
 func isArgShadowed(lines []string, currentLineIdx int, arg string) bool {
@@ -412,15 +440,22 @@ func isArgShadowed(lines []string, currentLineIdx int, arg string) bool {
 		limit = 0
 	}
 	shadowed := false
+	depth := 0
 	for k := start; k >= limit; k-- {
 		line := lines[k]
-		if strings.HasPrefix(strings.TrimSpace(line), "class ") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "class ") {
 			break
 		}
-		if params, isHeader := isMethodOrFuncHeader(line); isHeader {
-			return containsBareIdent(params, arg) || matchExtractedIdent(paramDeclExtractRe, line, arg)
+		clean := stripStringsAndComments(line)
+		updateBraceDepth(clean, &depth)
+		if depth < 0 {
+			return methodDeclaresParam(line, arg) || (k > 0 && methodDeclaresParam(lines[k-1], arg))
 		}
-		if matchExtractedIdent(localDeclExtractRe, line, arg) {
+		if methodDeclaresParam(line, arg) {
+			return true
+		}
+		if depth == 0 && matchExtractedIdent(localDeclExtractRe, line, arg) {
 			shadowed = true
 			break
 		}

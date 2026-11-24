@@ -25,23 +25,29 @@ var (
 	rootMaterialAppRe   = regexp.MustCompile(`\bMaterialApp(?:\.router)?\s*\(`)
 )
 
-func stripDartComments(src string) string {
-	var b strings.Builder
+func stripDartComments(src string) (out string) {
+	b := strings.Builder{}
 	b.Grow(len(src))
-	for i := 0; i < len(src); i++ {
-		ch := src[i]
-		if ch == '/' && i+1 < len(src) && src[i+1] == '/' {
-			i = maskLineComment(src, i, &b)
+	var (
+		inString   bool
+		stringChar byte
+	)
+	for i, n := 0, len(src); i < n; i++ {
+		if nextI, ok := scanStringLiteral(src, i, &inString, &stringChar); ok {
+			b.WriteString(src[i:min(nextI+1, n)])
+			i = nextI
 			continue
 		}
-		if ch == '/' && i+1 < len(src) && src[i+1] == '*' {
-			i = maskBlockComment(src, i, &b)
-			continue
+		if src[i] == '/' {
+			if nextI, ok := maskDartSlashComment(src, i, &b); ok {
+				i = nextI
+				continue
+			}
 		}
-		b.WriteByte(ch)
+		b.WriteByte(src[i])
 	}
-	res := b.String()
-	return res
+	out = b.String()
+	return
 }
 
 func (r ShortcutScopeRule) Check(diff string) []Finding {
