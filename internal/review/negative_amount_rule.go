@@ -97,18 +97,72 @@ func getIfCondition(lines []string, j int) string {
 	return full
 }
 
-func isRejectionClauseUnconjoined(ifCond, compSnippet string) bool {
-	if !strings.Contains(ifCond, "&&") {
-		return true
-	}
-	terms := strings.Split(ifCond, "||")
-	for _, term := range terms {
-		trimmed := strings.TrimSpace(term)
-		if strings.Contains(trimmed, compSnippet) {
-			if !strings.Contains(trimmed, "&&") {
-				return true
+func unwrapOuterParens(s string) string {
+	s = strings.TrimSpace(s)
+	for strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")") {
+		depth := 0
+		matched := true
+		for i, r := range s {
+			if r == '(' {
+				depth++
+			} else if r == ')' {
+				depth--
+				if depth == 0 && i < len(s)-1 {
+					matched = false
+					break
+				}
 			}
 		}
+		if matched && depth == 0 {
+			s = strings.TrimSpace(s[1 : len(s)-1])
+		} else {
+			break
+		}
+	}
+	return s
+}
+
+func splitTopLevelOr(s string) []string {
+	var terms []string
+	depth := 0
+	start := 0
+	n := len(s)
+	for i := 0; i < n; i++ {
+		switch s[i] {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		case '|':
+			if depth == 0 && i+1 < n && s[i+1] == '|' {
+				terms = append(terms, s[start:i])
+				start = i + 2
+				i++
+			}
+		}
+	}
+	terms = append(terms, s[start:])
+	return terms
+}
+
+func isRejectionClauseUnconjoined(ifCond, compSnippet string) bool {
+	s := unwrapOuterParens(ifCond)
+	if !strings.Contains(s, "&&") {
+		return true
+	}
+	terms := splitTopLevelOr(s)
+	if len(terms) > 1 {
+		for _, term := range terms {
+			t := unwrapOuterParens(term)
+			if strings.Contains(t, compSnippet) {
+				if isRejectionClauseUnconjoined(t, compSnippet) {
+					return true
+				}
+			}
+		}
+		return false
 	}
 	return false
 }

@@ -328,7 +328,7 @@ func isCallProtectedByReceivers(line string, activeReceivers map[string]bool) bo
 	if m := regexp.MustCompile(`\b([a-zA-Z0-9_]+)\.(?:go|push|pop|read|watch|select)\b`).FindStringSubmatch(line); len(m) > 1 {
 		recv := m[1]
 		if recv == "ref" {
-			return hasStateMounted || activeReceivers["ref"] || activeReceivers["this"] || activeReceivers["context"]
+			return hasStateMounted || activeReceivers["ref"] || activeReceivers["this"]
 		}
 		if (recv == "context" || recv == "this") && (hasStateMounted || activeReceivers["context"]) {
 			return true
@@ -621,31 +621,32 @@ func (r AsyncGapRule) checkExprSinks(
 	return nil
 }
 
-func getEnclosingFuncDepth(lines []string, awaitIdx int, currentBraceDepth int, methodBaseDepth int, hasMethod bool) int {
-	if hasMethod {
-		return methodBaseDepth + 1
+var (
+	controlFlowBlockRe = regexp.MustCompile(`\b(if|else|for|while|do|switch|try|catch|finally)\s*(?:\([^)]*\))?\s*$`)
+	typeDeclBlockRe    = regexp.MustCompile(`\b(class|enum|mixin|extension)\b`)
+	funcOrClosureRe    = regexp.MustCompile(`(?:\b(?:async|sync)\*?|\bfunction\b|\)\s*(?:async)?)\s*$`)
+)
+
+func isFuncOrClosureHeader(header string) bool {
+	h := strings.TrimSpace(header)
+	if controlFlowBlockRe.MatchString(h) || typeDeclBlockRe.MatchString(h) {
+		return false
 	}
-	d := currentBraceDepth
-	for k := awaitIdx; k >= 0; k-- {
-		line := lines[k]
-		for idx := len(line) - 1; idx >= 0; idx-- {
-			if line[idx] == '{' {
-				d--
-			} else if line[idx] == '}' {
-				d++
-			}
-		}
-		if methodDeclRe.MatchString(line) ||
-			eventCallbackRe.MatchString(line) ||
-			strings.Contains(line, "async") ||
-			strings.Contains(line, "=>") {
-			return d + 1
-		}
+	if methodDeclRe.MatchString(h) || eventCallbackRe.MatchString(h) || funcOrClosureRe.MatchString(h) {
+		return true
 	}
-	if currentBraceDepth > 0 {
-		return 1
+	if strings.Contains(h, "async") {
+		return true
 	}
-	return 0
+	if strings.HasSuffix(h, ")") {
+		return true
+	}
+	return false
+}
+
+type braceScopeEntry struct {
+	depth  int
+	isFunc bool
 }
 
 func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []Finding {
@@ -655,6 +656,7 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 	currentMethod := ""
 	methodBaseDepth := 0
 	currentBraceDepth := 0
+	var fileBraceStack []braceScopeEntry
 
 	for i, line := range lines {
 		lineNum := block.firstLine + i
@@ -665,21 +667,64 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 			methodBaseDepth = currentBraceDepth
 		}
 
-		// Track braces to know when we exit currentMethod
-		for _, ch := range line {
-			if ch == '{' {
-				currentBraceDepth++
-			} else if ch == '}' {
-				currentBraceDepth--
-				if currentMethod != "" && currentBraceDepth <= methodBaseDepth {
-					currentMethod = ""
+		awaitPos := -1
+		if loc := awaitExprRe.FindStringIndex(line); loc != nil {
+			awaitPos = loc[0]
+		}
+
+		processBraces := func(startChar, endChar int) {
+			for cIdx := startChar; cIdx < endChar; cIdx++ {
+				ch := line[cIdx]
+				if ch == '{' {
+					currentBraceDepth++
+					header := ""
+					before := strings.TrimSpace(line[:cIdx])
+					if before != "" {
+						header = before
+					} else {
+						for prev := i - 1; prev >= 0; prev-- {
+							p := strings.TrimSpace(lines[prev])
+							if p != "" {
+								header = p
+								break
+							}
+						}
+					}
+					isFunc := isFuncOrClosureHeader(header)
+					fileBraceStack = append(fileBraceStack, braceScopeEntry{depth: currentBraceDepth, isFunc: isFunc})
+				} else if ch == '}' {
+					currentBraceDepth--
+					if len(fileBraceStack) > 0 {
+						fileBraceStack = fileBraceStack[:len(fileBraceStack)-1]
+					}
+					if currentMethod != "" && currentBraceDepth <= methodBaseDepth {
+						currentMethod = ""
+					}
 				}
 			}
 		}
 
-		// Look for an await expression (async gap)
-		if !awaitExprRe.MatchString(line) {
+		if awaitPos >= 0 {
+			processBraces(0, awaitPos)
+		} else {
+			processBraces(0, len(line))
 			continue
+		}
+
+		// Enclosing function or closure depth
+		enclosingFuncDepth := 0
+		for idx := len(fileBraceStack) - 1; idx >= 0; idx-- {
+			if fileBraceStack[idx].isFunc {
+				enclosingFuncDepth = fileBraceStack[idx].depth
+				break
+			}
+		}
+		if enclosingFuncDepth == 0 {
+			if currentMethod != "" {
+				enclosingFuncDepth = methodBaseDepth + 1
+			} else if currentBraceDepth > 0 {
+				enclosingFuncDepth = 1
+			}
 		}
 
 		// Find the end line of the await statement (balanced parentheses and semicolon)
@@ -709,8 +754,14 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 		cumulativeProvenReceivers := make(map[string]bool)
 		scopeBraceDepth := 0
 
-		enclosingFuncDepth := getEnclosingFuncDepth(lines, i, currentBraceDepth, methodBaseDepth, currentMethod != "")
 		runningBraceDepth := currentBraceDepth
+		for cIdx := awaitPos; cIdx < len(line); cIdx++ {
+			if line[cIdx] == '{' {
+				runningBraceDepth++
+			} else if line[cIdx] == '}' {
+				runningBraceDepth--
+			}
+		}
 		for k := i + 1; k <= stmtEnd && k < len(lines); k++ {
 			for _, ch := range lines[k] {
 				if ch == '{' {
@@ -743,28 +794,25 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 			}
 
 			// Check for entering positive guard branch: if (mounted && ...) {
+			var pendingGuardRecs map[string]bool
+			isGuardLine := false
 			if safe, recs := isSafePositiveMountedGuard(currLine); safe && strings.Contains(currLine, "{") {
+				isGuardLine = true
 				currentActive := getActiveReceivers(cumulativeProvenReceivers, guardStack)
 				if f := r.checkConditionSinks(currLine, currLineNum, lineNum, currentActive, block, seen); f != nil {
 					findings = append(findings, *f)
 				}
-				for _, ch := range currLine {
-					if ch == '{' {
-						runningBraceDepth++
-						scopeBraceDepth++
-					} else if ch == '}' {
-						runningBraceDepth--
-						scopeBraceDepth--
-					}
-				}
-				guardStack = append(guardStack, guardScope{braceDepth: scopeBraceDepth, receivers: recs})
-				continue
+				pendingGuardRecs = recs
 			}
 
 			for _, ch := range currLine {
 				if ch == '{' {
 					runningBraceDepth++
 					scopeBraceDepth++
+					if pendingGuardRecs != nil {
+						guardStack = append(guardStack, guardScope{braceDepth: scopeBraceDepth, receivers: pendingGuardRecs})
+						pendingGuardRecs = nil
+					}
 				} else if ch == '}' {
 					runningBraceDepth--
 					scopeBraceDepth--
@@ -772,6 +820,10 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 						guardStack = guardStack[:len(guardStack)-1]
 					}
 				}
+			}
+
+			if isGuardLine {
+				continue
 			}
 
 			// Stop only when the enclosing function or callback boundary exits
@@ -850,6 +902,7 @@ func (r AsyncGapRule) checkBlock(block diffSourceBlock, seen map[string]bool) []
 				}
 			}
 		}
+		processBraces(awaitPos, len(line))
 	}
 
 	return findings

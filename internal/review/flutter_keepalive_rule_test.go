@@ -116,4 +116,26 @@ new file mode 100644
 			t.Fatalf("expected 0 findings, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags added interactive controller under unchanged class declaration", func(t *testing.T) {
+		diff := `diff --git a/lib/presentation/features/terminal/terminal_row.dart b/lib/presentation/features/terminal/terminal_row.dart
+--- a/lib/presentation/features/terminal/terminal_row.dart
++++ b/lib/presentation/features/terminal/terminal_row.dart
+@@ -1,7 +1,9 @@
+ class TerminalRow extends StatefulWidget {
+   const TerminalRow({super.key});
+   State<TerminalRow> createState() => _TerminalRowState();
+ }
+ class _TerminalRowState extends State<TerminalRow> {
++  final _commandController = TextEditingController();
+   Widget build(BuildContext context) {
+     return TextField(controller: _commandController);
+   }
+ }
+`
+		findings := rule.Check(diff)
+		if len(findings) != 1 {
+			t.Fatalf("expected 1 finding when controller is added in unchanged state class, got %d", len(findings))
+		}
+	})
 }

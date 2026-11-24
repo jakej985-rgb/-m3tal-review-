@@ -60,4 +60,22 @@ new file mode 100644
 			t.Fatalf("expected 0 findings, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags added cacheHeight when Image call header and cacheWidth are unchanged context", func(t *testing.T) {
+		diff := `diff --git a/lib/presentation/widgets/thumbnail.dart b/lib/presentation/widgets/thumbnail.dart
+--- a/lib/presentation/widgets/thumbnail.dart
++++ b/lib/presentation/widgets/thumbnail.dart
+@@ -5,5 +5,6 @@
+     return Image.network(
+       'https://example.com/photo.png',
+       cacheWidth: 400,
++      cacheHeight: 200,
+       fit: BoxFit.contain,
+     );
+`
+		findings := rule.Check(diff)
+		if len(findings) != 1 {
+			t.Fatalf("expected 1 finding when cacheHeight is added to existing cacheWidth invocation, got %d", len(findings))
+		}
+	})
 }

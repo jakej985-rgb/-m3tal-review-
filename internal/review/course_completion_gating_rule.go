@@ -27,11 +27,44 @@ var (
 	siblingCompletionCheckRe = regexp.MustCompile(`\b(?:siblings|loadedLessons|courseLessons)\s*\.\s*every\s*\(`)
 
 	// courseCreditGrantRe detects granting course completion credit or status
-	courseCreditGrantRe = regexp.MustCompile(`(?i)\b(?:markCourseComplete\w*|completeCourse\w*|awardCredit\w*|grantCredit\w*|markCompleted\w*|setCourseCompleted\w*|courseCompleted\s*=|isCourseCompleted\s*=)\b`)
+	courseCreditGrantRe = regexp.MustCompile(`(?i)(?:\b(?:markCourseComplete\w*|completeCourse\w*|awardCredit\w*|grantCredit\w*|markCompleted\w*|setCourseCompleted\w*)\b|\b(?:courseCompleted|isCourseCompleted|isCourseComplete)\s*=\s*(?:true|1)\b)`)
 
 	// authoritativeLessonIdsEveryRe checks for authoritative progress evaluation on all required course lesson IDs
 	authoritativeLessonIdsEveryRe = regexp.MustCompile(`\b\w+\.lessonIds\s*\.\s*every\s*\(`)
+
+	// authoritativeEarlyExitRe detects early exit on non-authoritative completion
+	authoritativeEarlyExitRe = regexp.MustCompile(`(?s)if\s*\([^;{}]*!\s*\w+\.lessonIds\s*\.\s*every\s*\([^)]*\)[^;{}]*\)\s*(?:return\b|throw\b|\{[^}]*(?:return\b|throw\b))`)
 )
+
+func hasPrecedingAuthoritativeGuard(lines []string, currentIdx int) bool {
+	startIdx := currentIdx - 50
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	slice := strings.Join(lines[startIdx:currentIdx], "\n")
+	if authoritativeEarlyExitRe.MatchString(slice) {
+		return true
+	}
+
+	braceDepth := 0
+	for k := currentIdx - 1; k >= startIdx; k-- {
+		l := lines[k]
+		for idx := len(l) - 1; idx >= 0; idx-- {
+			if l[idx] == '}' {
+				braceDepth++
+			} else if l[idx] == '{' {
+				if braceDepth > 0 {
+					braceDepth--
+				} else {
+					if strings.Contains(l, "if") && authoritativeLessonIdsEveryRe.MatchString(l) && !strings.Contains(l, "!") {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
 
 func (r CourseCompletionGatingRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
@@ -62,11 +95,6 @@ func (r CourseCompletionGatingRule) CheckContext(ctx context.Context, diff strin
 
 		lines := strings.Split(scanText, "\n")
 		for i, line := range lines {
-			lineNum := startLine + i
-			if len(block.addedLines) > 0 && !block.addedLines[lineNum] {
-				continue
-			}
-
 			if siblingCompletionCheckRe.MatchString(line) {
 				// Inspect the surrounding completion path (up to 30 lines)
 				end := i + 30
@@ -83,6 +111,31 @@ func (r CourseCompletionGatingRule) CheckContext(ctx context.Context, diff strin
 				// If this completion path evaluates authoritative course.lessonIds.every, it's safe
 				if authoritativeLessonIdsEveryRe.MatchString(contextSlice) {
 					continue
+				}
+
+				// If a preceding check in the same function guards with an authoritative check, it's safe
+				if hasPrecedingAuthoritativeGuard(lines, i) {
+					continue
+				}
+
+				lineNum := startLine + i
+				if len(block.addedLines) > 0 {
+					touchesAdded := false
+					firstAdded := -1
+					for l := startLine + i; l < startLine+end; l++ {
+						if block.addedLines[l] {
+							touchesAdded = true
+							if firstAdded == -1 {
+								firstAdded = l
+							}
+						}
+					}
+					if !touchesAdded {
+						continue
+					}
+					if !block.addedLines[lineNum] && firstAdded != -1 {
+						lineNum = firstAdded
+					}
 				}
 
 				key := block.file + ":" + strconv.Itoa(lineNum)
