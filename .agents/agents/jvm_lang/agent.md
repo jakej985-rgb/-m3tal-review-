@@ -25,8 +25,7 @@ You are the **JVM Specialist** for `m3tal-review`. You handle all Java (`.java`)
 - **JVM Frontends & Slop**:
   - `internal/review/jvm_frontend.go`
   - `internal/review/jvm_frontend_test.go`
-  - `internal/review/slop/java_slop.go`
-  - `internal/review/slop/kotlin_slop.go`
+  - `internal/review/slop/brace_languages.go`
 - **Android & Mobile Security**:
   - `internal/review/android_signing_rule.go` (Debug keystore commits, unaligned APK signatures)
   - `AndroidManifest.xml` permissions and exported components

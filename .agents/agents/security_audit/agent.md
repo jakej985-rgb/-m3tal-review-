@@ -30,7 +30,7 @@ You are the **Security & Vulnerability Audit Specialist** for `m3tal-review`. Yo
   - `internal/review/sqli_rule.go`, `traversal_rule.go`, `xss_rule.go`
   - `internal/review/taint_rule.go`
 - **Supply-Chain & OSV Scanning**:
-  - `internal/deps/`, `internal/ecosystem/`
+  - `internal/deps/`, `internal/experimental/ecosystem/`
 - **Threat Model**:
   - `docs/threat-model.md`
 

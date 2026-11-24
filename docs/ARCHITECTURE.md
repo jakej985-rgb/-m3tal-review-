@@ -2,7 +2,7 @@
 
 How `m3tal-review` is organized internally. For behavior guarantees and scope
 limits, see [threat-model.md](threat-model.md); for false-positive tuning see
-[fp-tuning.md](fp-tuning.md).
+[history/fp-tuning.md](history/fp-tuning.md).
 
 ## Package layout
 
@@ -13,7 +13,11 @@ internal/cli/                 # command dispatch, flags, GitHub integration,
 internal/git/                 # thin wrapper over the `git` CLI:
                               # staged/unstaged/base diffs, file lists,
                               # statuses, repository root, file contents
-internal/review/              # review engine, rules, storage, history
+internal/review/              # review engine, rules, report model, storage
+internal/review/history/      # JSONL history: record type, append/read,
+                              # retention pruning, cross-process lock
+internal/review/fsutil/       # injectable fs operations for atomic writes
+internal/review/safetext/     # terminal/log control-character escaping
 internal/review/language/     # extension → language routing for analyzers
 internal/review/slop/         # per-language code-quality analyzers
 internal/review/model/        # shared finding model
@@ -33,7 +37,22 @@ internal/analysis/authproto/  # authproto/1 modeled crypto checks
 internal/analysis/pipeline/   # semantic orchestrator: shared frontend
                               # load, contract discovery, bounded
                               # parallel analyzers, deterministic merge
+internal/experimental/        # implemented, tested subsystems that are not
+                              # wired into the CLI; see its README
 ```
+
+`internal/cli` is split by command (`cmd_audit.go`, `cmd_review.go`,
+`cmd_history.go`, `cmd_misc.go`) with the shared dispatcher in `cli.go` and
+the default rule registry owned by `internal/review/registry.go`.
+`internal/experimental` is quarantined design work: nothing outside those
+packages imports it, and its documentation lives in `docs/experimental/`.
+
+`internal/review/history` owns the JSONL history log and does not import
+`internal/review`. The report types, report writer/reader/validator, and
+history recovery stay in `internal/review` because `attestation.go`,
+`snippet.go`, and `analysis_adapter.go` take `*Report`; see
+[history/storage-split.md](history/storage-split.md) for the concrete
+references that blocked a full split.
 
 `internal/cli` never contains detection logic; it gathers input (a diff, a
 working-tree snapshot, or piped text), invokes `internal/review`, and renders
@@ -112,13 +131,12 @@ Rules implement a common interface (`internal/review/rule.go`) returning
 - **AST rules**: Go files are parsed with `go/parser`/`go/ast` for the slop
   analyzer and correctness checks (`internal/review/slop/go_correctness.go`).
 - **Structural scanners**: non-Go languages use deterministic tokenizers that
-  track delimiters and control flow — JS/TS (`javascript_slop.go`,
-  `typescript_slop.go`), Python (`python_slop.go`, indentation-aware), and a
-  language-configured brace scanner shared by Java, Kotlin, C/C++, C#, Rust,
-  Swift, PHP (`brace_language_slop.go`, `c_slop.go`, `cpp_slop.go`,
-  `csharp_slop.go`, `java_slop.go`, `kotlin_slop.go`, `rust_slop.go`,
-  `swift_slop.go`, `php_slop.go`). These are not full parsers; see the
-  coverage table in the README.
+  track delimiters and control flow — JS/TS (`javascript_slop.go` with the
+  shared TypeScript scanner in `brace_languages.go`), Python
+  (`python_slop.go`, indentation-aware), and a language-configured brace
+  scanner (`brace_language_slop.go`) whose per-language configs live in
+  `brace_languages.go` (Java, Kotlin, C/C++, C#, Rust, Swift, PHP, Dart).
+  These are not full parsers; see the coverage table in the README.
 - **Policy/config rules** (`policy_rule.go`): evaluate
   `.m3tal-review-policy.json` globs → `review-risk`, `review-policy`,
   `review-policy-config-error`.

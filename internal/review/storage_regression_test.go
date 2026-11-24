@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/review/history"
 )
 
 // TestStorageRegressionExistingHistorySurvivesFailedAppends verifies existing history survives any append failure.
@@ -41,11 +43,11 @@ func TestStorageRegressionExistingHistorySurvivesFailedAppends(t *testing.T) {
 	// 1. Write failure
 	t.Run("write failure preserves history", func(t *testing.T) {
 		ops := fsOps{
-			writeFile: func(f *os.File, b []byte) (int, error) {
+			WriteFile: func(f *os.File, b []byte) (int, error) {
 				return 0, errors.New("injected write err")
 			},
 		}
-		err := appendHistoryWithFS(historyPath, badEntry, ops)
+		err := history.AppendHistoryWithOps(historyPath, badEntry, ops)
 		if err == nil {
 			t.Fatal("expected write error")
 		}
@@ -58,11 +60,11 @@ func TestStorageRegressionExistingHistorySurvivesFailedAppends(t *testing.T) {
 	// 2. Sync failure
 	t.Run("sync failure preserves history", func(t *testing.T) {
 		ops := fsOps{
-			syncFile: func(f *os.File) error {
+			SyncFile: func(f *os.File) error {
 				return errors.New("injected sync err")
 			},
 		}
-		err := appendHistoryWithFS(historyPath, badEntry, ops)
+		err := history.AppendHistoryWithOps(historyPath, badEntry, ops)
 		if err == nil {
 			t.Fatal("expected sync error")
 		}
@@ -76,7 +78,7 @@ func TestStorageRegressionExistingHistorySurvivesFailedAppends(t *testing.T) {
 	t.Run("close failure preserves history", func(t *testing.T) {
 		closeCount := 0
 		ops := fsOps{
-			closeFile: func(f *os.File) error {
+			CloseFile: func(f *os.File) error {
 				closeCount++
 				_ = f.Close()
 				if closeCount == 1 {
@@ -85,7 +87,7 @@ func TestStorageRegressionExistingHistorySurvivesFailedAppends(t *testing.T) {
 				return nil
 			},
 		}
-		err := appendHistoryWithFS(historyPath, badEntry, ops)
+		err := history.AppendHistoryWithOps(historyPath, badEntry, ops)
 		if err == nil {
 			t.Fatal("expected close error")
 		}
@@ -105,11 +107,11 @@ func TestStorageRegressionNewHistoryRemovedAfterFailedCreation(t *testing.T) {
 	// Failed write
 	path1 := filepath.Join(tempDir, "history1.jsonl")
 	opsWriteFail := fsOps{
-		writeFile: func(f *os.File, b []byte) (int, error) {
+		WriteFile: func(f *os.File, b []byte) (int, error) {
 			return 0, errors.New("write failure")
 		},
 	}
-	_ = appendHistoryWithFS(path1, entry, opsWriteFail)
+	_ = history.AppendHistoryWithOps(path1, entry, opsWriteFail)
 	if _, err := os.Stat(path1); !os.IsNotExist(err) {
 		t.Fatalf("expected %s to be removed after write failure, but it exists", path1)
 	}
@@ -117,11 +119,11 @@ func TestStorageRegressionNewHistoryRemovedAfterFailedCreation(t *testing.T) {
 	// Failed sync
 	path2 := filepath.Join(tempDir, "history2.jsonl")
 	opsSyncFail := fsOps{
-		syncFile: func(f *os.File) error {
+		SyncFile: func(f *os.File) error {
 			return errors.New("sync failure")
 		},
 	}
-	_ = appendHistoryWithFS(path2, entry, opsSyncFail)
+	_ = history.AppendHistoryWithOps(path2, entry, opsSyncFail)
 	if _, err := os.Stat(path2); !os.IsNotExist(err) {
 		t.Fatalf("expected %s to be removed after sync failure, but it exists", path2)
 	}
@@ -197,7 +199,7 @@ func TestStorageRegressionRecoveryPreservesOldFileOnPreRenameErrors(t *testing.T
 		{
 			name: "write failure",
 			ops: fsOps{
-				writeFile: func(f *os.File, b []byte) (int, error) {
+				WriteFile: func(f *os.File, b []byte) (int, error) {
 					return 0, errors.New("write err")
 				},
 			},
@@ -205,7 +207,7 @@ func TestStorageRegressionRecoveryPreservesOldFileOnPreRenameErrors(t *testing.T
 		{
 			name: "sync failure",
 			ops: fsOps{
-				syncFile: func(f *os.File) error {
+				SyncFile: func(f *os.File) error {
 					return errors.New("sync err")
 				},
 			},
@@ -213,7 +215,7 @@ func TestStorageRegressionRecoveryPreservesOldFileOnPreRenameErrors(t *testing.T
 		{
 			name: "close failure",
 			ops: fsOps{
-				closeFile: func(f *os.File) error {
+				CloseFile: func(f *os.File) error {
 					_ = f.Close()
 					return errors.New("close err")
 				},
@@ -222,7 +224,7 @@ func TestStorageRegressionRecoveryPreservesOldFileOnPreRenameErrors(t *testing.T
 		{
 			name: "rename failure",
 			ops: fsOps{
-				renameFile: func(oldpath, newpath string) error {
+				RenameFile: func(oldpath, newpath string) error {
 					return errors.New("rename err")
 				},
 			},
@@ -310,10 +312,10 @@ func TestStorageRegressionTempFileCleanup(t *testing.T) {
 	report := NewReport("run-cleanup", tempDir, "main", "sha", "", "", "1.0.0", nil, nil)
 
 	injectedOps := []fsOps{
-		{writeFile: func(f *os.File, b []byte) (int, error) { return 0, errors.New("err") }},
-		{syncFile: func(f *os.File) error { return errors.New("err") }},
-		{closeFile: func(f *os.File) error { _ = f.Close(); return errors.New("err") }},
-		{renameFile: func(oldpath, newpath string) error { return errors.New("err") }},
+		{WriteFile: func(f *os.File, b []byte) (int, error) { return 0, errors.New("err") }},
+		{SyncFile: func(f *os.File) error { return errors.New("err") }},
+		{CloseFile: func(f *os.File) error { _ = f.Close(); return errors.New("err") }},
+		{RenameFile: func(oldpath, newpath string) error { return errors.New("err") }},
 	}
 
 	for idx, ops := range injectedOps {
@@ -343,15 +345,15 @@ func TestStorageRegressionRollbackFailureDiscovery(t *testing.T) {
 		_ = AppendHistory(historyPath, HistoryEntry{RunID: "run-init"})
 
 		ops := fsOps{
-			writeFile: func(f *os.File, b []byte) (int, error) {
+			WriteFile: func(f *os.File, b []byte) (int, error) {
 				return 0, errOrigAppend
 			},
-			truncateFile: func(f *os.File, size int64) error {
+			TruncateFile: func(f *os.File, size int64) error {
 				return errRollbackTruncate
 			},
 		}
 
-		err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
+		err := history.AppendHistoryWithOps(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
 		if !errors.Is(err, errOrigAppend) {
 			t.Fatalf("expected original append error discoverable via errors.Is, got: %v", err)
 		}
@@ -367,15 +369,15 @@ func TestStorageRegressionRollbackFailureDiscovery(t *testing.T) {
 		_ = AppendHistory(historyPath, HistoryEntry{RunID: "run-init"})
 
 		ops := fsOps{
-			writeFile: func(f *os.File, b []byte) (int, error) {
+			WriteFile: func(f *os.File, b []byte) (int, error) {
 				return 0, errOrigAppend
 			},
-			syncFile: func(f *os.File) error {
+			SyncFile: func(f *os.File) error {
 				return errRollbackSync
 			},
 		}
 
-		err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
+		err := history.AppendHistoryWithOps(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
 		if !errors.Is(err, errOrigAppend) {
 			t.Fatalf("expected original append error discoverable via errors.Is, got: %v", err)
 		}
@@ -391,16 +393,16 @@ func TestStorageRegressionRollbackFailureDiscovery(t *testing.T) {
 		_ = AppendHistory(historyPath, HistoryEntry{RunID: "run-init"})
 
 		ops := fsOps{
-			writeFile: func(f *os.File, b []byte) (int, error) {
+			WriteFile: func(f *os.File, b []byte) (int, error) {
 				return 0, errOrigAppend
 			},
-			closeFile: func(f *os.File) error {
+			CloseFile: func(f *os.File) error {
 				_ = f.Close()
 				return errRollbackClose
 			},
 		}
 
-		err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
+		err := history.AppendHistoryWithOps(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
 		if !errors.Is(err, errOrigAppend) {
 			t.Fatalf("expected original append error discoverable via errors.Is, got: %v", err)
 		}
@@ -417,20 +419,20 @@ func TestStorageRegressionRollbackFailureDiscovery(t *testing.T) {
 
 		openCount := 0
 		ops := fsOps{
-			openFile: func(name string, flag int, perm os.FileMode) (*os.File, error) {
+			OpenFile: func(name string, flag int, perm os.FileMode) (*os.File, error) {
 				openCount++
 				if openCount == 1 {
 					return os.OpenFile(name, flag, perm)
 				}
 				return nil, errRollbackReopen
 			},
-			closeFile: func(f *os.File) error {
+			CloseFile: func(f *os.File) error {
 				_ = f.Close()
 				return errOrigAppend
 			},
 		}
 
-		err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
+		err := history.AppendHistoryWithOps(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
 		if !errors.Is(err, errOrigAppend) {
 			t.Fatalf("expected original close error discoverable via errors.Is, got: %v", err)
 		}
@@ -445,15 +447,15 @@ func TestStorageRegressionRollbackFailureDiscovery(t *testing.T) {
 		historyPath := filepath.Join(tempDir, "history.jsonl")
 
 		ops := fsOps{
-			writeFile: func(f *os.File, b []byte) (int, error) {
+			WriteFile: func(f *os.File, b []byte) (int, error) {
 				return 0, errOrigAppend
 			},
-			removeFile: func(name string) error {
+			RemoveFile: func(name string) error {
 				return errRollbackRemove
 			},
 		}
 
-		err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
+		err := history.AppendHistoryWithOps(historyPath, HistoryEntry{RunID: "run-failed"}, ops)
 		if !errors.Is(err, errOrigAppend) {
 			t.Fatalf("expected original append error discoverable via errors.Is, got: %v", err)
 		}
@@ -476,12 +478,12 @@ func TestStorageRegressionStatErrorPreventsHistoryModification(t *testing.T) {
 
 	errStatPerm := errors.New("stat permission denied")
 	ops := fsOps{
-		statFile: func(name string) (os.FileInfo, error) {
+		StatFile: func(name string) (os.FileInfo, error) {
 			return nil, errStatPerm
 		},
 	}
 
-	err := appendHistoryWithFS(historyPath, HistoryEntry{RunID: "run-fail"}, ops)
+	err := history.AppendHistoryWithOps(historyPath, HistoryEntry{RunID: "run-fail"}, ops)
 	if !errors.Is(err, errStatPerm) {
 		t.Fatalf("expected stat error returned immediately, got: %v", err)
 	}

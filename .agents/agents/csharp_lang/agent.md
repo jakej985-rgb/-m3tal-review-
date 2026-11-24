@@ -23,7 +23,7 @@ You are the **C# / .NET Specialist** for `m3tal-review`. You audit C# (`.cs`) co
 
 ## Scope & Target Codebase Areas
 - **C# Slop & Heuristics**:
-  - `internal/review/slop/csharp_slop.go`
+  - `internal/review/slop/brace_languages.go`
   - `internal/review/slop/csharp_slop_test.go`
 - **.NET Specific Security**:
   - `BinaryFormatter` and insecure `DataContractSerializer` usage

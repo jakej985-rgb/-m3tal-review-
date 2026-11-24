@@ -1,15 +1,9 @@
 package review
 
-import "time"
+import "github.com/jakej985-rgb/m3tal-review/internal/review/history"
 
-type HistoryEntry struct {
-	Scope        string    `json:"scope,omitempty"`
-	RunID        string    `json:"run_id"`
-	Timestamp    time.Time `json:"timestamp"`
-	Status       string    `json:"status"`
-	FindingCount int       `json:"finding_count"`
-	Summary      string    `json:"summary"`
-}
+// HistoryEntry is the JSONL history record owned by internal/review/history.
+type HistoryEntry = history.HistoryEntry
 
 func NewHistoryEntry(report Report) HistoryEntry {
 	status := "passed"

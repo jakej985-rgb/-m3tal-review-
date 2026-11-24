@@ -25,8 +25,7 @@ You are the **C & C++ Specialist** for `m3tal-review`. You specialize in syntax-
 - **C/C++ Frontends & Slop**:
   - `internal/review/cpp_frontend.go`
   - `internal/review/cpp_frontend_test.go`
-  - `internal/review/slop/c_slop.go`
-  - `internal/review/slop/cpp_slop.go`
+  - `internal/review/slop/brace_languages.go`
 - **Memory Safety & Unsafe Libs**:
   - Banned functions (`strcpy`, `strcat`, `sprintf`, `gets`)
   - Double-free and use-after-free pattern heuristics

@@ -8,13 +8,14 @@ and a constrained, isolated repair workflow with durable audit logging.
 
 ## Documentation
 
+- [`docs/README.md`](docs/README.md) — documentation index: current reference, experimental subsystems, and historical material.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — package layout, command pipeline, rule engines, and storage.
 - [`docs/semantic-pipeline.md`](docs/semantic-pipeline.md) — Go semantic analysis tier: SSA frontend,
   typed callgraphs, and deterministic engines.
 - [`docs/INTEGRATION.md`](docs/INTEGRATION.md) — ecosystem integration, git hooks, and CI workflows.
 - [`docs/RELEASE.md`](docs/RELEASE.md) — versioning, CI gates, and release tagging.
 - [`docs/threat-model.md`](docs/threat-model.md) — security guarantees and non-goals.
-- [`docs/fp-tuning.md`](docs/fp-tuning.md) — false-positive tuning and policy configuration.
+- [`docs/history/fp-tuning.md`](docs/history/fp-tuning.md) — false-positive tuning and policy configuration.
 - [`docs/AGENTS.md`](docs/AGENTS.md) — targeted agent and sub-agent team architecture and delegation guide.
 
 ## Dual-Tier Architecture

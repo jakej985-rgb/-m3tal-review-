@@ -23,7 +23,7 @@ You are the **PHP Language Specialist** for `m3tal-review`. You audit PHP (`.php
 
 ## Scope & Target Codebase Areas
 - **PHP Slop & Heuristics**:
-  - `internal/review/slop/php_slop.go`
+  - `internal/review/slop/brace_languages.go`
   - `internal/review/slop/php_slop_test.go`
 - **PHP Sinks & Injection**:
   - Direct SQL query concatenation (`mysqli_query`, `PDO::query`)

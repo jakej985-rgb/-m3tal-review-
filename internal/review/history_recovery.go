@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/jakej985-rgb/m3tal-review/internal/review/fsutil"
+	"github.com/jakej985-rgb/m3tal-review/internal/review/history"
 )
 
 // compareCandidates evaluates two candidate reports with identical RunIDs and determines
@@ -47,11 +50,11 @@ func compareCandidates(nameA string, repA Report, nameB string, repB Report) (pr
 // occurs, the original history is preserved.
 //
 // Durability & Atomicity Design:
-//  1. File payload persistence: file contents are flushed and synced via fsync (syncFile)
+//  1. File payload persistence: file contents are flushed and synced via fsync (SyncFile)
 //     prior to closing and renaming.
 //  2. Atomicity: Recovered entries are written to a temporary file in the history directory and
-//     atomically moved into place using rename (renameFile).
-//  3. Directory sync: Parent directory syncing (syncDir) is best-effort; sync failures are logged
+//     atomically moved into place using rename (RenameFile).
+//  3. Directory sync: Parent directory syncing (SyncDir) is best-effort; sync failures are logged
 //     as warnings to os.Stderr rather than failing recovery, as history.jsonl is already in place.
 //  4. Cleanup: On any failure before rename, the temporary file is closed and removed, leaving the
 //     original history file completely intact.
@@ -60,7 +63,7 @@ func RecoverHistory(reportsDir string, historyPath string) (int, error) {
 }
 
 func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int, error) {
-	ops = ops.withDefaults()
+	ops = fsutil.WithDefaults(ops)
 
 	if reportsDir == "" {
 		return 0, fmt.Errorf("reports directory cannot be empty")
@@ -72,7 +75,7 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 	if err := os.MkdirAll(historyDir, 0755); err != nil {
 		return 0, fmt.Errorf("create history directory: %w", err)
 	}
-	unlock, err := lockHistory(historyPath)
+	unlock, err := history.Lock(historyPath)
 	if err != nil {
 		return 0, fmt.Errorf("lock history file: %w", err)
 	}
@@ -158,8 +161,8 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 	cleanup := true
 	defer func() {
 		if cleanup {
-			_ = ops.closeFile(tempFile)
-			_ = ops.removeFile(tempPath)
+			_ = ops.CloseFile(tempFile)
+			_ = ops.RemoveFile(tempPath)
 		}
 	}()
 
@@ -172,26 +175,26 @@ func recoverHistoryWithFS(reportsDir string, historyPath string, ops fsOps) (int
 		if err != nil {
 			return 0, fmt.Errorf("marshal history entry: %w", err)
 		}
-		if _, err := ops.writeFile(tempFile, append(data, '\n')); err != nil {
+		if _, err := ops.WriteFile(tempFile, append(data, '\n')); err != nil {
 			return 0, fmt.Errorf("write history entry: %w", err)
 		}
 	}
 
-	if err := ops.syncFile(tempFile); err != nil {
+	if err := ops.SyncFile(tempFile); err != nil {
 		return 0, fmt.Errorf("sync temporary history file: %w", err)
 	}
 
-	if err := ops.closeFile(tempFile); err != nil {
+	if err := ops.CloseFile(tempFile); err != nil {
 		return 0, fmt.Errorf("close temporary history file: %w", err)
 	}
 
-	if err := ops.renameFile(tempPath, historyPath); err != nil {
+	if err := ops.RenameFile(tempPath, historyPath); err != nil {
 		return 0, fmt.Errorf("atomically replace history file: %w", err)
 	}
 
 	cleanup = false
 
-	if err := ops.syncDir(historyDir); err != nil {
+	if err := ops.SyncDir(historyDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to sync history directory %s: %s\n", safeTerminalText(historyDir), safeTerminalText(err.Error()))
 	}
 
