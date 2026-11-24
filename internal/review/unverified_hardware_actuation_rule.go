@@ -24,7 +24,7 @@ var (
 		`(?i)(?:bridge|serial|hardware|companion|actuator).*\.(?:dart|ts|js|go|py|kt|java|cpp)$`,
 	)
 	hardwareExcludePattern = regexp.MustCompile(
-		`(?i)(?:_test\.[a-z0-9]+|(?:^|/)(?:tests?|testdata|fixtures?|models?)/|_model\.[a-z0-9]+|(?:^|/)internal/review/)`,
+		`(?i)(?:_test\.[a-z0-9]+|(?:^|/)(?:tests?|testdata|fixtures?)/|(?:^|/)internal/review/)`,
 	)
 
 	// stopAssumedConfirmedRe detects setting stopConfirmed to true or assuming output is off on write
@@ -51,10 +51,29 @@ func isAckGuardHeader(header string) bool {
 		return false
 	}
 	if strings.Contains(header, "else") {
-		return false
+		idx := strings.Index(header, "else if")
+		if idx != -1 {
+			header = strings.TrimSpace(header[idx+4:])
+		} else {
+			return false
+		}
 	}
 	if strings.Contains(header, "send") && !strings.Contains(header, ".issuccess") &&
 		!strings.Contains(header, ".isack") {
+		return false
+	}
+
+	// Reject negative checks that confirm non-acknowledgment
+	if strings.Contains(header, "!= packettype.ack") ||
+		strings.Contains(header, "!= packettype.pong") ||
+		strings.Contains(header, "!ack.issuccess") ||
+		strings.Contains(header, "!ack.success") ||
+		strings.Contains(header, "!ack.isack") ||
+		strings.Contains(header, "ack == false") ||
+		strings.Contains(header, "ack != true") ||
+		strings.Contains(header, "!ack.ok") ||
+		strings.Contains(header, "!= stopack") ||
+		strings.Contains(header, "!= ack") {
 		return false
 	}
 
@@ -78,50 +97,86 @@ func isAckGuardHeader(header string) bool {
 		strings.Contains(header, "onack") ||
 		strings.Contains(header, "onstopack") ||
 		strings.Contains(header, "led != null") ||
-		strings.Contains(header, "firstmatch") ||
-		strings.Contains(header, "_updatetelemetry") ||
-		strings.Contains(header, "telemetry")
+		strings.Contains(header, "firstmatch")
+}
+
+func isAckSwitchCaseLabel(lowerCase string) bool {
+	return (strings.Contains(lowerCase, "packettype.ack") ||
+		strings.Contains(lowerCase, "packettype.pong") ||
+		strings.Contains(lowerCase, "ackstatus.success") ||
+		strings.Contains(lowerCase, "ackstatus.confirmed") ||
+		strings.Contains(lowerCase, "case 'ack':") ||
+		strings.Contains(lowerCase, "case \"ack\":") ||
+		strings.Contains(lowerCase, "case 'pong':") ||
+		strings.Contains(lowerCase, "case \"pong\":")) &&
+		!strings.Contains(lowerCase, "error") &&
+		!strings.Contains(lowerCase, "fail") &&
+		!strings.Contains(lowerCase, "timeout")
+}
+
+func collectOpeningBraceHeader(lines []string, k int, trimmed string) string {
+	header := trimmed
+	for h := k - 1; h >= 0 && k-h <= 10; h-- {
+		prev := strings.TrimSpace(stripLineComment(lines[h]))
+		if strings.HasSuffix(prev, ";") || strings.HasSuffix(prev, "}") {
+			break
+		}
+		header = prev + " " + header
+		if strings.HasPrefix(prev, "if") || strings.Contains(prev, "if (") ||
+			strings.Contains(prev, "if(") || strings.HasPrefix(prev, "else") {
+			break
+		}
+	}
+	return header
+}
+
+func handleEnclosingBrace(lines []string, k int, trimmed string) (isAck bool, stop bool) {
+	header := collectOpeningBraceHeader(lines, k, trimmed)
+	lowerHeader := strings.ToLower(header)
+	if isAckGuardHeader(lowerHeader) {
+		return true, false
+	}
+	if strings.Contains(lowerHeader, "void ") ||
+		strings.Contains(lowerHeader, "class ") ||
+		strings.Contains(lowerHeader, "=>") ||
+		(strings.HasPrefix(lowerHeader, "()") && strings.Contains(lowerHeader, "{")) {
+		return false, true
+	}
+	return false, false
 }
 
 func isGuardedByAck(lines []string, index int) bool {
 	depth := 0
-	for k := index - 1; k >= 0 && index-k <= 40; k-- {
+	for k := index - 1; k >= 0 && index-k <= 50; k-- {
 		line := stripLineComment(lines[k])
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
 
+		if depth == 0 && (strings.HasPrefix(trimmed, "case ") || strings.HasPrefix(trimmed, "case:") ||
+			strings.HasPrefix(trimmed, "default:")) {
+			return isAckSwitchCaseLabel(strings.ToLower(trimmed))
+		}
+
 		for c := len(trimmed) - 1; c >= 0; c-- {
 			if trimmed[c] == '}' {
 				depth++
-			} else if trimmed[c] == '{' {
-				if depth > 0 {
-					depth--
-				} else {
-					header := trimmed
-					for h := k - 1; h >= 0 && k-h <= 10; h-- {
-						prev := strings.TrimSpace(stripLineComment(lines[h]))
-						if strings.HasSuffix(prev, ";") || strings.HasSuffix(prev, "}") {
-							break
-						}
-						header = prev + " " + header
-						if strings.HasPrefix(prev, "if") || strings.Contains(prev, "if (") ||
-							strings.Contains(prev, "if(") {
-							break
-						}
-					}
-
-					lowerHeader := strings.ToLower(header)
-					return isAckGuardHeader(lowerHeader)
-				}
+				continue
 			}
-		}
-
-		if depth == 0 && (strings.HasPrefix(trimmed, "case ") || strings.HasPrefix(trimmed, "case:")) {
-			lowerCase := strings.ToLower(trimmed)
-			if strings.Contains(lowerCase, "ack") || strings.Contains(lowerCase, "pong") {
+			if trimmed[c] != '{' {
+				continue
+			}
+			if depth > 0 {
+				depth--
+				continue
+			}
+			isAck, stop := handleEnclosingBrace(lines, k, trimmed)
+			if isAck {
 				return true
+			}
+			if stop {
+				return false
 			}
 		}
 	}
@@ -140,14 +195,58 @@ func isHardwareActuationCommand(line string) bool {
 		strings.Contains(clean, "writeCommand")
 }
 
+func findTernaryQ(line string) int {
+	for i := 0; i < len(line); i++ {
+		if line[i] == '?' {
+			if i > 0 && line[i-1] == '?' {
+				continue
+			}
+			if i+1 < len(line) && (line[i+1] == '.' || line[i+1] == '?') {
+				continue
+			}
+			return i
+		}
+	}
+	return -1
+}
+
+func scanLineBraces(lineScan string, braceDepth *int, inBlock *bool) {
+	inString := false
+	var stringChar byte
+	for c := 0; c < len(lineScan); c++ {
+		ch := lineScan[c]
+		if inString {
+			if ch == '\\' {
+				c++
+				continue
+			}
+			if ch == stringChar {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			inString = true
+			stringChar = ch
+			continue
+		}
+		if ch == '{' {
+			*braceDepth++
+			*inBlock = true
+		} else if ch == '}' {
+			*braceDepth--
+		}
+	}
+}
+
 func checkUnverifiedOutputControl(
 	lines []string,
 	index int,
 	startLine int,
-) (matched bool, guardLine int, actionLine int) {
-	line := lines[index]
+) (matched bool, guardLine int, actionLines []int) {
+	line := stripLineComment(lines[index])
 	if !strings.Contains(line, "onPressed:") || !strings.Contains(line, "isConnected") {
-		return false, 0, 0
+		return false, 0, nil
 	}
 
 	guardLine = startLine + index
@@ -157,8 +256,8 @@ func checkUnverifiedOutputControl(
 	qLineOffset := 0
 
 	for k := 0; k <= 5 && index+k < len(lines); k++ {
-		cur := lines[index+k]
-		if qPos := strings.Index(cur, "?"); qPos != -1 {
+		cur := stripLineComment(lines[index+k])
+		if qPos := findTernaryQ(cur); qPos != -1 {
 			conditionBuilder.WriteString(" ")
 			conditionBuilder.WriteString(cur[:qPos])
 			qIndex = qPos
@@ -170,46 +269,42 @@ func checkUnverifiedOutputControl(
 	}
 
 	if qIndex == -1 {
-		return false, 0, 0
+		return false, 0, nil
 	}
 
 	fullCondition := strings.ToLower(conditionBuilder.String())
-	if strings.Contains(fullCondition, "protocol") || strings.Contains(fullCondition, "verified") ||
-		strings.Contains(fullCondition, "handshake") || strings.Contains(fullCondition, "authorized") ||
-		strings.Contains(fullCondition, "ready") {
-		return false, 0, 0
+	hasVerification := strings.Contains(fullCondition, "protocol") ||
+		strings.Contains(fullCondition, "verified") ||
+		strings.Contains(fullCondition, "handshake") ||
+		strings.Contains(fullCondition, "authorized") ||
+		strings.Contains(fullCondition, "ready")
+
+	if hasVerification && !strings.Contains(fullCondition, "||") {
+		return false, 0, nil
 	}
 
 	callbackStartLine := index + qLineOffset
 	afterQ := lines[callbackStartLine][qIndex+1:]
 
-	trimmedAfterQ := strings.TrimSpace(afterQ)
+	trimmedAfterQ := strings.TrimSpace(stripLineComment(afterQ))
 	if !strings.Contains(trimmedAfterQ, "{") && !strings.Contains(trimmedAfterQ, "=>") {
-		return false, 0, 0
+		return false, 0, nil
 	}
 
 	braceDepth := 0
 	inBlock := false
 
-	for k := qLineOffset; k <= 15 && index+k < len(lines); k++ {
-		curLine := lines[index+k]
+	for k := qLineOffset; k <= 20 && index+k < len(lines); k++ {
+		curLine := stripLineComment(lines[index+k])
 		lineScan := curLine
 		if k == qLineOffset {
 			lineScan = afterQ
 		}
 
-		for c := 0; c < len(lineScan); c++ {
-			if lineScan[c] == '{' {
-				braceDepth++
-				inBlock = true
-			} else if lineScan[c] == '}' {
-				braceDepth--
-			}
-		}
+		scanLineBraces(lineScan, &braceDepth, &inBlock)
 
 		if isHardwareActuationCommand(curLine) {
-			actionLine = startLine + index + k
-			return true, guardLine, actionLine
+			actionLines = append(actionLines, startLine+index+k)
 		}
 
 		if inBlock && braceDepth <= 0 {
@@ -222,7 +317,11 @@ func checkUnverifiedOutputControl(
 		}
 	}
 
-	return false, 0, 0
+	if len(actionLines) > 0 {
+		return true, guardLine, actionLines
+	}
+
+	return false, 0, nil
 }
 
 func (r UnverifiedHardwareActuationRule) CheckContext(ctx context.Context, diff string) []Finding {
@@ -272,31 +371,48 @@ func (r UnverifiedHardwareActuationRule) CheckContext(ctx context.Context, diff 
 				}
 			}
 
-			matched, guardLine, actionLine := checkUnverifiedOutputControl(lines, i, startLine)
+			matched, guardLine, actionLines := checkUnverifiedOutputControl(lines, i, startLine)
 			if matched {
-				reportLine := guardLine
-				if block.addedLines[actionLine] && !block.addedLines[guardLine] {
-					reportLine = actionLine
-				}
-				if block.addedLines[guardLine] || block.addedLines[actionLine] || r.workingTree {
-					key := block.file + ":" + strconv.Itoa(reportLine) + ":control"
-					if !seen[key] {
-						seen[key] = true
-						findings = append(findings, Finding{
-							Rule:     "unverified-hardware-actuation",
-							Severity: "high",
-							File:     block.file,
-							Line:     reportLine,
-							Message: "Hardware output control is gated only on transport connection status " +
-								"without protocol verification",
-							Remediation: "Gate hardware controls on verified protocol state " +
-								"(e.g. isConnected && isProtocolVerified) to prevent actuation before protocol negotiation.",
-						})
-					}
-				}
+				r.reportUnverifiedControl(block, guardLine, actionLines, seen, &findings)
 			}
 		}
 	}
 
 	return findings
+}
+
+func (r UnverifiedHardwareActuationRule) reportUnverifiedControl(
+	block diffSourceBlock,
+	guardLine int,
+	actionLines []int,
+	seen map[string]bool,
+	findings *[]Finding,
+) {
+	actionLine := actionLines[0]
+	for _, aLine := range actionLines {
+		if block.addedLines[aLine] {
+			actionLine = aLine
+			break
+		}
+	}
+	reportLine := guardLine
+	if block.addedLines[actionLine] && !block.addedLines[guardLine] {
+		reportLine = actionLine
+	}
+	if block.addedLines[guardLine] || block.addedLines[actionLine] || r.workingTree {
+		key := block.file + ":" + strconv.Itoa(reportLine) + ":control"
+		if !seen[key] {
+			seen[key] = true
+			*findings = append(*findings, Finding{
+				Rule:     "unverified-hardware-actuation",
+				Severity: "high",
+				File:     block.file,
+				Line:     reportLine,
+				Message: "Hardware output control is gated only on transport connection status " +
+					"without protocol verification",
+				Remediation: "Gate hardware controls on verified protocol state " +
+					"(e.g. isConnected && isProtocolVerified) to prevent actuation before protocol negotiation.",
+			})
+		}
+	}
 }

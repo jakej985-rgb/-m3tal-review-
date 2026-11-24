@@ -37,9 +37,21 @@ in `.jules/`, verify detection loop, and repair the target repository.
   runs, assume the active PR/branch from the current session).*
 - **1:1. Checkout PR Branch**: Switch to the branch the PR is on in the target checkout (locally via
   `git checkout <branch>` or via `gh pr checkout <pr-number>`).
-- **1:2. Compute Common Merge-Base**: Determine the common ancestor between the base branch and the PR head:
+- **1:2. Compute Common Merge-Base**: Determine the common ancestor between the base branch and the PR head.
+  Resolve the base branch and upstream repository, fetch the needed history, and mandate a non-empty `MERGE_BASE` SHA
+  before invoking `review`:
   ```bash
-  MERGE_BASE=$(git merge-base origin/<base-ref> HEAD)
+  PR_BASE_REPO=$(gh pr view "$PR_NUMBER" --json baseRefName,baseRepository \
+    --jq '.baseRepository.owner.login + "/" + .baseRepository.name' 2>/dev/null || echo "")
+  PR_BASE_REF=$(gh pr view "$PR_NUMBER" --json baseRefName --jq '.baseRefName' 2>/dev/null || echo "<base-ref>")
+  if [ -n "$PR_BASE_REPO" ]; then
+    git fetch "https://github.com/${PR_BASE_REPO}.git" "${PR_BASE_REF}" --depth=100
+    MERGE_BASE=$(git merge-base FETCH_HEAD HEAD)
+  else
+    git fetch origin "${PR_BASE_REF}" 2>/dev/null || true
+    MERGE_BASE=$(git merge-base "origin/${PR_BASE_REF}" HEAD 2>/dev/null || git merge-base HEAD~1 HEAD)
+  fi
+  test -n "$MERGE_BASE" || { echo "ERROR: Missing MERGE_BASE SHA. Cannot review PR diff." >&2; exit 1; }
   ```
   *Note:* Always pass `--base "$MERGE_BASE"` to `m3tal-review review` so only PR diffs are evaluated, rather than
   comparing against the tip of base which may contain newer changes.

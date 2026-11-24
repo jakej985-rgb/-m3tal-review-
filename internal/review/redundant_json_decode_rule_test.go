@@ -38,4 +38,62 @@ func TestRedundantJsonDecodeRule(t *testing.T) {
 			t.Fatalf("expected 0 findings for single decoded list inspection, got %d", len(findings))
 		}
 	})
+
+	t.Run("flags sequential decodes across lines in same block", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,2 +80,4 @@
++  if (tryDecodeList(raw) == null) return false;
++  return tryDecodeList(raw)!.isNotEmpty;
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for repeated decodes across lines, got 0")
+		}
+	})
+
+	t.Run("does not flag decodes in opposing ternary branches", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,1 +80,1 @@
++  return useNewPolicy ? newPolicy(jsonDecode(raw)) : legacyPolicy(jsonDecode(raw));
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for mutually exclusive ternary branches, got %d", len(findings))
+		}
+	})
+
+	t.Run("does not flag distinct payloads in validation and lookup helpers", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,2 +80,4 @@
++  if (!_decodesProfiles(primaryRaw)) return false;
++  return _containsLoadableProfile(backupRaw, activeId);
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for distinct payloads, got %d", len(findings))
+		}
+	})
+
+	t.Run("flags lookup-only added line when validation line is unchanged", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,3 +80,4 @@
+   final source = _decodesProfiles(profilesRaw) ? profilesRaw : backupRaw;
++  return _containsLoadableProfile(source, activeId);
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for added lookup line with unchanged validation, got 0")
+		}
+		if findings[0].Line != 81 {
+			t.Errorf("expected finding on line 81, got %d", findings[0].Line)
+		}
+	})
 }

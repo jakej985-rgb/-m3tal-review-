@@ -9,6 +9,11 @@ transmission rather than awaiting explicit device acknowledgments (`ACK:`, `PONG
 unacknowledged transmission leaves hardware in an active/dangerous state while local
 state mirrors a false safe state. Furthermore, sending actuator commands before
 protocol handshake negotiation exposes unverified firmware to corrupted states.
+ACK-guard scoping must verify affirmative acknowledgments (rejecting negative
+checks and local telemetry state), respect switch-case labels (stopping at non-ACK
+labels like `case PacketType.error:`), climb enclosing branch scopes for nested
+checks (e.g. `if (mounted)` inside `if (ack.isSuccess)`), and require conjunction
+(`&&`) rather than optional disjunction (`||`) for protocol verification.
 2. **Early Stop Acknowledgment Overwrite:** When stop commands are sent asynchronously,
 marking pending state after `_write` completes can overwrite an early device
 acknowledgment that arrived during transmission. Setting pending state prior to wire
@@ -26,10 +31,14 @@ discovery tests when dependencies are missing.
 interceptors that evaluate stored entities often invoke separate validator and lookup
 helpers that both decode the identical raw string. Decoding once with fallback and
 inspecting parsed models directly eliminates duplicate parsing overhead.
+Analysis must track decodes across consecutive statements within a block, ignore
+mutually exclusive branches of ternaries (`cond ? decode(raw) : decode(raw)`), and
+verify payload argument names and aliases so distinct inputs are not flagged.
 6. **Remediation Agent Operating Safeguards (`ai_review_agent`):** Review remediation
 agents must run `review` from the target checkout without unsupported flags (`--path`),
-verify clean staging indexes before committing, and resolve fork PR remotes via
-`gh pr view` to avoid pushing to base repositories.
+mandate resolving upstream base repositories and fetching non-empty `MERGE_BASE` SHAs
+before invoking `review`, verify clean staging indexes before committing, and resolve
+fork PR remotes via `gh pr view` to avoid pushing to base repositories.
 
 **Prevention:**
 - Enforce that hardware state machines publish pending stop state prior to transmission,
@@ -40,4 +49,5 @@ verify clean staging indexes before committing, and resolve fork PR remotes via
 - Ensure all quality gate shell scripts execute preflight checks for required dependencies
   before running unit tests or linters.
 - Decode raw JSON payloads once in route guards and inspect the resulting collection.
-- Ensure automated remediation workflows verify workspace cleanliness and target remotes.
+- Ensure automated remediation workflows verify workspace cleanliness, compute valid merge
+  bases, and target remotes safely.
