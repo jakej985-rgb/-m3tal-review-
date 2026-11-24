@@ -169,16 +169,63 @@ func TestRedundantJsonDecodeRule(t *testing.T) {
 		}
 	})
 
-	t.Run("does not flag untouched decodes in deletion-only diff", func(t *testing.T) {
+	t.Run("does not flag untouched decodes in deletion-only diff with surviving decodes", func(t *testing.T) {
 		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
 --- a/lib/core/routing/app_router.dart
 +++ b/lib/core/routing/app_router.dart
-@@ -10,3 +10,0 @@
+@@ -10,6 +10,4 @@
 -import 'unused_import.dart';
+-import 'unused2.dart';
+   final a = jsonDecode(raw);
+   final b = jsonDecode(raw);
+   return a != null;
 `
 		findings := rule.Check(diff)
 		if len(findings) != 0 {
-			t.Fatalf("expected 0 findings for deletion-only diff, got %d", len(findings))
+			t.Fatalf("expected 0 findings for surviving decodes in deletion-only diff, got %d", len(findings))
+		}
+	})
+
+	t.Run("does not flag mutually exclusive ternary decodes after TypeScript cast", func(t *testing.T) {
+		diff := `diff --git a/src/routes/app_router.ts b/src/routes/app_router.ts
+--- a/src/routes/app_router.ts
++++ b/src/routes/app_router.ts
+@@ -50,1 +50,1 @@
++  return choice as boolean ? jsonDecode(raw) : jsonDecode(raw);
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for TypeScript ternary with cast condition, got %d", len(findings))
+		}
+	})
+
+	t.Run("does not flag sequential decode across this field assignment", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,3 +80,3 @@
++  final before = jsonDecode(raw);
++  this.raw = fallback;
++  final after = jsonDecode(raw);
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for decode across this.raw assignment, got %d", len(findings))
+		}
+	})
+
+	t.Run("flags sequential decode when log string contains assignment-like text", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,3 +80,3 @@
++  final a = jsonDecode(raw);
++  log('raw=${raw.length}');
++  final b = jsonDecode(raw);
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for duplicate decode across string containing raw=, got 0")
 		}
 	})
 }

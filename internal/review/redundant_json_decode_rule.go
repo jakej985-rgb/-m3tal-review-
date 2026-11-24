@@ -98,7 +98,8 @@ func parseTernaryPairs(line string) []ternaryPair {
 			if i > 0 && line[i-1] == '?' {
 				continue
 			}
-			if nullableCastSuffixRe.MatchString(line[:i]) {
+			rest := strings.TrimLeft(line[i+1:], " \t")
+			if nullableCastSuffixRe.MatchString(line[:i]) && strings.HasPrefix(rest, ":") {
 				continue
 			}
 			pendingQ[depth] = append(pendingQ[depth], i)
@@ -319,19 +320,52 @@ func isAssignmentOperator(s string) bool {
 	return len(s) > 0 && s[0] == '=' && (len(s) == 1 || (s[1] != '=' && s[1] != '>'))
 }
 
+func stripStringsAndComments(line string) string {
+	line = stripLineComment(line)
+	var b strings.Builder
+	b.Grow(len(line))
+	inString := false
+	var stringChar byte
+
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if inString {
+			if ch == '\\' {
+				i = i + 1
+			} else if ch == stringChar {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' || ch == '`' {
+			inString = true
+			stringChar = ch
+			continue
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
+}
+
 func isLocalVarAssignment(line string, arg string) bool {
+	cleanLine := stripStringsAndComments(line)
 	argLen := len(arg)
-	for i := 0; i+argLen <= len(line); i++ {
-		if line[i:i+argLen] != arg {
+	for i := 0; i+argLen <= len(cleanLine); i++ {
+		if cleanLine[i:i+argLen] != arg {
 			continue
 		}
-		if i > 0 && isIdentOrDot(line[i-1]) {
+		if i > 0 && isIdentOrDot(cleanLine[i-1]) {
+			if i < 5 || cleanLine[i-5:i] != "this." {
+				continue
+			}
+			if i > 5 && isIdentOrDot(cleanLine[i-6]) {
+				continue
+			}
+		}
+		if i+argLen < len(cleanLine) && isIdentOrDot(cleanLine[i+argLen]) {
 			continue
 		}
-		if i+argLen < len(line) && isIdentOrDot(line[i+argLen]) {
-			continue
-		}
-		rest := strings.TrimLeft(line[i+argLen:], " \t")
+		rest := strings.TrimLeft(cleanLine[i+argLen:], " \t")
 		if isAssignmentOperator(rest) {
 			return true
 		}

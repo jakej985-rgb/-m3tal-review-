@@ -42,8 +42,8 @@ var (
 	)
 
 	affirmativeAckPredRe = regexp.MustCompile(
-		`(?i)(?:\b(?:[a-zA-Z0-9_]+\.)?(?:issuccess|success|isack)\b|` +
-			`\b(?:ack|reply|packet|stopack)\s*(?:==\s*true|!=\s*false|!=\s*null|!=\s*nil)\b|` +
+		`(?i)(?:\b(?:[a-zA-Z0-9_]+\.)?(?:issuccess|success|isack|ok)\b|\back\.ok\b|` +
+			`\b(?:ack|reply|packet|stopack)\s*(?:==\s*true|!=\s*null|!=\s*nil)\b|` +
 			`^(?:ack|reply|stopack)$|` +
 			`\bis\s+(?:ack|stopack)\b|` +
 			`==\s*(?:packettype\.(?:ack|pong|stopack)|ackstatus\.(?:success|confirmed)|['"](?:ack|pong)['"]|stopack)\b|` +
@@ -168,13 +168,14 @@ func isAckGuardHeader(header string) bool {
 	}
 
 	cond := header
-	if openParen := strings.Index(header, "("); openParen != -1 {
-		if closeParen := strings.LastIndex(header, ")"); closeParen > openParen {
-			cond = header[openParen+1 : closeParen]
-		}
-	} else if strings.HasPrefix(header, "if ") {
-		cond = strings.TrimPrefix(header, "if ")
+	if idx := strings.Index(header, "if "); idx != -1 {
+		cond = header[idx+2:]
+	} else if idx := strings.Index(header, "if("); idx != -1 {
+		cond = header[idx+2:]
 	}
+	cond = strings.TrimSpace(cond)
+	cond = strings.TrimSuffix(cond, "{")
+	cond = unwrapOuterParens(strings.TrimSpace(cond))
 	return guaranteesAffirmativeAck(cond)
 }
 
