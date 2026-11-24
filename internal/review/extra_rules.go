@@ -714,6 +714,9 @@ func ExtraRules(repositoryRoot string) []Rule {
 		&RiverpodProviderInvalidationRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&CourseCompletionGatingRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 		&ImageCacheAspectRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&ShortcutScopeRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&LazyStreamSubscriptionRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
+		&LedgerReplaySnapshotRule{ruleRuntime: ruleRuntime{repositoryRoot: repositoryRoot}},
 	}
 }
 
