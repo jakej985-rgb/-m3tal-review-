@@ -286,6 +286,77 @@ func TestUnverifiedHardwareActuationRule(t *testing.T) {
 		}
 	})
 
+	t.Run("flags stop confirmation guarded by negative reply check in else-if", func(t *testing.T) {
+		diff := `diff --git a/lib/physical_serial_bridge.dart b/lib/physical_serial_bridge.dart
+--- a/lib/physical_serial_bridge.dart
++++ b/lib/physical_serial_bridge.dart
+@@ -525,8 +525,8 @@
++    if (isTimeout) {
++      handleTimeout();
++    } else if (!reply.isSuccess) {
++      _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding when stop confirmation is inside else if (!reply.isSuccess), got 0")
+		}
+	})
+
+	t.Run("allows output control with parenthesized connection disjunction and protocol verification", func(t *testing.T) {
+		diff := `diff --git a/lib/physical_serial_bridge.dart b/lib/physical_serial_bridge.dart
+--- a/lib/physical_serial_bridge.dart
++++ b/lib/physical_serial_bridge.dart
+@@ -300,6 +300,6 @@
++    onPressed: ((isConnected || isReconnecting) &&
++        isProtocolVerified) ? () {
++      bridge.send('LED:ON');
++    } : null,
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings when verification is mandatory despite connection disjunction, got %d", len(findings))
+		}
+	})
+
+	t.Run("allows stop confirmation in mode switch enclosed by ACK check", func(t *testing.T) {
+		diff := `diff --git a/lib/physical_serial_bridge.dart b/lib/physical_serial_bridge.dart
+--- a/lib/physical_serial_bridge.dart
++++ b/lib/physical_serial_bridge.dart
+@@ -525,10 +525,10 @@
++    if (ack.isSuccess) {
++      switch (stopMode) {
++        case StopMode.manual:
++          _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++          break;
++      }
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings when switch is enclosed by outer ACK check, got %d", len(findings))
+		}
+	})
+
+	t.Run("flags error case following ACK case in switch without outer guard", func(t *testing.T) {
+		diff := `diff --git a/lib/physical_serial_bridge.dart b/lib/physical_serial_bridge.dart
+--- a/lib/physical_serial_bridge.dart
++++ b/lib/physical_serial_bridge.dart
+@@ -525,9 +525,9 @@
++    switch (reply.type) {
++      case PacketType.ack:
++        break;
++      case PacketType.error:
++        _publishTelemetry(_telemetry.copyWith(stopConfirmed: true));
++        break;
++    }
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for error case following ACK case, got 0")
+		}
+	})
+
 	t.Run("ignores test files", func(t *testing.T) {
 		diff := `diff --git a/test/widget/hardware_control_test.dart b/test/widget/hardware_control_test.dart
 --- a/test/widget/hardware_control_test.dart

@@ -44,37 +44,92 @@ func (r RedundantJsonDecodeRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
 }
 
+type ternaryPair struct {
+	qPos     int
+	colonPos int
+	depth    int
+}
+
+func parseTernaryPairs(line string) []ternaryPair {
+	var pairs []ternaryPair
+	pendingQ := make(map[int][]int)
+	inString := false
+	var stringChar byte
+	depth := 0
+
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if inString {
+			if ch == '\\' {
+				i++
+				continue
+			}
+			if ch == stringChar {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' || ch == '`' {
+			inString = true
+			stringChar = ch
+			continue
+		}
+
+		if ch == '(' || ch == '[' || ch == '{' {
+			depth++
+			continue
+		}
+		if ch == ')' || ch == ']' || ch == '}' {
+			delete(pendingQ, depth)
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+
+		if ch == '?' {
+			if i+1 < len(line) && (line[i+1] == '?' || line[i+1] == '.') {
+				i++
+				continue
+			}
+			if i > 0 && line[i-1] == '?' {
+				continue
+			}
+			pendingQ[depth] = append(pendingQ[depth], i)
+			continue
+		}
+
+		if ch == ':' {
+			if i+1 < len(line) && line[i+1] == ':' {
+				i++
+				continue
+			}
+			if i > 0 && line[i-1] == ':' {
+				continue
+			}
+			qs := pendingQ[depth]
+			if len(qs) > 0 {
+				qPos := qs[len(qs)-1]
+				pendingQ[depth] = qs[:len(qs)-1]
+				pairs = append(pairs, ternaryPair{
+					qPos:     qPos,
+					colonPos: i,
+					depth:    depth,
+				})
+			}
+		}
+	}
+	return pairs
+}
+
 func isTernaryArms(line string, start1, end1, start2, end2 int) bool {
-	qIdx := -1
-	for idx := start1 - 1; idx >= 0; idx-- {
-		if line[idx] == '?' {
-			if idx > 0 && line[idx-1] == '?' {
-				continue
-			}
-			if idx+1 < len(line) && (line[idx+1] == '.' || line[idx+1] == '?') {
-				continue
-			}
-			qIdx = idx
-			break
+	pairs := parseTernaryPairs(line)
+	for _, p := range pairs {
+		if p.qPos < start1 && start1 < p.colonPos && p.colonPos < start2 {
+			return true
 		}
 	}
-	if qIdx == -1 {
-		return false
-	}
-	colonIdx := -1
-	for idx := end1; idx < start2; idx++ {
-		if line[idx] == ':' {
-			if idx > 0 && line[idx-1] == ':' {
-				continue
-			}
-			if idx+1 < len(line) && line[idx+1] == ':' {
-				continue
-			}
-			colonIdx = idx
-			break
-		}
-	}
-	return colonIdx != -1
+	return false
 }
 
 func hasSameLineDuplicate(trimmed string, indices [][]int) bool {
@@ -94,6 +149,20 @@ func pickReportLine(l1, l2 int, added map[int]bool) int {
 		return l2
 	}
 	return l1
+}
+
+func areLinesAddedOrWholeScan(block diffSourceBlock, line1, line2 int) bool {
+	if len(block.addedLines) > 0 {
+		return block.addedLines[line1] || block.addedLines[line2]
+	}
+	return true
+}
+
+func isLineAddedOrWholeScan(block diffSourceBlock, lineNum int) bool {
+	if len(block.addedLines) > 0 {
+		return block.addedLines[lineNum]
+	}
+	return true
 }
 
 type jsonDecodeContext struct {
@@ -183,7 +252,7 @@ func (r RedundantJsonDecodeRule) checkProfileHelpers(dCtx jsonDecodeContext, i i
 			break
 		}
 		lineNum2 := dCtx.startLine + j
-		if !dCtx.block.addedLines[lineNum] && !dCtx.block.addedLines[lineNum2] && !r.workingTree {
+		if !areLinesAddedOrWholeScan(dCtx.block, lineNum, lineNum2) {
 			break
 		}
 		dCtx.emit(
@@ -204,7 +273,7 @@ func (r RedundantJsonDecodeRule) checkDecoderCalls(dCtx jsonDecodeContext, i int
 	}
 	lineNum := dCtx.startLine + i
 
-	if len(indices) > 1 && (dCtx.block.addedLines[lineNum] || r.workingTree) && hasSameLineDuplicate(trimmed, indices) {
+	if len(indices) > 1 && isLineAddedOrWholeScan(dCtx.block, lineNum) && hasSameLineDuplicate(trimmed, indices) {
 		dCtx.emit(
 			lineNum,
 			"Redundant JSON decoding: same variable decoded multiple times in expression",
@@ -233,9 +302,25 @@ func (r RedundantJsonDecodeRule) checkDecoderCalls(dCtx jsonDecodeContext, i int
 }
 
 func shouldStopSequentialScan(line string, arg string) bool {
-	return strings.HasPrefix(line, "else") || strings.Contains(line, "} else") ||
-		strings.HasPrefix(line, "}") || strings.Contains(line, arg+" =") ||
-		strings.Contains(line, arg+" :=")
+	if strings.HasPrefix(line, "else") || strings.Contains(line, "} else") || strings.HasPrefix(line, "}") {
+		return true
+	}
+	assignPatterns := []string{
+		arg + " =",
+		arg + " :=",
+		arg + " ??=",
+		arg + "??=",
+		arg + " +=",
+		arg + " -=",
+		arg + " ||=",
+		arg + " &&=",
+	}
+	for _, p := range assignPatterns {
+		if strings.Contains(line, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r RedundantJsonDecodeRule) matchNextSequentialDecode(
@@ -249,7 +334,7 @@ func (r RedundantJsonDecodeRule) matchNextSequentialDecode(
 		if line[nIdx[4]:nIdx[5]] != arg {
 			continue
 		}
-		if !dCtx.block.addedLines[lineNum1] && !dCtx.block.addedLines[lineNum2] && !r.workingTree {
+		if !areLinesAddedOrWholeScan(dCtx.block, lineNum1, lineNum2) {
 			return true
 		}
 		dCtx.emit(

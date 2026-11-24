@@ -31,6 +31,12 @@ var (
 	stopAssumedConfirmedRe = regexp.MustCompile(
 		`(?i)(?:stopConfirmed\s*:\s*(?:true|_protocolNegotiated|confirmed)|pin13Led\s*:\s*confirmed\s*\?\s*false\s*:)`,
 	)
+
+	negativeAckCheckRe = regexp.MustCompile(
+		`(?i)(?:!\s*(?:[a-zA-Z0-9_]+\.)?(?:isSuccess|success|isAck|ok|confirmed)\b|` +
+			`\b(?:[a-zA-Z0-9_]+\.)?(?:isSuccess|success|isAck|ok|confirmed)\s*(?:==\s*false|!=\s*true)|` +
+			`!=\s*(?:PacketType\.(?:ack|pong|stopAck)|AckStatus\.(?:success|confirmed)|['"](?:ack|pong)['"]|stopAck|ack)\b)`,
+	)
 )
 
 func (r UnverifiedHardwareActuationRule) Check(diff string) []Finding {
@@ -64,14 +70,9 @@ func isAckGuardHeader(header string) bool {
 	}
 
 	// Reject negative checks that confirm non-acknowledgment
-	if strings.Contains(header, "!= packettype.ack") ||
+	if negativeAckCheckRe.MatchString(header) ||
+		strings.Contains(header, "!= packettype.ack") ||
 		strings.Contains(header, "!= packettype.pong") ||
-		strings.Contains(header, "!ack.issuccess") ||
-		strings.Contains(header, "!ack.success") ||
-		strings.Contains(header, "!ack.isack") ||
-		strings.Contains(header, "ack == false") ||
-		strings.Contains(header, "ack != true") ||
-		strings.Contains(header, "!ack.ok") ||
 		strings.Contains(header, "!= stopack") ||
 		strings.Contains(header, "!= ack") {
 		return false
@@ -147,6 +148,8 @@ func handleEnclosingBrace(lines []string, k int, trimmed string) (isAck bool, st
 
 func isGuardedByAck(lines []string, index int) bool {
 	depth := 0
+	inNonAckCase := false
+
 	for k := index - 1; k >= 0 && index-k <= 50; k-- {
 		line := stripLineComment(lines[k])
 		trimmed := strings.TrimSpace(line)
@@ -156,7 +159,13 @@ func isGuardedByAck(lines []string, index int) bool {
 
 		if depth == 0 && (strings.HasPrefix(trimmed, "case ") || strings.HasPrefix(trimmed, "case:") ||
 			strings.HasPrefix(trimmed, "default:")) {
-			return isAckSwitchCaseLabel(strings.ToLower(trimmed))
+			if !inNonAckCase {
+				if isAckSwitchCaseLabel(strings.ToLower(trimmed)) {
+					return true
+				}
+				inNonAckCase = true
+			}
+			continue
 		}
 
 		for c := len(trimmed) - 1; c >= 0; c-- {
@@ -171,6 +180,7 @@ func isGuardedByAck(lines []string, index int) bool {
 				depth--
 				continue
 			}
+			inNonAckCase = false
 			isAck, stop := handleEnclosingBrace(lines, k, trimmed)
 			if isAck {
 				return true
@@ -239,6 +249,44 @@ func scanLineBraces(lineScan string, braceDepth *int, inBlock *bool) {
 	}
 }
 
+func isVerificationMandatory(cond string) bool {
+	cond = unwrapOuterParens(cond)
+	parenDepth := 0
+	start := 0
+	var branches []string
+
+	for i := 0; i < len(cond); i++ {
+		if cond[i] == '(' {
+			parenDepth++
+		} else if cond[i] == ')' {
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		} else if parenDepth == 0 && i+1 < len(cond) && cond[i] == '|' && cond[i+1] == '|' {
+			branches = append(branches, cond[start:i])
+			start = i + 2
+			i++
+		}
+	}
+	branches = append(branches, cond[start:])
+
+	hasVerificationWord := func(s string) bool {
+		lower := strings.ToLower(s)
+		return strings.Contains(lower, "protocol") ||
+			strings.Contains(lower, "verified") ||
+			strings.Contains(lower, "handshake") ||
+			strings.Contains(lower, "authorized") ||
+			strings.Contains(lower, "ready")
+	}
+
+	for _, branch := range branches {
+		if !hasVerificationWord(branch) {
+			return false
+		}
+	}
+	return true
+}
+
 func checkUnverifiedOutputControl(
 	lines []string,
 	index int,
@@ -272,14 +320,12 @@ func checkUnverifiedOutputControl(
 		return false, 0, nil
 	}
 
-	fullCondition := strings.ToLower(conditionBuilder.String())
-	hasVerification := strings.Contains(fullCondition, "protocol") ||
-		strings.Contains(fullCondition, "verified") ||
-		strings.Contains(fullCondition, "handshake") ||
-		strings.Contains(fullCondition, "authorized") ||
-		strings.Contains(fullCondition, "ready")
+	condStr := conditionBuilder.String()
+	if colonIdx := strings.Index(condStr, "onPressed:"); colonIdx != -1 {
+		condStr = condStr[colonIdx+len("onPressed:"):]
+	}
 
-	if hasVerification && !strings.Contains(fullCondition, "||") {
+	if isVerificationMandatory(condStr) {
 		return false, 0, nil
 	}
 

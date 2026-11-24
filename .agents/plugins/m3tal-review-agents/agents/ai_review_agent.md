@@ -45,8 +45,12 @@ in `.jules/`, verify detection loop, and repair the target repository.
     --jq '.baseRepository.owner.login + "/" + .baseRepository.name' 2>/dev/null || echo "")
   PR_BASE_REF=$(gh pr view "$PR_NUMBER" --json baseRefName --jq '.baseRefName' 2>/dev/null || echo "<base-ref>")
   if [ -n "$PR_BASE_REPO" ]; then
-    git fetch "https://github.com/${PR_BASE_REPO}.git" "${PR_BASE_REF}" --depth=100
-    MERGE_BASE=$(git merge-base FETCH_HEAD HEAD)
+    git fetch "https://github.com/${PR_BASE_REPO}.git" "${PR_BASE_REF}"
+    MERGE_BASE=$(git merge-base FETCH_HEAD HEAD 2>/dev/null || true)
+    if [ -z "$MERGE_BASE" ] && [ -f "$(git rev-parse --git-dir)/shallow" ]; then
+      git fetch --unshallow "https://github.com/${PR_BASE_REPO}.git" "${PR_BASE_REF}" 2>/dev/null || true
+      MERGE_BASE=$(git merge-base FETCH_HEAD HEAD 2>/dev/null || true)
+    fi
   else
     git fetch origin "${PR_BASE_REF}" 2>/dev/null || true
     MERGE_BASE=$(git merge-base "origin/${PR_BASE_REF}" HEAD 2>/dev/null || git merge-base HEAD~1 HEAD)
