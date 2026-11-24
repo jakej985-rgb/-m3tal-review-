@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -29,128 +28,52 @@ var (
 func stripDartComments(src string) string {
 	var b strings.Builder
 	b.Grow(len(src))
-	inLineComment := false
-	inBlockComment := false
-	inString := byte(0)
 	for i := 0; i < len(src); i++ {
 		ch := src[i]
-		if inLineComment {
-			if ch == '\n' {
-				inLineComment = false
-				b.WriteByte(ch)
-			} else {
-				b.WriteByte(' ')
-			}
+		if ch == '/' && i+1 < len(src) && src[i+1] == '/' {
+			i = maskLineComment(src, i, &b)
 			continue
 		}
-		if inBlockComment {
-			if ch == '*' && i+1 < len(src) && src[i+1] == '/' {
-				inBlockComment = false
-				b.WriteString("  ")
-				i++
-			} else if ch == '\n' {
-				b.WriteByte(ch)
-			} else {
-				b.WriteByte(' ')
-			}
+		if ch == '/' && i+1 < len(src) && src[i+1] == '*' {
+			i = maskBlockComment(src, i, &b)
 			continue
-		}
-		if inString != 0 {
-			b.WriteByte(ch)
-			if ch == '\\' && i+1 < len(src) {
-				i++
-				b.WriteByte(src[i])
-			} else if ch == inString {
-				inString = 0
-			}
-			continue
-		}
-		if ch == '"' || ch == '\'' {
-			inString = ch
-			b.WriteByte(ch)
-			continue
-		}
-		if ch == '/' && i+1 < len(src) {
-			if src[i+1] == '/' {
-				inLineComment = true
-				b.WriteString("  ")
-				i++
-				continue
-			} else if src[i+1] == '*' {
-				inBlockComment = true
-				b.WriteString("  ")
-				i++
-				continue
-			}
 		}
 		b.WriteByte(ch)
 	}
-	return b.String()
+	res := b.String()
+	return res
 }
 
 func (r ShortcutScopeRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
 }
 
-func (r ShortcutScopeRule) CheckContext(ctx context.Context, diff string) []Finding {
-	var findings []Finding
-	seen := make(map[string]bool)
-
-	for _, block := range sourceBlocks(diff, r.repositoryRoot, r.workingTree) {
-		if err := ctx.Err(); err != nil {
-			return findings
-		}
-		if !dartSourceFileRe.MatchString(block.file) || isTestFile(block.file) {
-			continue
-		}
-
-		// Check if file is a shell scaffold component
-		if !shellScaffoldPathRe.MatchString(block.file) {
-			continue
-		}
-
-		scanText := block.text
-		startLine := block.firstLine
-		if fullData, err := readRuleSource(r.repositoryRoot, block.file, r.workingTree); err == nil && len(fullData) > 0 {
-			scanText = string(fullData)
-			startLine = 1
-		}
-
-		cleanText := stripDartComments(scanText)
-
-		// If this file configures the root MaterialApp / MaterialApp.router,
-		// shortcuts mounted here cover detail routes outside the shell navigator.
-		if rootMaterialAppRe.MatchString(cleanText) {
-			continue
-		}
-
-		if !callbackShortcutsRe.MatchString(cleanText) {
-			continue
-		}
-
-		lines := strings.Split(cleanText, "\n")
-		for i, line := range lines {
-			if callbackShortcutsRe.MatchString(line) {
-				lineNum := startLine + i
-				if len(block.addedLines) > 0 && !block.addedLines[lineNum] {
-					continue
-				}
-				key := block.file + ":" + strconv.Itoa(lineNum)
-				if !seen[key] {
-					seen[key] = true
-					findings = append(findings, Finding{
-						Rule:     "flutter-shell-shortcuts-ancestor",
-						Severity: "medium",
-						File:     block.file,
-						Line:     lineNum,
-						Message:  "CallbackShortcuts mounted inside shell scaffold excludes full-screen detail routes",
-						Remediation: "Hoist CallbackShortcuts to wrap MaterialApp.router's builder at " +
-							"the application root so shortcuts cover detail routes outside the shell navigator.",
-					})
-				}
-			}
-		}
+func checkShortcutBlock(b diffSourceBlock, text string, start int, seen map[string]bool) []Finding {
+	var shortcutFindings []Finding
+	cleanText := stripDartComments(text)
+	if rootMaterialAppRe.MatchString(cleanText) || !callbackShortcutsRe.MatchString(cleanText) {
+		return nil
 	}
 
-	return findings
+	lines := strings.Split(cleanText, "\n")
+	for i, line := range lines {
+		if callbackShortcutsRe.MatchString(line) && shouldReportFinding(b, start+i, false, seen) {
+			shortcutFindings = append(shortcutFindings, Finding{
+				Rule:     "flutter-shell-shortcuts-ancestor",
+				Severity: "medium",
+				File:     b.file,
+				Line:     start + i,
+				Message:  "CallbackShortcuts mounted inside shell scaffold excludes full-screen detail routes",
+				Remediation: "Hoist CallbackShortcuts to wrap MaterialApp.router's builder at " +
+					"the application root so shortcuts cover detail routes outside the shell navigator.",
+			})
+		}
+	}
+	return shortcutFindings
+}
+
+func (r ShortcutScopeRule) CheckContext(ctx context.Context, diff string) []Finding {
+	return executeBlockRule(ctx, diff, r.repositoryRoot, r.workingTree, func(f string) bool {
+		return dartSourceFileRe.MatchString(f) && !isTestFile(f) && shellScaffoldPathRe.MatchString(f)
+	}, checkShortcutBlock)
 }

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"os"
 	"path"
 	"path/filepath"
@@ -324,6 +325,123 @@ func sourceBlocksUncached(diff, repositoryRoot string, workingTree bool) []diffS
 		blocks = append(blocks, fileBlocks...)
 	}
 	return blocks
+}
+
+func resolveBlockSource(block diffSourceBlock, root string, workingTree bool) (string, int) {
+	if fullData, err := readRuleSource(root, block.file, workingTree); err == nil && len(fullData) > 0 {
+		return string(fullData), 1
+	}
+	return block.text, block.firstLine
+}
+
+func iterateRuleBlocks(
+	ctx context.Context,
+	diff, root string,
+	workingTree bool,
+	fileFilter func(string) bool,
+	fn func(block diffSourceBlock, scanText string, startLine int),
+) error {
+	for _, block := range sourceBlocks(diff, root, workingTree) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if fileFilter != nil && !fileFilter(block.file) {
+			continue
+		}
+		scanText, startLine := resolveBlockSource(block, root, workingTree)
+		fn(block, scanText, startLine)
+	}
+	return nil
+}
+
+func dedupeFinding(seen map[string]bool, file string, lineNum int) bool {
+	key := file + ":" + strconv.Itoa(lineNum)
+	if seen[key] {
+		return true
+	}
+	seen[key] = true
+	return false
+}
+
+func decrementDepth(depth *int) bool {
+	if *depth <= 0 {
+		return false
+	}
+	*depth = *depth - 1
+	return true
+}
+
+func isCommentPrefix(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*")
+}
+
+func maskLineComment(src string, i int, b *strings.Builder) int {
+	for i < len(src) && src[i] != '\n' {
+		b.WriteByte(' ')
+		i++
+	}
+	if i < len(src) {
+		b.WriteByte('\n')
+	}
+	return i
+}
+
+func maskBlockComment(src string, i int, b *strings.Builder) int {
+	b.WriteString("  ")
+	i = i + 2
+	for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
+		if src[i] == '\n' {
+			b.WriteByte('\n')
+		} else {
+			b.WriteByte(' ')
+		}
+		i++
+	}
+	return i + 1
+}
+
+func shouldReportFinding(b diffSourceBlock, lineNum int, wt bool, seen map[string]bool) bool {
+	if len(b.addedLines) > 0 && !b.addedLines[lineNum] && !wt {
+		return false
+	}
+	return !dedupeFinding(seen, b.file, lineNum)
+}
+
+type ruleCheckFn func(b diffSourceBlock, text string, start int, seen map[string]bool) []Finding
+
+func executeBlockRule(
+	ctx context.Context,
+	diff, root string,
+	wt bool,
+	filter func(string) bool,
+	fn ruleCheckFn,
+) []Finding {
+	var result []Finding
+	seen := make(map[string]bool)
+	if err := iterateRuleBlocks(ctx, diff, root, wt, filter, func(b diffSourceBlock, text string, start int) {
+		result = append(result, fn(b, text, start, seen)...)
+	}); err != nil {
+		return result
+	}
+	return result
+}
+
+func scanStringLiteral(s string, i int, inString *bool, stringChar *byte) (int, bool) {
+	ch := s[i]
+	if *inString {
+		if ch == '\\' {
+			return i + 1, true
+		}
+		if ch == *stringChar {
+			*inString = false
+		}
+		return i, true
+	}
+	if ch == '"' || ch == '\'' || ch == '`' {
+		*inString, *stringChar = true, ch
+		return i, true
+	}
+	return i, false
 }
 
 func extIs(ext string, values ...string) bool {

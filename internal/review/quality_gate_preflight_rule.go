@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -32,46 +31,29 @@ func (r QualityGatePreflightRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
 }
 
-func (r QualityGatePreflightRule) CheckContext(ctx context.Context, diff string) []Finding {
-	var findings []Finding
-	seen := make(map[string]bool)
-
-	for _, block := range sourceBlocks(diff, r.repositoryRoot, r.workingTree) {
-		if err := ctx.Err(); err != nil {
-			return findings
-		}
-		if !gateScriptFileRe.MatchString(block.file) {
-			continue
-		}
-
-		scanText := block.text
-		startLine := block.firstLine
-		if fullData, err := readRuleSource(r.repositoryRoot, block.file, r.workingTree); err == nil && len(fullData) > 0 {
-			scanText = string(fullData)
-			startLine = 1
-		}
-
-		// Check if the script contains python unittest discovery
-		if testDiscoveryRe.MatchString(scanText) && !preflightCheckRe.MatchString(scanText) {
-			loc := testDiscoveryRe.FindStringIndex(scanText)
-			lineNum := startLine + strings.Count(scanText[:loc[0]], "\n")
-
-			if block.addedLines[lineNum] || r.workingTree {
-				key := block.file + ":" + strconv.Itoa(lineNum)
-				if !seen[key] {
-					seen[key] = true
-					findings = append(findings, Finding{
-						Rule:        "quality-gate-preflight-dependency",
-						Severity:    "medium",
-						File:        block.file,
-						Line:        lineNum,
-						Message:     "Quality gate executes Python test runner without an early dependency preflight check",
-						Remediation: "Add an early preflight check (python3 -c \"import ...\") before running expensive test suites.",
-					})
-				}
-			}
-		}
+func checkQualityGateBlock(b diffSourceBlock, text string, start int, wt bool, seen map[string]bool) []Finding {
+	if !testDiscoveryRe.MatchString(text) || preflightCheckRe.MatchString(text) {
+		return nil
 	}
+	loc := testDiscoveryRe.FindStringIndex(text)
+	lineNum := start + strings.Count(text[:loc[0]], "\n")
+	if !shouldReportFinding(b, lineNum, wt, seen) {
+		return nil
+	}
+	return []Finding{{
+		Rule:        "quality-gate-preflight-dependency",
+		Severity:    "medium",
+		File:        b.file,
+		Line:        lineNum,
+		Message:     "Quality gate executes Python test runner without an early dependency preflight check",
+		Remediation: "Add an early preflight check (python3 -c \"import ...\") before running expensive test suites.",
+	}}
+}
 
-	return findings
+func (r QualityGatePreflightRule) CheckContext(ctx context.Context, diff string) []Finding {
+	return executeBlockRule(ctx, diff, r.repositoryRoot, r.workingTree, func(f string) bool {
+		return gateScriptFileRe.MatchString(f)
+	}, func(b diffSourceBlock, text string, start int, seen map[string]bool) []Finding {
+		return checkQualityGateBlock(b, text, start, r.workingTree, seen)
+	})
 }

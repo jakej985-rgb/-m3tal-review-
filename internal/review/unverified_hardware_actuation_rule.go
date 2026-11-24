@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -42,7 +41,8 @@ var (
 	)
 
 	affirmativeAckPredRe = regexp.MustCompile(
-		`(?i)(?:\b(?:[a-zA-Z0-9_]+\.)?(?:issuccess|success|isack)\b|\back\.ok\b|` +
+		`(?i)(?:\b(?:[a-zA-Z0-9_]+\.)?(?:issuccess|success|isack)\b|` +
+			`\b(?:ack|stopack)(?:\.|\?\.)ok(?:\s*==\s*true)?\b|` +
 			`\b(?:ack|reply|packet|stopack)\s*(?:==\s*true|!=\s*null|!=\s*nil)\b|` +
 			`^(?:ack|reply|stopack)$|` +
 			`\bis\s+(?:ack|stopack)\b|` +
@@ -72,14 +72,8 @@ func adjustTopLevelDepth(ch byte, depth *int) {
 	case '(', '[', '{':
 		*depth = *depth + 1
 	case ')', ']', '}':
-		if *depth > 0 {
-			*depth = *depth - 1
-		}
+		decrementDepth(depth)
 	}
-}
-
-func isQuoteByte(ch byte) bool {
-	return ch == '"' || ch == '\'' || ch == '`'
 }
 
 func splitTopLevel(s string, op string) []string {
@@ -91,36 +85,33 @@ func splitTopLevel(s string, op string) []string {
 	opLen := len(op)
 
 	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if inString {
-			if ch == '\\' {
-				i = i + 1
-			} else if ch == stringChar {
-				inString = false
-			}
+		if nextI, ok := scanStringLiteral(s, i, &inString, &stringChar); ok {
+			i = nextI
 			continue
 		}
-		if isQuoteByte(ch) {
-			inString = true
-			stringChar = ch
-			continue
-		}
-		adjustTopLevelDepth(ch, &parenDepth)
+		adjustTopLevelDepth(s[i], &parenDepth)
 		if parenDepth == 0 && i+opLen <= len(s) && s[i:i+opLen] == op {
 			parts = append(parts, s[start:i])
 			start = i + opLen
 			i = start - 1
 		}
 	}
-	if start > 0 {
-		parts = append(parts, s[start:])
-		return parts
+	if start == 0 {
+		return nil
 	}
-	return nil
+	return append(parts, s[start:])
 }
 
 func guaranteesAffirmativeAck(cond string, isGo bool) bool {
 	cond = unwrapOuterParens(strings.TrimSpace(cond))
+	if strings.HasPrefix(cond, "!") {
+		inner := unwrapOuterParens(strings.TrimSpace(cond[1:]))
+		if negativeAckPredRe.MatchString(inner) ||
+			affirmativeAckPredRe.MatchString(inner) ||
+			guaranteesAffirmativeAck(inner, isGo) {
+			return false
+		}
+	}
 	if branches := splitTopLevel(cond, "||"); len(branches) > 0 {
 		for _, b := range branches {
 			if !guaranteesAffirmativeAck(b, isGo) {
@@ -182,6 +173,26 @@ func isVarChecked(cond string, varName string) (bool, bool) {
 	return false, false
 }
 
+func extractGoAssignStmt(stmt string) (string, string, bool) {
+	if idx := strings.Index(stmt, ":="); idx != -1 {
+		return strings.TrimSpace(stmt[:idx]), strings.TrimSpace(stmt[idx+2:]), true
+	}
+	for i := 0; i < len(stmt); i++ {
+		if stmt[i] == '=' {
+			if i > 0 && (stmt[i-1] == '=' || stmt[i-1] == '!' || stmt[i-1] == '<' ||
+				stmt[i-1] == '>' || stmt[i-1] == ':') {
+				continue
+			}
+			if i+1 < len(stmt) && stmt[i+1] == '=' {
+				i++
+				continue
+			}
+			return strings.TrimSpace(stmt[:i]), strings.TrimSpace(stmt[i+1:]), true
+		}
+	}
+	return "", "", false
+}
+
 func checkGoInitializer(cond string, isGo bool) (bool, bool) {
 	semiParts := splitTopLevel(cond, ";")
 	if len(semiParts) <= 1 {
@@ -189,10 +200,7 @@ func checkGoInitializer(cond string, isGo bool) (bool, bool) {
 	}
 	initStmt := strings.TrimSpace(semiParts[0])
 	controllingCond := strings.TrimSpace(semiParts[len(semiParts)-1])
-	idx := strings.Index(initStmt, ":=")
-	if idx != -1 {
-		varName := strings.TrimSpace(initStmt[:idx])
-		expr := strings.TrimSpace(initStmt[idx+2:])
+	if varName, expr, ok := extractGoAssignStmt(initStmt); ok {
 		if guaranteesAffirmativeAck(expr, isGo) {
 			isPos, isNeg := isVarChecked(controllingCond, varName)
 			if isNeg {
@@ -273,24 +281,62 @@ func collectOpeningBraceHeader(lines []string, k int, trimmed string) string {
 	return header
 }
 
-func handleEnclosingBrace(lines []string, k int, trimmed string, isGo bool) (isAck bool, stop bool) {
+func isCaseLabel(s string) bool {
+	return strings.HasPrefix(s, "case ") || strings.HasPrefix(s, "case:") || strings.HasPrefix(s, "default:")
+}
+
+func checkCaseAck(trimmed string, inNonAckCase *bool) bool {
+	if *inNonAckCase {
+		return false
+	}
+	if isAckSwitchCaseLabel(strings.ToLower(trimmed)) {
+		return true
+	}
+	*inNonAckCase = true
+	return false
+}
+
+func handleEnclosingBrace(lines []string, k int, trimmed string, isGo bool) (bool, bool) {
 	header := collectOpeningBraceHeader(lines, k, trimmed)
 	lowerHeader := strings.ToLower(header)
 	if isAckGuardHeader(lowerHeader, isGo) {
 		return true, false
 	}
-	if strings.Contains(lowerHeader, "void ") ||
+	stop := strings.Contains(lowerHeader, "void ") ||
 		strings.Contains(lowerHeader, "class ") ||
 		strings.Contains(lowerHeader, "=>") ||
-		(strings.HasPrefix(lowerHeader, "()") && strings.Contains(lowerHeader, "{")) {
-		return false, true
+		(strings.HasPrefix(lowerHeader, "()") && strings.Contains(lowerHeader, "{"))
+	return false, stop
+}
+
+func scanLineForAckBrace(
+	lines []string,
+	k int,
+	trimmed string,
+	depth *int,
+	inNonAckCase *bool,
+	isGo bool,
+) (foundAck bool, stopScan bool) {
+	for c := len(trimmed) - 1; c >= 0; c-- {
+		if trimmed[c] == '}' {
+			*depth = *depth + 1
+		} else if trimmed[c] == '{' {
+			if decrementDepth(depth) {
+				continue
+			}
+			*inNonAckCase = false
+			if a, s := handleEnclosingBrace(lines, k, trimmed, isGo); a || s {
+				return a, s
+			}
+		}
 	}
-	return false, false
+	return foundAck, stopScan
 }
 
 func isGuardedByAck(lines []string, index int, isGo bool) bool {
 	depth := 0
 	inNonAckCase := false
+	guarded := false
 
 	for k := index - 1; k >= 0 && index-k <= 50; k-- {
 		line := stripLineComment(lines[k])
@@ -299,40 +345,19 @@ func isGuardedByAck(lines []string, index int, isGo bool) bool {
 			continue
 		}
 
-		if depth == 0 && (strings.HasPrefix(trimmed, "case ") || strings.HasPrefix(trimmed, "case:") ||
-			strings.HasPrefix(trimmed, "default:")) {
-			if !inNonAckCase {
-				if isAckSwitchCaseLabel(strings.ToLower(trimmed)) {
-					return true
-				}
-				inNonAckCase = true
+		if depth == 0 && isCaseLabel(trimmed) {
+			if checkCaseAck(trimmed, &inNonAckCase) {
+				return true
 			}
 			continue
 		}
 
-		for c := len(trimmed) - 1; c >= 0; c-- {
-			if trimmed[c] == '}' {
-				depth++
-				continue
-			}
-			if trimmed[c] != '{' {
-				continue
-			}
-			if depth > 0 {
-				depth--
-				continue
-			}
-			inNonAckCase = false
-			isAck, stop := handleEnclosingBrace(lines, k, trimmed, isGo)
-			if isAck {
-				return true
-			}
-			if stop {
-				return false
-			}
+		if isAck, stop := scanLineForAckBrace(lines, k, trimmed, &depth, &inNonAckCase, isGo); isAck || stop {
+			guarded = isAck
+			break
 		}
 	}
-	return false
+	return guarded
 }
 
 func isHardwareActuationCommand(line string) bool {
@@ -348,6 +373,7 @@ func isHardwareActuationCommand(line string) bool {
 }
 
 func findTernaryQ(line string) int {
+	pos := -1
 	for i := 0; i < len(line); i++ {
 		if line[i] == '?' {
 			if i > 0 && line[i-1] == '?' {
@@ -356,10 +382,11 @@ func findTernaryQ(line string) int {
 			if i+1 < len(line) && (line[i+1] == '.' || line[i+1] == '?') {
 				continue
 			}
-			return i
+			pos = i
+			break
 		}
 	}
-	return -1
+	return pos
 }
 
 func scanLineBraces(lineScan string, braceDepth *int, inBlock *bool) {
@@ -394,20 +421,24 @@ func scanLineBraces(lineScan string, braceDepth *int, inBlock *bool) {
 func isVerificationMandatory(cond string) bool {
 	cond = unwrapOuterParens(strings.TrimSpace(cond))
 	if branches := splitTopLevel(cond, "||"); len(branches) > 0 {
+		allValid := true
 		for _, b := range branches {
 			if !isVerificationMandatory(b) {
-				return false
+				allValid = false
+				break
 			}
 		}
-		return true
+		return allValid
 	}
 	if terms := splitTopLevel(cond, "&&"); len(terms) > 0 {
+		anyValid := false
 		for _, t := range terms {
 			if isVerificationMandatory(t) {
-				return true
+				anyValid = true
+				break
 			}
 		}
-		return false
+		return anyValid
 	}
 	leaf := strings.TrimSpace(cond)
 	if strings.HasPrefix(leaf, "!") || strings.Contains(leaf, "== false") || strings.Contains(leaf, "!= true") {
@@ -421,56 +452,27 @@ func isVerificationMandatory(cond string) bool {
 		strings.Contains(lower, "ready")
 }
 
-func checkUnverifiedOutputControl(
-	lines []string,
-	index int,
-	startLine int,
-) (matched bool, guardLine int, actionLines []int) {
-	line := stripLineComment(lines[index])
-	if !strings.Contains(line, "onPressed:") || !strings.Contains(line, "isConnected") {
-		return false, 0, nil
-	}
-
-	guardLine = startLine + index
-
+func extractTernaryCondition(lines []string, index int) (string, int, int, bool) {
 	var conditionBuilder strings.Builder
-	qIndex := -1
-	qLineOffset := 0
-
 	for k := 0; k <= 5 && index+k < len(lines); k++ {
 		cur := stripLineComment(lines[index+k])
 		if qPos := findTernaryQ(cur); qPos != -1 {
 			conditionBuilder.WriteString(" ")
 			conditionBuilder.WriteString(cur[:qPos])
-			qIndex = qPos
-			qLineOffset = k
-			break
+			return conditionBuilder.String(), k, qPos, true
 		}
 		conditionBuilder.WriteString(" ")
 		conditionBuilder.WriteString(cur)
 	}
+	return "", 0, 0, false
+}
 
-	if qIndex == -1 {
-		return false, 0, nil
-	}
-
-	condStr := conditionBuilder.String()
-	if colonIdx := strings.Index(condStr, "onPressed:"); colonIdx != -1 {
-		condStr = condStr[colonIdx+len("onPressed:"):]
-	}
-
-	if isVerificationMandatory(condStr) {
-		return false, 0, nil
-	}
-
-	callbackStartLine := index + qLineOffset
-	afterQ := lines[callbackStartLine][qIndex+1:]
-
-	trimmedAfterQ := strings.TrimSpace(stripLineComment(afterQ))
-	if !strings.Contains(trimmedAfterQ, "{") && !strings.Contains(trimmedAfterQ, "=>") {
-		return false, 0, nil
-	}
-
+func collectActionLines(
+	lines []string,
+	index, startLine, qLineOffset int,
+	afterQ string,
+) []int {
+	var actionLines []int
 	braceDepth := 0
 	inBlock := false
 
@@ -482,84 +484,96 @@ func checkUnverifiedOutputControl(
 		}
 
 		scanLineBraces(lineScan, &braceDepth, &inBlock)
-
 		if isHardwareActuationCommand(curLine) {
 			actionLines = append(actionLines, startLine+index+k)
 		}
-
 		if inBlock && braceDepth <= 0 {
 			break
 		}
-
 		trimmed := strings.TrimSpace(curLine)
 		if !inBlock && (strings.Contains(lineScan, " :") || strings.HasSuffix(trimmed, ",")) {
 			break
 		}
 	}
+	return actionLines
+}
 
+func checkUnverifiedOutputControl(
+	lines []string,
+	index int,
+	startLine int,
+) (matched bool, guardLine int, actionLines []int) {
+	line := stripLineComment(lines[index])
+	if !strings.Contains(line, "onPressed:") || !strings.Contains(line, "isConnected") {
+		return false, 0, nil
+	}
+
+	guardLine = startLine + index
+	condStr, qLineOffset, qIndex, ok := extractTernaryCondition(lines, index)
+	if !ok {
+		return false, 0, nil
+	}
+
+	if colonIdx := strings.Index(condStr, "onPressed:"); colonIdx != -1 {
+		condStr = condStr[colonIdx+len("onPressed:"):]
+	}
+
+	if isVerificationMandatory(condStr) {
+		return false, 0, nil
+	}
+
+	callbackStartLine := index + qLineOffset
+	afterQ := lines[callbackStartLine][qIndex+1:]
+	trimmedAfterQ := strings.TrimSpace(stripLineComment(afterQ))
+	if !strings.Contains(trimmedAfterQ, "{") && !strings.Contains(trimmedAfterQ, "=>") {
+		return false, 0, nil
+	}
+
+	actionLines = collectActionLines(lines, index, startLine, qLineOffset, afterQ)
 	if len(actionLines) > 0 {
 		return true, guardLine, actionLines
 	}
-
 	return false, 0, nil
 }
 
-func (r UnverifiedHardwareActuationRule) CheckContext(ctx context.Context, diff string) []Finding {
-	var findings []Finding
-	seen := make(map[string]bool)
-
-	for _, block := range sourceBlocks(diff, r.repositoryRoot, r.workingTree) {
-		if err := ctx.Err(); err != nil {
-			return findings
-		}
-		if !hardwareServiceFileRe.MatchString(block.file) || hardwareExcludePattern.MatchString(block.file) {
+func (r UnverifiedHardwareActuationRule) checkHardwareBlock(
+	b diffSourceBlock, text string, start int, seen map[string]bool,
+) []Finding {
+	var hardwareFindings []Finding
+	lines := strings.Split(text, "\n")
+	isGo := strings.HasSuffix(b.file, ".go")
+	for i, line := range lines {
+		lineNum := start + i
+		trimmedLine := strings.TrimSpace(line)
+		if isCommentPrefix(trimmedLine) {
 			continue
 		}
-
-		scanText := block.text
-		startLine := block.firstLine
-		if fullData, err := readRuleSource(r.repositoryRoot, block.file, r.workingTree); err == nil && len(fullData) > 0 {
-			scanText = string(fullData)
-			startLine = 1
+		if stopAssumedConfirmedRe.MatchString(trimmedLine) && !isGuardedByAck(lines, i, isGo) {
+			if (b.addedLines[lineNum] || r.workingTree) && !dedupeFinding(seen, b.file+":stop", lineNum) {
+				hardwareFindings = append(hardwareFindings, Finding{
+					Rule:     "unverified-hardware-actuation",
+					Severity: "high",
+					File:     b.file,
+					Line:     lineNum,
+					Message: "Hardware stop status or output state is assumed confirmed upon transmission " +
+						"without device acknowledgment",
+					Remediation: "Keep physical stop status unconfirmed (stopConfirmed: false) until " +
+						"the firmware returns an ACK or output state report.",
+				})
+			}
 		}
 
-		lines := strings.Split(scanText, "\n")
-		isGo := strings.HasSuffix(block.file, ".go")
-		for i, line := range lines {
-			lineNum := startLine + i
-			trimmed := strings.TrimSpace(line)
-
-			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
-				continue
-			}
-
-			if stopAssumedConfirmedRe.MatchString(trimmed) && !isGuardedByAck(lines, i, isGo) {
-				if block.addedLines[lineNum] || r.workingTree {
-					key := block.file + ":" + strconv.Itoa(lineNum) + ":stop"
-					if !seen[key] {
-						seen[key] = true
-						findings = append(findings, Finding{
-							Rule:     "unverified-hardware-actuation",
-							Severity: "high",
-							File:     block.file,
-							Line:     lineNum,
-							Message: "Hardware stop status or output state is assumed confirmed upon transmission " +
-								"without device acknowledgment",
-							Remediation: "Keep physical stop status unconfirmed (stopConfirmed: false) until " +
-								"the firmware returns an ACK or output state report.",
-						})
-					}
-				}
-			}
-
-			matched, guardLine, actionLines := checkUnverifiedOutputControl(lines, i, startLine)
-			if matched {
-				r.reportUnverifiedControl(block, guardLine, actionLines, seen, &findings)
-			}
+		if matched, guardLine, actionLines := checkUnverifiedOutputControl(lines, i, start); matched {
+			r.reportUnverifiedControl(b, guardLine, actionLines, seen, &hardwareFindings)
 		}
 	}
+	return hardwareFindings
+}
 
-	return findings
+func (r UnverifiedHardwareActuationRule) CheckContext(ctx context.Context, diff string) []Finding {
+	return executeBlockRule(ctx, diff, r.repositoryRoot, r.workingTree, func(f string) bool {
+		return hardwareServiceFileRe.MatchString(f) && !hardwareExcludePattern.MatchString(f)
+	}, r.checkHardwareBlock)
 }
 
 func (r UnverifiedHardwareActuationRule) reportUnverifiedControl(
@@ -580,20 +594,17 @@ func (r UnverifiedHardwareActuationRule) reportUnverifiedControl(
 	if block.addedLines[actionLine] && !block.addedLines[guardLine] {
 		reportLine = actionLine
 	}
-	if block.addedLines[guardLine] || block.addedLines[actionLine] || r.workingTree {
-		key := block.file + ":" + strconv.Itoa(reportLine) + ":control"
-		if !seen[key] {
-			seen[key] = true
-			*findings = append(*findings, Finding{
-				Rule:     "unverified-hardware-actuation",
-				Severity: "high",
-				File:     block.file,
-				Line:     reportLine,
-				Message: "Hardware output control is gated only on transport connection status " +
-					"without protocol verification",
-				Remediation: "Gate hardware controls on verified protocol state " +
-					"(e.g. isConnected && isProtocolVerified) to prevent actuation before protocol negotiation.",
-			})
-		}
+	if (block.addedLines[guardLine] || block.addedLines[actionLine] || r.workingTree) &&
+		!dedupeFinding(seen, block.file+":control", reportLine) {
+		*findings = append(*findings, Finding{
+			Rule:     "unverified-hardware-actuation",
+			Severity: "high",
+			File:     block.file,
+			Line:     reportLine,
+			Message: "Hardware output control is gated only on transport connection status " +
+				"without protocol verification",
+			Remediation: "Gate hardware controls on verified protocol state " +
+				"(e.g. isConnected && isProtocolVerified) to prevent actuation before protocol negotiation.",
+		})
 	}
 }

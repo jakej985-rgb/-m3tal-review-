@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -40,77 +39,55 @@ func (r TestAssertionBypassRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
 }
 
-func (r TestAssertionBypassRule) CheckContext(ctx context.Context, diff string) []Finding {
-	var findings []Finding
-	seen := make(map[string]bool)
-
-	for _, block := range sourceBlocks(diff, r.repositoryRoot, r.workingTree) {
-		if err := ctx.Err(); err != nil {
-			return findings
-		}
-		if !testFileRe.MatchString(block.file) {
-			continue
-		}
-
-		scanText := block.text
-		startLine := block.firstLine
-		if fullData, err := readRuleSource(r.repositoryRoot, block.file, r.workingTree); err == nil && len(fullData) > 0 {
-			scanText = string(fullData)
-			startLine = 1
-		}
-
-		lines := strings.Split(scanText, "\n")
-		for i, line := range lines {
-			lineNum := startLine + i
-			trimmed := strings.TrimSpace(line)
-
-			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") {
-				continue
-			}
-
-			matches := conditionalGuardRe.FindStringSubmatch(trimmed)
-			if len(matches) < 2 {
-				continue
-			}
-
-			cond := matches[1]
-			if allowedConditionalRe.MatchString(cond) {
-				continue
-			}
-
-			// Look ahead in the next 5 lines for actions or assertions under test
-			hasActionOrAssert := false
-			for j := 1; j <= 5 && i+j < len(lines); j++ {
-				aheadLine := strings.TrimSpace(lines[i+j])
-				if testActionOrAssertRe.MatchString(aheadLine) {
-					hasActionOrAssert = true
-					break
-				}
-				if aheadLine == "}" || aheadLine == "" {
-					continue
-				}
-			}
-
-			if hasActionOrAssert {
-				if block.addedLines[lineNum] || r.workingTree {
-					key := block.file + ":" + strconv.Itoa(lineNum)
-					if !seen[key] {
-						seen[key] = true
-						findings = append(findings, Finding{
-							Rule:     "test-assertion-bypass",
-							Severity: "high",
-							File:     block.file,
-							Line:     lineNum,
-							Message: "Test conditionally wraps actions or assertions under test, " +
-								"allowing false-clean passes if the condition is false",
-							Remediation: "Remove conditional guard and assert test behavior directly " +
-								"or use explicit test preconditions / skip directives.",
-						})
-					}
-				}
-			}
+func hasTestAssertion(lines []string, start int) bool {
+	hasAssert := false
+	for j := 1; j <= 5 && start+j < len(lines); j++ {
+		aheadLine := strings.TrimSpace(lines[start+j])
+		if testActionOrAssertRe.MatchString(aheadLine) {
+			hasAssert = true
+			break
 		}
 	}
+	return hasAssert
+}
 
-	return findings
+func checkTestBypassBlock(b diffSourceBlock, text string, start int, wt bool, seen map[string]bool) []Finding {
+	var bypassFindings []Finding
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lineNum := start + i
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		matches := conditionalGuardRe.FindStringSubmatch(trimmed)
+		if len(matches) < 2 || allowedConditionalRe.MatchString(matches[1]) {
+			continue
+		}
+		if !hasTestAssertion(lines, i) {
+			continue
+		}
+		if !shouldReportFinding(b, lineNum, wt, seen) {
+			continue
+		}
+		bypassFindings = append(bypassFindings, Finding{
+			Rule:     "test-assertion-bypass",
+			Severity: "high",
+			File:     b.file,
+			Line:     lineNum,
+			Message: "Test conditionally wraps actions or assertions under test, " +
+				"allowing false-clean passes if the condition is false",
+			Remediation: "Remove conditional guard and assert test behavior directly " +
+				"or use explicit test preconditions / skip directives.",
+		})
+	}
+	return bypassFindings
+}
+
+func (r TestAssertionBypassRule) CheckContext(ctx context.Context, diff string) []Finding {
+	return executeBlockRule(ctx, diff, r.repositoryRoot, r.workingTree, func(f string) bool {
+		return testFileRe.MatchString(f)
+	}, func(b diffSourceBlock, text string, start int, seen map[string]bool) []Finding {
+		return checkTestBypassBlock(b, text, start, r.workingTree, seen)
+	})
 }
