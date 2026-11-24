@@ -139,12 +139,13 @@ func (r ShortcutScopeRule) CheckContext(ctx context.Context, diff string) []Find
 				if !seen[key] {
 					seen[key] = true
 					findings = append(findings, Finding{
-						Rule:        "flutter-shell-shortcuts-ancestor",
-						Severity:    "medium",
-						File:        block.file,
-						Line:        lineNum,
-						Message:     "CallbackShortcuts mounted inside shell scaffold excludes full-screen detail routes",
-						Remediation: "Hoist CallbackShortcuts to wrap MaterialApp.router's builder at the application root so shortcuts cover detail routes outside the shell navigator.",
+						Rule:     "flutter-shell-shortcuts-ancestor",
+						Severity: "medium",
+						File:     block.file,
+						Line:     lineNum,
+						Message:  "CallbackShortcuts mounted inside shell scaffold excludes full-screen detail routes",
+						Remediation: "Hoist CallbackShortcuts to wrap MaterialApp.router's builder at " +
+							"the application root so shortcuts cover detail routes outside the shell navigator.",
 					})
 				}
 			}

@@ -21,9 +21,14 @@ func (LedgerReplaySnapshotRule) Name() string {
 }
 
 var (
-	replayMethodDeclRe = regexp.MustCompile(`(?m)^\s*(?:@\w+\s+)*(?:(?:static|final)\s+)?(?:(?:void|Future<[^>]*>|[A-Za-z0-9_<>?]+)\s+)?(replayFromEvents|reconstructFromLedger|replayLedger)\s*\(`)
-	ledgerBoundaryRe   = regexp.MustCompile(`(?i)\b(?:maxLedgerEvents|trimToSize|evictOldEvents|maxEvents|ledgerCapacity)\b`)
-	baseSnapshotRe     = regexp.MustCompile(`(?i)\bbaseSnapshot\b`)
+	replayMethodDeclRe = regexp.MustCompile(
+		`(?m)^\s*(?:@\w+\s+)*(?:(?:static|final)\s+)?(?:(?:void|Future<[^>]*>|[A-Za-z0-9_<>?]+)\s+)?` +
+			`(replayFromEvents|reconstructFromLedger|replayLedger)\s*\(`,
+	)
+	ledgerBoundaryRe = regexp.MustCompile(
+		`(?i)\b(?:maxLedgerEvents|trimToSize|evictOldEvents|maxEvents|ledgerCapacity)\b`,
+	)
+	baseSnapshotRe = regexp.MustCompile(`(?i)\bbaseSnapshot\b`)
 )
 
 func (r LedgerReplaySnapshotRule) Check(diff string) []Finding {
@@ -129,12 +134,13 @@ func (r LedgerReplaySnapshotRule) CheckContext(ctx context.Context, diff string)
 			if !seen[key] {
 				seen[key] = true
 				findings = append(findings, Finding{
-					Rule:        "event-ledger-snapshot-truncation",
-					Severity:    "high",
-					File:        block.file,
-					Line:        lineNum,
-					Message:     "Trimmed event ledger replay method reconstructs state from empty without base snapshot support",
-					Remediation: "Accept a 'baseSnapshot' parameter in replayFromEvents so trimmed ledgers can accurately reconstruct state across eviction boundaries.",
+					Rule:     "event-ledger-snapshot-truncation",
+					Severity: "high",
+					File:     block.file,
+					Line:     lineNum,
+					Message:  "Trimmed event ledger replay method reconstructs state from empty without base snapshot support",
+					Remediation: "Accept a 'baseSnapshot' parameter in replayFromEvents so trimmed ledgers " +
+						"can accurately reconstruct state across eviction boundaries.",
 				})
 			}
 		}

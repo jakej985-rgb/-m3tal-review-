@@ -97,12 +97,14 @@ func (r TestAssertionBypassRule) CheckContext(ctx context.Context, diff string) 
 					if !seen[key] {
 						seen[key] = true
 						findings = append(findings, Finding{
-							Rule:        "test-assertion-bypass",
-							Severity:    "high",
-							File:        block.file,
-							Line:        lineNum,
-							Message:     "Test conditionally wraps actions or assertions under test, allowing false-clean passes if the condition is false",
-							Remediation: "Remove conditional guard and assert test behavior directly or use explicit test preconditions / skip directives.",
+							Rule:     "test-assertion-bypass",
+							Severity: "high",
+							File:     block.file,
+							Line:     lineNum,
+							Message: "Test conditionally wraps actions or assertions under test, " +
+								"allowing false-clean passes if the condition is false",
+							Remediation: "Remove conditional guard and assert test behavior directly " +
+								"or use explicit test preconditions / skip directives.",
 						})
 					}
 				}

@@ -22,10 +22,18 @@ func (LazyStreamSubscriptionRule) Name() string {
 
 var (
 	connectTriggerRe    = regexp.MustCompile(`(?i)\b(?:bridge|serial|transport)\.(?:connect|scanDevices|open)\s*\(`)
-	serialLogsProvideRe = regexp.MustCompile(`(?i)\b(?:hardwareSerialLogsProvider|serialLogsProvider|deviceLogsProvider)\b`)
-	screenWatchLogsRe   = regexp.MustCompile(`(?i)\b(?:ref|context)\s*\.\s*(?:watch|listen)\s*\(\s*(?:hardwareSerialLogsProvider|serialLogsProvider|deviceLogsProvider)\b`)
-	logReadRe           = regexp.MustCompile(`(?i)\bref\s*\.\s*(?:read|listen)\s*\(\s*(?:hardwareSerialLogsProvider|serialLogsProvider|deviceLogsProvider)\b`)
-	initStateHeaderRe   = regexp.MustCompile(`\binitState\s*\(\s*\)\s*\{`)
+	serialLogsProvideRe = regexp.MustCompile(
+		`(?i)\b(?:hardwareSerialLogsProvider|serialLogsProvider|deviceLogsProvider)\b`,
+	)
+	screenWatchLogsRe = regexp.MustCompile(
+		`(?i)\b(?:ref|context)\s*\.\s*(?:watch|listen)\s*\(\s*` +
+			`(?:hardwareSerialLogsProvider|serialLogsProvider|deviceLogsProvider)\b`,
+	)
+	logReadRe = regexp.MustCompile(
+		`(?i)\bref\s*\.\s*(?:read|listen)\s*\(\s*` +
+			`(?:hardwareSerialLogsProvider|serialLogsProvider|deviceLogsProvider)\b`,
+	)
+	initStateHeaderRe = regexp.MustCompile(`\binitState\s*\(\s*\)\s*\{`)
 )
 
 func enclosingClassBody(scanText string, offset int) string {
@@ -143,12 +151,13 @@ func (r LazyStreamSubscriptionRule) CheckContext(ctx context.Context, diff strin
 			if !seen[key] {
 				seen[key] = true
 				findings = append(findings, Finding{
-					Rule:        "flutter-lazy-stream-listener",
-					Severity:    "high",
-					File:        block.file,
-					Line:        lineNum,
-					Message:     "Broadcast stream connection initiated without eager log listener subscription in initState",
-					Remediation: "Warm up the log stream provider subscription via 'ref.read(...LogsProvider)' in initState() before initiating connections to avoid dropping initial output.",
+					Rule:     "flutter-lazy-stream-listener",
+					Severity: "high",
+					File:     block.file,
+					Line:     lineNum,
+					Message:  "Broadcast stream connection initiated without eager log listener subscription in initState",
+					Remediation: "Warm up the log stream provider subscription via " +
+						"'ref.read(...LogsProvider)' in initState() before initiating connections to avoid dropping initial output.",
 				})
 			}
 		}
