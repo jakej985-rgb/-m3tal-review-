@@ -3,9 +3,9 @@ name: ai_review_agent
 description: >-
   AI Review & Continuous PR Remediation Specialist agent for m3tal-review.
   Executes exact multi-phase feedback loop: ingests external AI review findings
-  and PR branch, builds target, benchmarks m3tal-review, expands m3tal-review
-  detection rules, logs learning in .jules, verifies detection loop, repairs
-  target code, pushes updates, and enforces human-gated merges.
+  and PR branch, benchmarks m3tal-review, expands m3tal-review detection rules,
+  logs learning in .jules, verifies detection loop, repairs target code, pushes
+  updates, and enforces human-gated merges.
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto
@@ -37,12 +37,18 @@ in `.jules/`, verify detection loop, and repair the target repository.
   runs, assume the active PR/branch from the current session).*
 - **1:1. Checkout PR Branch**: Switch to the branch the PR is on in the target checkout (locally via
   `git checkout <branch>` or via `gh pr checkout <pr-number>`).
-- **1:2. Build Target App**: Build the target codebase/app on that branch to ensure all dependencies compile and
-  testing is performed on the latest state.
-- **1:3. Run `m3tal-review`**: Run `m3tal-review` from inside the target checkout:
-  - For PR diffs: `m3tal-review review --base <base-ref> --format json` (e.g. `--base origin/main`).
-  - For whole-tree repository audits: `m3tal-review audit [path]` or run `m3tal-review audit` from inside the root.
-  - *Caution:* Never pass `--path` to `m3tal-review review` because `review` analyzes git diffs in the working tree.
+- **1:2. Compute Common Merge-Base**: Determine the common ancestor between the base branch and the PR head:
+  ```bash
+  MERGE_BASE=$(git merge-base origin/<base-ref> HEAD)
+  ```
+  *Note:* Always pass `--base "$MERGE_BASE"` to `m3tal-review review` so only PR diffs are evaluated, rather than
+  comparing against the tip of base which may contain newer changes.
+- **1:3. Secure Baseline Review**: Run deterministic static analysis from inside the target checkout directory:
+  ```bash
+  m3tal-review review --base "$MERGE_BASE" --format json
+  ```
+  *Safety Guarantee:* Do NOT run untrusted repository build commands in the ambient agent environment prior to review
+  (CWE-829). If builds/tests are needed, run them strictly in an isolated ephemeral sandbox with dropped credentials.
 - **1:4. Compare Findings**: Diff the user-provided AI reviewer findings against `m3tal-review`'s output to identify
   any gaps or missed issues.
 
@@ -53,27 +59,33 @@ in `.jules/`, verify detection loop, and repair the target repository.
   in Markdown format (e.g. `.jules/<topic>.md`).
 
 ### Step 3: Verification & Tool Rebuild Loop
-- **3:1. Rebuild Tool**: Recompile `m3tal-review` to ensure the latest binary is used:
+- **3:1. User-Writable Rebuild**: Recompile `m3tal-review` to a local, user-writable build directory:
   ```bash
-  go build -o /usr/local/bin/m3tal-review ./cmd/m3tal-review
+  mkdir -p ./bin && go build -o ./bin/m3tal-review ./cmd/m3tal-review
+  TOOL_BIN="$(pwd)/bin/m3tal-review"
   ```
-- **3:2. Run Test & Verify Detection**: From inside the target checkout directory, re-run the newly built
-  `m3tal-review review --base <base-ref> --format json` against the PR branch and verify it catches all the
-  AI reviewer findings (and any additional related patterns).
-- **3:3. Loop on Gap**: If `m3tal-review` still misses any findings, **repeat Step 2** until 100% of the findings
+- **3:2. Tool Regression Test Suite**: Run `go test ./...` in the `m3tal-review` checkout to ensure the new detection
+  rules pass all unit tests and introduce no regressions across the test suite.
+- **3:3. Verify Detection on Target PR**: From inside the target checkout directory, run the newly built tool:
+  ```bash
+  "$TOOL_BIN" review --base "$MERGE_BASE" --format json
+  ```
+  Verify that 100% of the AI reviewer findings are detected.
+- **3:4. Loop on Gap**: If `m3tal-review` still misses any findings, **repeat Step 2** until 100% of the findings
   are caught.
 
 ### Step 4: Fix Target Repository & Silent Push
 - **4:1. Remediate Target Repo**: Apply fixes to the target repository code (using `m3tal-review repair` and
-  AST/code edits) until `m3tal-review` reports **zero** remaining findings.
-- **4:2. Rebuild & Verify Target**: Build the target app and run test suites to ensure the fixes compile and pass.
+  AST/code edits) until `"$TOOL_BIN" review --base "$MERGE_BASE" --format json` reports **zero** remaining findings.
+- **4:2. Isolated Rebuild & Verification**: Build and test the target app in an isolated sandbox with dropped
+  credentials to verify the fixes compile and all test suites pass.
 - **4:3. Push to Branch**:
   - *Verify Staging Index:* Ensure the target repository working tree has no pre-existing unrelated staged or
     modified files (`git status --porcelain`). Stage only specifically remediated files (`git add <files>`)
     and inspect `git diff --cached` before committing to avoid including unrelated changes.
   - *Resolve Fork Remotes:* Do not assume `origin` points to the contributor's branch. Query the PR head repository
-    and ref using `gh pr view <pr-number> --json headRepositoryOwner,headRefName`. If pushing to a fork, push directly
-    to the contributor's fork remote (`git push <fork-remote> <headRefName>`).
+    and ref using `gh pr view <pr-number> --json headRepositoryOwner,headRefName`. If pushing to a fork, push the
+    verified HEAD directly to the contributor's fork remote (`git push <fork-remote> HEAD:<headRefName>`).
   - Commit and push the fixes back to the PR branch without posting noisy PR comments.
 - **4:4. Strict Merge Gate**: **NEVER merge without direct, explicit human confirmation.** Merging (`gh pr merge`
   or `git merge`) is strictly prohibited until the user explicitly confirms.

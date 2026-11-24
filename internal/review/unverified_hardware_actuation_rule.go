@@ -31,65 +31,185 @@ var (
 	stopAssumedConfirmedRe = regexp.MustCompile(
 		`(?i)(?:stopConfirmed\s*:\s*(?:true|_protocolNegotiated|confirmed)|pin13Led\s*:\s*confirmed\s*\?\s*false\s*:)`,
 	)
-
-	// unverifiedOutputControlRe detects hardware output writes or UI buttons lacking verified protocol checks
-	unverifiedOutputControlRe = regexp.MustCompile(
-		`(?i)onPressed:\s*\(?\s*isConnected\s*\)?\s*\?\s*(?:\(\s*\)\s*\{|=>)[^}]*` +
-			`(?:LED:ON|LED:OFF|PIN:HIGH|PIN:LOW|ACTUATE|RELAY)`,
-	)
 )
 
 func (r UnverifiedHardwareActuationRule) Check(diff string) []Finding {
 	return r.CheckContext(context.Background(), diff)
 }
 
-func hasPrecedingAck(lines []string, index int) bool {
-	for k := 1; k <= 15 && index-k >= 0; k++ {
-		prev := lines[index-k]
-		lowerPrev := strings.ToLower(prev)
-		if strings.Contains(prev, "ACK:") || strings.Contains(prev, "PONG:") ||
-			strings.Contains(prev, "PIN13:LOW") || strings.Contains(prev, "LED:0") ||
-			strings.Contains(lowerPrev, "ack.issuccess") || strings.Contains(lowerPrev, "isack") ||
-			strings.Contains(lowerPrev, "waitforack") || strings.Contains(lowerPrev, "onack") ||
-			strings.Contains(lowerPrev, "ackreceived") || strings.Contains(lowerPrev, "sendstopcommand") ||
-			strings.Contains(lowerPrev, "ack = await") || strings.Contains(lowerPrev, "ack :=") ||
-			strings.Contains(lowerPrev, "if (ack") || strings.Contains(lowerPrev, "if ack") ||
-			strings.Contains(lowerPrev, "ack != nil") || strings.Contains(lowerPrev, "ack != null") ||
-			strings.Contains(lowerPrev, "ack.ok") || strings.Contains(lowerPrev, "ack == true") ||
-			strings.Contains(lowerPrev, "responsestatus.ack") || strings.Contains(lowerPrev, "ackstatus") ||
-			strings.Contains(lowerPrev, ".issuccess") || strings.Contains(lowerPrev, ".success") ||
-			strings.Contains(lowerPrev, "_updatetelemetry") || strings.Contains(lowerPrev, "parsetelemetry") ||
-			strings.Contains(lowerPrev, "firstmatch(line)") || strings.Contains(lowerPrev, "firstmatch") {
-			return true
+func stripLineComment(line string) string {
+	if idx := strings.Index(line, "//"); idx != -1 {
+		return line[:idx]
+	}
+	return line
+}
+
+func isAckGuardHeader(header string) bool {
+	if !strings.HasPrefix(header, "if") && !strings.Contains(header, "if (") &&
+		!strings.Contains(header, "if(") && !strings.Contains(header, "onack") &&
+		!strings.Contains(header, "onstopack") {
+		return false
+	}
+	if strings.Contains(header, "else") {
+		return false
+	}
+	if strings.Contains(header, "send") && !strings.Contains(header, ".issuccess") &&
+		!strings.Contains(header, ".isack") {
+		return false
+	}
+
+	return strings.Contains(header, ".issuccess") ||
+		strings.Contains(header, ".success") ||
+		strings.Contains(header, ".isack") ||
+		strings.Contains(header, "ack == true") ||
+		strings.Contains(header, "ack != null") ||
+		strings.Contains(header, "ack != nil") ||
+		strings.Contains(header, "ack.ok") ||
+		strings.Contains(header, "packettype.ack") ||
+		strings.Contains(header, "is stopack") ||
+		strings.Contains(header, "is ack") ||
+		strings.Contains(header, "ackstatus.success") ||
+		strings.Contains(header, "ackstatus.confirmed") ||
+		strings.Contains(header, "onack") ||
+		strings.Contains(header, "onstopack")
+}
+
+func isGuardedByAck(lines []string, index int) bool {
+	depth := 0
+	for k := index - 1; k >= 0 && index-k <= 40; k-- {
+		line := stripLineComment(lines[k])
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		for c := len(trimmed) - 1; c >= 0; c-- {
+			if trimmed[c] == '}' {
+				depth++
+			} else if trimmed[c] == '{' {
+				if depth > 0 {
+					depth--
+				} else {
+					header := trimmed
+					for h := k - 1; h >= 0 && k-h <= 3; h-- {
+						prev := strings.TrimSpace(stripLineComment(lines[h]))
+						if strings.HasSuffix(prev, ";") || strings.HasSuffix(prev, "}") {
+							break
+						}
+						header = prev + " " + header
+					}
+
+					lowerHeader := strings.ToLower(header)
+					return isAckGuardHeader(lowerHeader)
+				}
+			}
+		}
+
+		if depth == 0 && (strings.HasPrefix(trimmed, "case ") || strings.HasPrefix(trimmed, "case:")) {
+			lowerCase := strings.ToLower(trimmed)
+			if strings.Contains(lowerCase, "ack") || strings.Contains(lowerCase, "pong") {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-func checkUnverifiedOutputControl(lines []string, index int) bool {
+func isHardwareActuationCommand(line string) bool {
+	clean := stripLineComment(line)
+	return strings.Contains(clean, "LED:ON") ||
+		strings.Contains(clean, "LED:OFF") ||
+		strings.Contains(clean, "PIN:HIGH") ||
+		strings.Contains(clean, "PIN:LOW") ||
+		strings.Contains(clean, "ACTUATE") ||
+		strings.Contains(clean, "RELAY") ||
+		strings.Contains(clean, "setPin") ||
+		strings.Contains(clean, "writeCommand")
+}
+
+func checkUnverifiedOutputControl(
+	lines []string,
+	index int,
+	startLine int,
+) (matched bool, guardLine int, actionLine int) {
 	line := lines[index]
 	if !strings.Contains(line, "onPressed:") || !strings.Contains(line, "isConnected") {
-		return false
+		return false, 0, 0
 	}
-	lower := strings.ToLower(line)
-	if strings.Contains(lower, "protocol") || strings.Contains(lower, "verified") ||
-		strings.Contains(lower, "handshake") || strings.Contains(lower, "authorized") ||
-		strings.Contains(lower, "ready") {
-		return false
-	}
-	for k := 0; k <= 10 && index+k < len(lines); k++ {
-		fw := lines[index+k]
-		if strings.Contains(fw, "LED:ON") || strings.Contains(fw, "LED:OFF") ||
-			strings.Contains(fw, "PIN:HIGH") || strings.Contains(fw, "PIN:LOW") ||
-			strings.Contains(fw, "ACTUATE") || strings.Contains(fw, "RELAY") ||
-			strings.Contains(fw, "setPin") || strings.Contains(fw, "writeCommand") {
-			return true
+
+	guardLine = startLine + index
+
+	var conditionBuilder strings.Builder
+	qIndex := -1
+	qLineOffset := 0
+
+	for k := 0; k <= 5 && index+k < len(lines); k++ {
+		cur := lines[index+k]
+		if qPos := strings.Index(cur, "?"); qPos != -1 {
+			conditionBuilder.WriteString(" ")
+			conditionBuilder.WriteString(cur[:qPos])
+			qIndex = qPos
+			qLineOffset = k
+			break
 		}
-		if k > 0 && (strings.Contains(fw, "},") || strings.Contains(fw, "});") || strings.Contains(fw, "};")) {
+		conditionBuilder.WriteString(" ")
+		conditionBuilder.WriteString(cur)
+	}
+
+	if qIndex == -1 {
+		return false, 0, 0
+	}
+
+	fullCondition := strings.ToLower(conditionBuilder.String())
+	if strings.Contains(fullCondition, "protocol") || strings.Contains(fullCondition, "verified") ||
+		strings.Contains(fullCondition, "handshake") || strings.Contains(fullCondition, "authorized") ||
+		strings.Contains(fullCondition, "ready") {
+		return false, 0, 0
+	}
+
+	callbackStartLine := index + qLineOffset
+	afterQ := lines[callbackStartLine][qIndex+1:]
+
+	trimmedAfterQ := strings.TrimSpace(afterQ)
+	if !strings.Contains(trimmedAfterQ, "{") && !strings.Contains(trimmedAfterQ, "=>") {
+		return false, 0, 0
+	}
+
+	braceDepth := 0
+	inBlock := false
+
+	for k := qLineOffset; k <= 15 && index+k < len(lines); k++ {
+		curLine := lines[index+k]
+		lineScan := curLine
+		if k == qLineOffset {
+			lineScan = afterQ
+		}
+
+		for c := 0; c < len(lineScan); c++ {
+			if lineScan[c] == '{' {
+				braceDepth++
+				inBlock = true
+			} else if lineScan[c] == '}' {
+				braceDepth--
+			}
+		}
+
+		if isHardwareActuationCommand(curLine) {
+			actionLine = startLine + index + k
+			return true, guardLine, actionLine
+		}
+
+		if inBlock && braceDepth <= 0 {
+			break
+		}
+
+		trimmed := strings.TrimSpace(curLine)
+		if !inBlock && (strings.Contains(lineScan, " :") || strings.HasSuffix(trimmed, ",")) {
 			break
 		}
 	}
-	return false
+
+	return false, 0, 0
 }
 
 func (r UnverifiedHardwareActuationRule) CheckContext(ctx context.Context, diff string) []Finding {
@@ -120,7 +240,7 @@ func (r UnverifiedHardwareActuationRule) CheckContext(ctx context.Context, diff 
 				continue
 			}
 
-			if stopAssumedConfirmedRe.MatchString(trimmed) && !hasPrecedingAck(lines, i) {
+			if stopAssumedConfirmedRe.MatchString(trimmed) && !isGuardedByAck(lines, i) {
 				if block.addedLines[lineNum] || r.workingTree {
 					key := block.file + ":" + strconv.Itoa(lineNum) + ":stop"
 					if !seen[key] {
@@ -139,16 +259,21 @@ func (r UnverifiedHardwareActuationRule) CheckContext(ctx context.Context, diff 
 				}
 			}
 
-			if unverifiedOutputControlRe.MatchString(trimmed) || checkUnverifiedOutputControl(lines, i) {
-				if block.addedLines[lineNum] || r.workingTree {
-					key := block.file + ":" + strconv.Itoa(lineNum) + ":control"
+			matched, guardLine, actionLine := checkUnverifiedOutputControl(lines, i, startLine)
+			if matched {
+				reportLine := guardLine
+				if block.addedLines[actionLine] && !block.addedLines[guardLine] {
+					reportLine = actionLine
+				}
+				if block.addedLines[guardLine] || block.addedLines[actionLine] || r.workingTree {
+					key := block.file + ":" + strconv.Itoa(reportLine) + ":control"
 					if !seen[key] {
 						seen[key] = true
 						findings = append(findings, Finding{
 							Rule:     "unverified-hardware-actuation",
 							Severity: "high",
 							File:     block.file,
-							Line:     lineNum,
+							Line:     reportLine,
 							Message: "Hardware output control is gated only on transport connection status " +
 								"without protocol verification",
 							Remediation: "Gate hardware controls on verified protocol state " +
