@@ -31,9 +31,11 @@ discovery tests when dependencies are missing.
 interceptors that evaluate stored entities often invoke separate validator and lookup
 helpers that both decode the identical raw string. Decoding once with fallback and
 inspecting parsed models directly eliminates duplicate parsing overhead.
-Analysis must track decodes across consecutive statements within a block, ignore
-mutually exclusive branches of ternaries (`cond ? decode(raw) : decode(raw)`), and
-verify payload argument names and aliases so distinct inputs are not flagged.
+Analysis must track decodes across consecutive statements within a block (halting on
+reassignments like `??=`), distinguish mutually exclusive branches using delimiter-aware
+ternary nesting so map literals (`{'k': v}`) are not mistaken for ternary arms, verify
+payload argument names and aliases, and scope reporting to touched diff lines to avoid
+flagging unchanged base-branch code.
 6. **Remediation Agent Operating Safeguards (`ai_review_agent`):** Review remediation
 agents must run `review` from the target checkout without unsupported flags (`--path`),
 mandate resolving upstream base repositories and fetching non-empty `MERGE_BASE` SHAs

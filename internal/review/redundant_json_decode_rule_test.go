@@ -96,4 +96,48 @@ func TestRedundantJsonDecodeRule(t *testing.T) {
 			t.Errorf("expected finding on line 81, got %d", findings[0].Line)
 		}
 	})
+
+	t.Run("flags duplicate decode inside collection in ternary true arm", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,1 +80,1 @@
++  return ok ? [jsonDecode(raw), {'x': jsonDecode(raw)}] : [];
+`
+		findings := rule.Check(diff)
+		if len(findings) == 0 {
+			t.Fatalf("expected finding for duplicate decodes in ternary arm, got 0")
+		}
+	})
+
+	t.Run("does not flag sequential decode across fallback assignment", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,3 +80,3 @@
++  final a = jsonDecode(raw);
++  raw ??= backupRaw;
++  final b = jsonDecode(raw);
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for decode across fallback assignment, got %d", len(findings))
+		}
+	})
+
+	t.Run("does not flag unchanged duplicate decode on base branch in diff review", func(t *testing.T) {
+		diff := `diff --git a/lib/core/routing/app_router.dart b/lib/core/routing/app_router.dart
+--- a/lib/core/routing/app_router.dart
++++ b/lib/core/routing/app_router.dart
+@@ -80,3 +80,4 @@
+   final a = jsonDecode(raw);
+   final b = jsonDecode(raw);
++  final unrelated = true;
+   return unrelated;
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for unchanged duplicate decode in context, got %d", len(findings))
+		}
+	})
 }
