@@ -309,6 +309,14 @@ func shadowedPointerInBlock() error {
 	e = nil
 	return e
 }
+
+func mixedShortDeclExistingPtr() error {
+	var e *MyErr
+	e, n := e, 1
+	_ = n
+	e = nil
+	return e
+}
 `
 	out := Run(protocol.Input{
 		Protocol: protocol.Version,
@@ -320,8 +328,8 @@ func shadowedPointerInBlock() error {
 			lines = append(lines, f.Line)
 		}
 	}
-	if len(lines) != 3 || lines[0] != 22 || lines[1] != 29 || lines[2] != 37 {
-		t.Fatalf("expected typed-nil-error on lines [22 29 37], got lines %v (%+v)", lines, out.Findings)
+	if len(lines) != 4 || lines[0] != 22 || lines[1] != 29 || lines[2] != 37 || lines[3] != 57 {
+		t.Fatalf("expected typed-nil-error on lines [22 29 37 57], got lines %v (%+v)", lines, out.Findings)
 	}
 }
 
