@@ -124,10 +124,9 @@ jobs:
           1. Call `activate_skill` with `name: "code-review-commons"` and follow project rules in `GEMINI.md`
              (skip formatting/indentation/import-order comments).
           2. Read the PR via `mcp_github_pull_request_read` (`owner`, `repo`, numeric `pullNumber` from context):
-             - Call `mcp_github_pull_request_read` with `method: "get"` and `method: "get_files"`.
-             - Call `mcp_github_pull_request_read` with `method: "get_diff"`.
-             - For large diffs, inspect key changed files with `read_file` or `grep_search` instead of
-               exhausting turns.
+             - Call `mcp_github_pull_request_read` with `method: "get"` and `method: "get_diff"`.
+             - Do not list the whole repository; use targeted `read_file` or `grep_search` only when
+               verifying a potential bug, and finish within 10 turns to stay under token-rate limits.
           3. Report only verifiable bugs, security/traversal issues, cross-platform hazards, or missing tests on
              changed (`+`/`-`) lines with `🔴`/`🟠`/`🟡`/`🟢` severity.
           4. Always post the review to GitHub using ONLY `event: "COMMENT"` (never `APPROVE` or
@@ -174,7 +173,7 @@ jobs:
           settings: |-
             {
               "model": {
-                "maxSessionTurns": 25
+                "maxSessionTurns": 20
               },
               "telemetry": {
                 "enabled": true,
@@ -205,11 +204,16 @@ jobs:
               },
               "tools": {
                 "sandbox": false,
+                "truncateToolOutputThreshold": 24000,
+                "allowed": [
+                  "mcp_github_add_comment_to_pending_review",
+                  "mcp_github_pull_request_read",
+                  "mcp_github_pull_request_review_write"
+                ],
                 "core": [
                   "activate_skill",
                   "read_file",
                   "list_directory",
-                  "glob",
                   "grep_search"
                 ]
               }
