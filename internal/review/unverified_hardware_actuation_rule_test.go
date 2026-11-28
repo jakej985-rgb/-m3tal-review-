@@ -743,4 +743,18 @@ func TestUnverifiedHardwareActuationRule(t *testing.T) {
 			t.Fatalf("expected 0 findings for test file, got %d", len(findings))
 		}
 	})
+
+	t.Run("ignores its own rule fixtures", func(t *testing.T) {
+		diff := `diff --git a/internal/review/unverified_hardware_actuation_rule_test.go b/internal/review/unverified_hardware_actuation_rule_test.go
+--- a/internal/review/unverified_hardware_actuation_rule_test.go
++++ b/internal/review/unverified_hardware_actuation_rule_test.go
+@@ -13,3 +13,3 @@
+-    _publishTelemetry(_telemetry.copyWith(stopConfirmed: false));
++    _publishTelemetry(_telemetry.copyWith(stopConfirmed: _protocolNegotiated));
+`
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Fatalf("expected 0 findings for rule fixtures under internal/review, got %d", len(findings))
+		}
+	})
 }
