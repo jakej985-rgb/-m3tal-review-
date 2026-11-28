@@ -257,22 +257,18 @@ func runReviewCommand(commandArgs []string) error {
 	var appChecks []review.CheckResult
 	var appRuns []review.AppRun
 	appIncomplete := false
-	legacyDiff := diff
 	if shouldRunApps(repositoryRoot, options) {
-		var routed map[string]bool
 		var appErr error
-		appFindings, appUnanalyzed, appChecks, appRuns, routed, appIncomplete, appErr = runAppsForReview(repositoryRoot, options, diff, stagedFiles, stagedStatuses)
+		appFindings, appUnanalyzed, appChecks, appRuns, _, appIncomplete, appErr = runAppsForReview(repositoryRoot, options, diff, stagedFiles, stagedStatuses)
 		if appErr != nil {
 			return appErr
 		}
-		legacyDiff = stripRoutedFilesFromDiff(diff, routed)
 	}
 
 	progress.Stage(2, 4, "Executing heuristic review rules")
 	engine := cappedEngine(options.Jobs, rules...)
 
-	findings := engine.Run(legacyDiff)
-	findings = append(findings, appFindings...)
+	findings := dedupeAppAndLegacyFindings(engine.Run(diff), appFindings)
 	unanalyzedFiles = append(unanalyzedFiles, appUnanalyzed...)
 	frameworkChecks = append(frameworkChecks, appChecks...)
 

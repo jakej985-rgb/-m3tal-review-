@@ -4,6 +4,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -189,5 +190,136 @@ func TestRunFix(t *testing.T) {
 	}
 	if err := protocol.ValidateFixOutput(fixOut, "review-go", map[string]struct{}{"a.go": {}}); err != nil {
 		t.Fatalf("ValidateFixOutput failed: %v", err)
+	}
+}
+
+func TestRunFixMultilineBoolCompare(t *testing.T) {
+	src := "package a\nfunc f(ok bool) {\n\tif ok ==\n\t\ttrue {\n\t\tprintln(\"hi\")\n\t}\n}\n"
+	fixOut := Fix(protocol.FixInput{
+		Protocol: protocol.Version,
+		Files: []protocol.File{{
+			Path:    "a.go",
+			Status:  "modified",
+			Content: src,
+		}},
+		Findings: []protocol.Finding{{
+			Rule:     "go/slop/redundant-bool-compare",
+			Category: protocol.CategorySlop,
+			Severity: protocol.SeverityLow,
+			File:     "a.go",
+			Line:     3,
+			Message:  "redundant",
+		}},
+	})
+	if len(fixOut.Patches) != 1 {
+		t.Fatalf("expected 1 patch, got %+v", fixOut.Patches)
+	}
+	p := fixOut.Patches[0]
+	if p.StartLine != 3 || p.EndLine != 4 || p.Replacement != "\tif ok {" {
+		t.Fatalf("unexpected multiline patch: %+v", p)
+	}
+}
+
+func TestBoolIfReturnRemediationVariants(t *testing.T) {
+	src := `package a
+
+func inverted(c bool) bool {
+	if c {
+		return false
+	}
+	return true
+}
+
+func constant(c bool) bool {
+	if c {
+		return true
+	}
+	return true
+}
+`
+	out := Run(protocol.Input{
+		Protocol: protocol.Version,
+		Files:    []protocol.File{{Path: "a.go", Status: "added", Content: src}},
+	})
+	var sawInverted, sawConstant bool
+	for _, f := range out.Findings {
+		if f.Rule != "go/slop/bool-if-return" {
+			continue
+		}
+		if f.Line == 4 && strings.Contains(f.Remediation, "!cond") {
+			sawInverted = true
+		}
+		if f.Line == 11 && strings.Contains(f.Remediation, "Both branches return true") {
+			sawConstant = true
+		}
+	}
+	if !sawInverted || !sawConstant {
+		t.Fatalf("expected inverted and constant remediations, got %+v", out.Findings)
+	}
+}
+
+func TestTypedNilErrorTracksAssignments(t *testing.T) {
+	src := `package a
+
+type MyErr struct{}
+func (*MyErr) Error() string { return "e" }
+
+func validAssigned() error {
+	var e *MyErr
+	e = &MyErr{}
+	return e
+}
+
+func validConditional(bad bool) error {
+	var e *MyErr
+	if bad {
+		e = &MyErr{}
+	}
+	return e
+}
+
+func buggyNil() error {
+	var e *MyErr
+	return e
+}
+`
+	out := Run(protocol.Input{
+		Protocol: protocol.Version,
+		Files:    []protocol.File{{Path: "a.go", Status: "added", Content: src}},
+	})
+	var lines []int
+	for _, f := range out.Findings {
+		if f.Rule == "go/bug/typed-nil-error" {
+			lines = append(lines, f.Line)
+		}
+	}
+	if len(lines) != 1 || lines[0] != 22 {
+		t.Fatalf("expected single typed-nil-error on line 22, got lines %v (%+v)", lines, out.Findings)
+	}
+}
+
+func TestRunVetDecodesStderr(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/vettest\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mainSrc := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\t_ = fmt.Sprintf(\"%d\", \"not-an-int\")\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(mainSrc), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out := Run(protocol.Input{
+		Protocol: protocol.Version,
+		Run:      protocol.RunInfo{Root: root, Mode: "audit"},
+		Files:    []protocol.File{{Path: "main.go", Status: "modified", Content: mainSrc}},
+	})
+	var found bool
+	for _, f := range out.Findings {
+		if f.Rule == "go/bug/vet-diagnostic" && f.File == "main.go" && f.Line == 6 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected go/bug/vet-diagnostic from stderr, got findings=%+v diags=%+v", out.Findings, out.Diagnostics)
 	}
 }

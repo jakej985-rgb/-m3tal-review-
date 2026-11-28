@@ -30,12 +30,12 @@ func Fix(in protocol.FixInput) protocol.FixOutput {
 
 		switch fnd.Rule {
 		case "go/slop/redundant-bool-compare":
-			if repl, ok := fixBoolCompareAST(fnd.File, src, fnd.Line); ok {
+			if startLine, endLine, repl, ok := fixBoolCompareAST(fnd.File, src, fnd.Line); ok {
 				patches = append(patches, protocol.Patch{
 					Rule:        fnd.Rule,
 					File:        fnd.File,
-					StartLine:   fnd.Line,
-					EndLine:     fnd.Line,
+					StartLine:   startLine,
+					EndLine:     endLine,
 					Replacement: repl,
 					Summary:     "Remove redundant boolean literal comparison",
 				})
@@ -61,11 +61,11 @@ func Fix(in protocol.FixInput) protocol.FixOutput {
 	}
 }
 
-func fixBoolCompareAST(filePath, src string, targetLine int) (string, bool) {
+func fixBoolCompareAST(filePath, src string, targetLine int) (int, int, string, bool) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, filePath, src, 0)
 	if err != nil {
-		return "", false
+		return 0, 0, "", false
 	}
 
 	var match *ast.BinaryExpr
@@ -94,9 +94,9 @@ func fixBoolCompareAST(filePath, src string, targetLine int) (string, bool) {
 		return match == nil
 	})
 	if match == nil || keepExpr == nil {
-		return "", false
+		return 0, 0, "", false
 	}
-	return replaceNodeOnLine(fset, src, targetLine, match, keepExpr)
+	return replaceNodeLines(fset, src, match, keepExpr)
 }
 
 func fixInsecureSkipVerifyAST(filePath, src string, targetLine int) (string, bool) {
@@ -141,20 +141,24 @@ func fixInsecureSkipVerifyAST(filePath, src string, targetLine int) (string, boo
 	return lines[targetLine-1], true
 }
 
-func replaceNodeOnLine(fset *token.FileSet, src string, targetLine int, fullNode, keepNode ast.Node) (string, bool) {
+func replaceNodeLines(fset *token.FileSet, src string, fullNode, keepNode ast.Node) (int, int, string, bool) {
 	fullStart := fset.Position(fullNode.Pos()).Offset
 	fullEnd := fset.Position(fullNode.End()).Offset
 	keepStart := fset.Position(keepNode.Pos()).Offset
 	keepEnd := fset.Position(keepNode.End()).Offset
 	if fullStart < 0 || fullEnd > len(src) || keepStart < fullStart || keepEnd > fullEnd {
-		return "", false
+		return 0, 0, "", false
 	}
+	origStartLine := fset.Position(fullNode.Pos()).Line
+	origEndLine := fset.Position(fullNode.End()).Line
+	origLines := strings.Split(src, "\n")
 	updated := src[:fullStart] + src[keepStart:keepEnd] + src[fullEnd:]
-	lines := strings.Split(updated, "\n")
-	if targetLine < 1 || targetLine > len(lines) {
-		return "", false
+	updatedLines := strings.Split(updated, "\n")
+	newEndLine := origEndLine - (len(origLines) - len(updatedLines))
+	if origStartLine < 1 || newEndLine < origStartLine || newEndLine > len(updatedLines) {
+		return 0, 0, "", false
 	}
-	return lines[targetLine-1], true
+	return origStartLine, origEndLine, strings.Join(updatedLines[origStartLine-1:newEndLine], "\n"), true
 }
 
 func isIdent(e ast.Expr, name string) bool {

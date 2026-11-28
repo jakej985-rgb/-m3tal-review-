@@ -237,16 +237,19 @@ func runMultiLangCheckCommand(args []string) error {
 		langByPath[fd.Path] = fd
 	}
 	var targetFiles []analyzers.TargetFile
+	var skippedFiles []string
 	var totalBytes int64
 	for _, f := range inv.Files {
 		if f.Excluded || f.Binary {
 			continue
 		}
 		if f.Size > maxCheckFileBytes || totalBytes+f.Size > maxCheckTotalBytes {
+			skippedFiles = append(skippedFiles, f.Path)
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(inv.Root, filepath.FromSlash(f.Path)))
 		if err != nil {
+			skippedFiles = append(skippedFiles, f.Path)
 			continue
 		}
 		totalBytes += int64(len(data))
@@ -262,13 +265,17 @@ func runMultiLangCheckCommand(args []string) error {
 	cache := analyzers.NewResultCache(version)
 	configKey := fmt.Sprintf("profile=%s;lang=%s", opts.Profile, strings.Join(opts.Language, ","))
 	rep := reg.RunPlan(context.Background(), plan, inv.Root, targetFiles, det, fws, configKey, cache)
+	if len(skippedFiles) > 0 {
+		rep.Incomplete = true
+	}
 	if opts.Format == "json" {
 		if err := printJSON(struct {
-			Analyzers  []string                   `json:"analyzers"`
-			Statuses   []analyzers.AnalyzerStatus `json:"statuses"`
-			Incomplete bool                       `json:"incomplete,omitempty"`
-			Findings   []review.Finding           `json:"findings"`
-		}{Analyzers: rep.RanIDs, Statuses: rep.Statuses, Incomplete: rep.Incomplete, Findings: rep.Findings}); err != nil {
+			Analyzers    []string                   `json:"analyzers"`
+			Statuses     []analyzers.AnalyzerStatus `json:"statuses"`
+			Incomplete   bool                       `json:"incomplete,omitempty"`
+			SkippedFiles []string                   `json:"skipped_files,omitempty"`
+			Findings     []review.Finding           `json:"findings"`
+		}{Analyzers: rep.RanIDs, Statuses: rep.Statuses, Incomplete: rep.Incomplete, SkippedFiles: skippedFiles, Findings: rep.Findings}); err != nil {
 			return err
 		}
 	} else {
@@ -276,9 +283,12 @@ func runMultiLangCheckCommand(args []string) error {
 		for _, f := range rep.Findings {
 			fmt.Printf("%s:%d [%s] %s: %s\n", f.File, f.Line, f.Severity, f.Rule, f.Message)
 		}
+		if len(skippedFiles) > 0 {
+			fmt.Printf("Skipped %d file(s) exceeding size budget.\n", len(skippedFiles))
+		}
 	}
 	if rep.Incomplete {
-		return fmt.Errorf("check incomplete: one or more analyzers failed or were missing")
+		return fmt.Errorf("check incomplete: one or more analyzers failed, were missing, or files were skipped")
 	}
 	if len(rep.Findings) > 0 {
 		return fmt.Errorf("check failed: %d finding(s) detected", len(rep.Findings))

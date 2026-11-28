@@ -202,66 +202,192 @@ func checkTypedNilError(fset *token.FileSet, fn *ast.FuncDecl, filePath string, 
 	}
 
 	typedNilVars := make(map[string]bool)
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.ValueSpec:
-			if _, isStar := node.Type.(*ast.StarExpr); isStar && len(node.Values) == 0 {
-				for _, name := range node.Names {
-					typedNilVars[name.Name] = true
+	var out []protocol.Finding
+	walkTypedNilStmts(fset, fn.Body.List, typedNilVars, errIdx, filePath, getLine, lineAllowed, &out)
+	return out
+}
+
+func cloneStringBoolMap(in map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func clearAssignedInNode(n ast.Node, vars map[string]bool) {
+	if n == nil || len(vars) == 0 {
+		return
+	}
+	ast.Inspect(n, func(node ast.Node) bool {
+		switch stmt := node.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.AssignStmt:
+			for _, lhs := range stmt.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok {
+					delete(vars, id.Name)
 				}
 			}
-		case *ast.AssignStmt:
-			for i, rhs := range node.Rhs {
-				if i >= len(node.Lhs) {
-					continue
+		case *ast.UnaryExpr:
+			if stmt.Op == token.AND {
+				if id, ok := stmt.X.(*ast.Ident); ok {
+					delete(vars, id.Name)
 				}
-				lhs, ok := node.Lhs[i].(*ast.Ident)
+			}
+		}
+		return true
+	})
+}
+
+func walkTypedNilStmts(
+	fset *token.FileSet,
+	stmts []ast.Stmt,
+	typedNilVars map[string]bool,
+	errIdx int,
+	filePath string,
+	getLine func(int) string,
+	lineAllowed func(int) bool,
+	out *[]protocol.Finding,
+) {
+	for _, stmt := range stmts {
+		switch s := stmt.(type) {
+		case *ast.DeclStmt:
+			gd, ok := s.Decl.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
 				if !ok {
 					continue
 				}
-				if call, ok := rhs.(*ast.CallExpr); ok && len(call.Args) == 1 {
-					if arg, ok := call.Args[0].(*ast.Ident); ok && arg.Name == "nil" {
-						if _, isParen := call.Fun.(*ast.ParenExpr); isParen {
-							typedNilVars[lhs.Name] = true
+				if _, isStar := vs.Type.(*ast.StarExpr); isStar && len(vs.Values) == 0 {
+					for _, name := range vs.Names {
+						typedNilVars[name.Name] = true
+					}
+					continue
+				}
+				for _, name := range vs.Names {
+					delete(typedNilVars, name.Name)
+				}
+			}
+		case *ast.AssignStmt:
+			for i, lhs := range s.Lhs {
+				id, ok := lhs.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				isTypedNil := false
+				if i < len(s.Rhs) {
+					if call, ok := s.Rhs[i].(*ast.CallExpr); ok && len(call.Args) == 1 {
+						if arg, ok := call.Args[0].(*ast.Ident); ok && arg.Name == "nil" {
+							if _, isParen := call.Fun.(*ast.ParenExpr); isParen {
+								isTypedNil = true
+							}
 						}
 					}
 				}
+				if isTypedNil {
+					typedNilVars[id.Name] = true
+				} else {
+					delete(typedNilVars, id.Name)
+				}
+			}
+			for _, rhs := range s.Rhs {
+				clearAssignedInNode(rhs, typedNilVars)
+			}
+		case *ast.ExprStmt:
+			clearAssignedInNode(s.X, typedNilVars)
+		case *ast.ReturnStmt:
+			if errIdx < len(s.Results) {
+				if id, ok := s.Results[errIdx].(*ast.Ident); ok && typedNilVars[id.Name] {
+					line := fset.Position(s.Pos()).Line
+					if lineAllowed(line) {
+						*out = append(*out, protocol.Finding{
+							Rule:        "go/bug/typed-nil-error",
+							Category:    protocol.CategoryBug,
+							Severity:    protocol.SeverityHigh,
+							Confidence:  protocol.ConfidenceMedium,
+							File:        filePath,
+							Line:        line,
+							Message:     "Returning typed nil pointer " + id.Name + " as error produces a non-nil error interface",
+							Evidence:    getLine(line),
+							Remediation: "Return untyped nil when there is no error.",
+						})
+					}
+				}
+			}
+		case *ast.BlockStmt:
+			walkTypedNilStmts(fset, s.List, typedNilVars, errIdx, filePath, getLine, lineAllowed, out)
+		case *ast.IfStmt:
+			if s.Init != nil {
+				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, errIdx, filePath, getLine, lineAllowed, out)
+			}
+			clearAssignedInNode(s.Cond, typedNilVars)
+			if s.Body != nil {
+				branch := cloneStringBoolMap(typedNilVars)
+				walkTypedNilStmts(fset, s.Body.List, branch, errIdx, filePath, getLine, lineAllowed, out)
+				clearAssignedInNode(s.Body, typedNilVars)
+			}
+			if s.Else != nil {
+				branch := cloneStringBoolMap(typedNilVars)
+				walkTypedNilStmts(fset, []ast.Stmt{s.Else}, branch, errIdx, filePath, getLine, lineAllowed, out)
+				clearAssignedInNode(s.Else, typedNilVars)
+			}
+		case *ast.ForStmt:
+			if s.Init != nil {
+				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, errIdx, filePath, getLine, lineAllowed, out)
+			}
+			clearAssignedInNode(s.Body, typedNilVars)
+			if s.Body != nil {
+				branch := cloneStringBoolMap(typedNilVars)
+				walkTypedNilStmts(fset, s.Body.List, branch, errIdx, filePath, getLine, lineAllowed, out)
+			}
+		case *ast.RangeStmt:
+			clearAssignedInNode(s.Body, typedNilVars)
+			if s.Body != nil {
+				branch := cloneStringBoolMap(typedNilVars)
+				walkTypedNilStmts(fset, s.Body.List, branch, errIdx, filePath, getLine, lineAllowed, out)
+			}
+		case *ast.SwitchStmt:
+			if s.Init != nil {
+				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, errIdx, filePath, getLine, lineAllowed, out)
+			}
+			if s.Body != nil {
+				for _, clause := range s.Body.List {
+					if cc, ok := clause.(*ast.CaseClause); ok {
+						branch := cloneStringBoolMap(typedNilVars)
+						walkTypedNilStmts(fset, cc.Body, branch, errIdx, filePath, getLine, lineAllowed, out)
+					}
+				}
+				clearAssignedInNode(s.Body, typedNilVars)
+			}
+		case *ast.TypeSwitchStmt:
+			if s.Init != nil {
+				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, errIdx, filePath, getLine, lineAllowed, out)
+			}
+			if s.Body != nil {
+				for _, clause := range s.Body.List {
+					if cc, ok := clause.(*ast.CaseClause); ok {
+						branch := cloneStringBoolMap(typedNilVars)
+						walkTypedNilStmts(fset, cc.Body, branch, errIdx, filePath, getLine, lineAllowed, out)
+					}
+				}
+				clearAssignedInNode(s.Body, typedNilVars)
+			}
+		case *ast.SelectStmt:
+			if s.Body != nil {
+				for _, clause := range s.Body.List {
+					if cc, ok := clause.(*ast.CommClause); ok {
+						branch := cloneStringBoolMap(typedNilVars)
+						walkTypedNilStmts(fset, cc.Body, branch, errIdx, filePath, getLine, lineAllowed, out)
+					}
+				}
+				clearAssignedInNode(s.Body, typedNilVars)
 			}
 		}
-		return true
-	})
-	if len(typedNilVars) == 0 {
-		return nil
 	}
-
-	var out []protocol.Finding
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		if _, isLit := n.(*ast.FuncLit); isLit {
-			return false
-		}
-		ret, ok := n.(*ast.ReturnStmt)
-		if !ok || errIdx >= len(ret.Results) {
-			return true
-		}
-		if id, ok := ret.Results[errIdx].(*ast.Ident); ok && typedNilVars[id.Name] {
-			line := fset.Position(ret.Pos()).Line
-			if lineAllowed(line) {
-				out = append(out, protocol.Finding{
-					Rule:        "go/bug/typed-nil-error",
-					Category:    protocol.CategoryBug,
-					Severity:    protocol.SeverityHigh,
-					Confidence:  protocol.ConfidenceMedium,
-					File:        filePath,
-					Line:        line,
-					Message:     "Returning typed nil pointer " + id.Name + " as error produces a non-nil error interface",
-					Evidence:    getLine(line),
-					Remediation: "Return untyped nil when there is no error.",
-				})
-			}
-		}
-		return true
-	})
-	return out
 }
 
 type vetEntry struct {
@@ -320,42 +446,63 @@ func RunVet(root string, files []protocol.File) ([]protocol.Finding, []protocol.
 		})
 	}
 
+	// `go vet -json` writes its JSON stream (preceded by `# pkg` header lines) to stderr;
+	// fall back to stdout if stderr is empty.
+	rawPayload := bytes.TrimSpace(stderr.Bytes())
+	if len(rawPayload) == 0 {
+		rawPayload = bytes.TrimSpace(stdout.Bytes())
+	}
+	var jsonBuf bytes.Buffer
+	for _, line := range bytes.Split(rawPayload, []byte("\n")) {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 || trimmed[0] == '#' {
+			continue
+		}
+		jsonBuf.Write(line)
+		jsonBuf.WriteByte('\n')
+	}
+	jsonPayload := bytes.TrimSpace(jsonBuf.Bytes())
+
 	var findings []protocol.Finding
 	decodedAny := false
-	dec := json.NewDecoder(&stdout)
-	for dec.More() {
-		var pkgMap map[string]map[string][]vetEntry
-		if err := dec.Decode(&pkgMap); err != nil {
-			diags = append(diags, protocol.Diagnostic{
-				Level:   "error",
-				Message: "failed to decode go vet JSON output: " + err.Error(),
-			})
-			break
-		}
-		decodedAny = true
-		for _, analyzerMap := range pkgMap {
-			for analyzer, entries := range analyzerMap {
-				for _, e := range entries {
-					file, line := parseVetPosn(root, e.Posn)
-					added, ok := sent[file]
-					if !ok {
-						continue
-					}
-					if added != nil {
-						if _, ok := added[line]; !ok {
+	if len(jsonPayload) > 0 {
+		dec := json.NewDecoder(bytes.NewReader(jsonPayload))
+		for dec.More() {
+			var pkgMap map[string]map[string][]vetEntry
+			if err := dec.Decode(&pkgMap); err != nil {
+				if runErr == nil || decodedAny {
+					diags = append(diags, protocol.Diagnostic{
+						Level:   "error",
+						Message: "failed to decode go vet JSON output: " + err.Error(),
+					})
+				}
+				break
+			}
+			decodedAny = true
+			for _, analyzerMap := range pkgMap {
+				for analyzer, entries := range analyzerMap {
+					for _, e := range entries {
+						file, line := parseVetPosn(root, e.Posn)
+						added, ok := sent[file]
+						if !ok {
 							continue
 						}
+						if added != nil {
+							if _, ok := added[line]; !ok {
+								continue
+							}
+						}
+						findings = append(findings, protocol.Finding{
+							Rule:       "go/bug/vet-diagnostic",
+							Category:   protocol.CategoryBug,
+							Severity:   protocol.SeverityMedium,
+							Confidence: protocol.ConfidenceHigh,
+							File:       file,
+							Line:       line,
+							Message:    "go vet (" + analyzer + "): " + e.Message,
+							Evidence:   e.Posn,
+						})
 					}
-					findings = append(findings, protocol.Finding{
-						Rule:       "go/bug/vet-diagnostic",
-						Category:   protocol.CategoryBug,
-						Severity:   protocol.SeverityMedium,
-						Confidence: protocol.ConfidenceHigh,
-						File:       file,
-						Line:       line,
-						Message:    "go vet (" + analyzer + "): " + e.Message,
-						Evidence:   e.Posn,
-					})
 				}
 			}
 		}

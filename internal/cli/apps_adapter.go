@@ -74,16 +74,33 @@ func runAppsForReview(repoRoot string, options reviewOptions, diff string, stage
 		return nil, nil, nil, nil, nil, true, err
 	}
 
-	outFindings, checks, appRuns, unanalyzed, incomplete := collectAppOutputs(rep, options.Only, options.Skip)
+	outFindings, checks, appRuns, unanalyzed, incomplete := collectAppOutputs(rep, options.Only, options.Skip, addedByFile)
 	return outFindings, unanalyzed, checks, appRuns, rep.RoutedFiles, incomplete, nil
 }
 
-func collectAppOutputs(rep apps.RunReport, only, skip []string) ([]review.Finding, []review.CheckResult, []review.AppRun, []string, bool) {
+func collectAppOutputs(rep apps.RunReport, only, skip []string, addedByFile map[string][]int) ([]review.Finding, []review.CheckResult, []review.AppRun, []string, bool) {
+	var addedSets map[string]map[int]bool
+	if len(addedByFile) > 0 {
+		addedSets = make(map[string]map[int]bool, len(addedByFile))
+		for p, lines := range addedByFile {
+			s := make(map[int]bool, len(lines))
+			for _, l := range lines {
+				s[l] = true
+			}
+			addedSets[p] = s
+		}
+	}
 	var outFindings []review.Finding
 	for _, f := range rep.Findings {
-		if ruleAllowed(only, skip, f.Rule) {
-			outFindings = append(outFindings, protocolToReviewFinding(f))
+		if !ruleAllowed(only, skip, f.Rule) {
+			continue
 		}
+		if addedSets != nil && f.Line > 0 {
+			if s, ok := addedSets[f.File]; ok && len(s) > 0 && !s[f.Line] {
+				continue
+			}
+		}
+		outFindings = append(outFindings, protocolToReviewFinding(f))
 	}
 
 	unanalyzed := append([]string(nil), rep.UnanalyzedFiles...)
@@ -212,8 +229,40 @@ func runAppsForAudit(repoRoot string, options auditOptions, reviewedFiles []stri
 		return nil, nil, nil, nil, true, err
 	}
 
-	outFindings, checks, appRuns, unanalyzed, incomplete := collectAppOutputs(rep, options.Only, options.Skip)
+	outFindings, checks, appRuns, unanalyzed, incomplete := collectAppOutputs(rep, options.Only, options.Skip, nil)
 	return outFindings, unanalyzed, checks, appRuns, incomplete, nil
+}
+
+func dedupeAppAndLegacyFindings(legacyFindings, appFindings []review.Finding) []review.Finding {
+	if len(appFindings) == 0 {
+		return legacyFindings
+	}
+	type overlapKey struct {
+		file     string
+		line     int
+		category string
+	}
+	seen := make(map[overlapKey]bool, len(appFindings))
+	for _, f := range appFindings {
+		seen[overlapKey{
+			file:     f.File,
+			line:     f.Line,
+			category: strings.ToLower(strings.TrimSpace(f.Category)),
+		}] = true
+	}
+	out := make([]review.Finding, 0, len(legacyFindings)+len(appFindings))
+	for _, f := range legacyFindings {
+		k := overlapKey{
+			file:     f.File,
+			line:     f.Line,
+			category: strings.ToLower(strings.TrimSpace(f.Category)),
+		}
+		if seen[k] {
+			continue
+		}
+		out = append(out, f)
+	}
+	return append(out, appFindings...)
 }
 
 func appCacheSalt(repoRoot string, appPaths []string) string {

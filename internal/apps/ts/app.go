@@ -109,12 +109,29 @@ func makeLineSet(lines []int) map[int]bool {
 func maskCommentsAndStrings(src string) string {
 	var out strings.Builder
 	out.Grow(len(src))
+	maskTSRange(src, 0, false, &out)
+	return out.String()
+}
+
+func maskTSRange(src string, i int, stopAtCloseBrace bool, out *strings.Builder) int {
 	n := len(src)
-	for i := 0; i < n; {
+	braceDepth := 0
+	for i < n {
 		ch := src[i]
 		var next byte
 		if i+1 < n {
 			next = src[i+1]
+		}
+		if stopAtCloseBrace {
+			if ch == '{' {
+				braceDepth++
+			} else if ch == '}' {
+				if braceDepth == 0 {
+					out.WriteByte('}')
+					return i + 1
+				}
+				braceDepth--
+			}
 		}
 		if ch == '/' && next == '/' {
 			for i < n && src[i] != '\n' {
@@ -140,13 +157,18 @@ func maskCommentsAndStrings(src string) string {
 			}
 			continue
 		}
-		if ch == '"' || ch == '\'' || ch == '`' {
+		if ch == '"' || ch == '\'' {
 			q := ch
 			out.WriteByte(q)
 			i++
 			for i < n && src[i] != q {
 				if src[i] == '\\' && i+1 < n {
-					out.WriteString("  ")
+					out.WriteByte(' ')
+					if src[i+1] == '\n' {
+						out.WriteByte('\n')
+					} else {
+						out.WriteByte(' ')
+					}
 					i += 2
 					continue
 				}
@@ -163,8 +185,40 @@ func maskCommentsAndStrings(src string) string {
 			}
 			continue
 		}
+		if ch == '`' {
+			out.WriteByte('`')
+			i++
+			for i < n && src[i] != '`' {
+				if src[i] == '\\' && i+1 < n {
+					out.WriteByte(' ')
+					if src[i+1] == '\n' {
+						out.WriteByte('\n')
+					} else {
+						out.WriteByte(' ')
+					}
+					i += 2
+					continue
+				}
+				if src[i] == '$' && i+1 < n && src[i+1] == '{' {
+					out.WriteString("${")
+					i = maskTSRange(src, i+2, true, out)
+					continue
+				}
+				if src[i] == '\n' {
+					out.WriteByte('\n')
+				} else {
+					out.WriteByte(' ')
+				}
+				i++
+			}
+			if i < n {
+				out.WriteByte('`')
+				i++
+			}
+			continue
+		}
 		out.WriteByte(ch)
 		i++
 	}
-	return out.String()
+	return i
 }

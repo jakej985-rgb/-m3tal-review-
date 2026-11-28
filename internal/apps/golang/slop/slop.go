@@ -175,6 +175,17 @@ func checkBoolIfReturn(fset *token.FileSet, body *ast.BlockStmt, filePath string
 				continue
 			}
 			if isBoolIdent(r1.Results[0]) && isBoolIdent(r2.Results[0]) {
+				v1 := r1.Results[0].(*ast.Ident).Name
+				v2 := r2.Results[0].(*ast.Ident).Name
+				msg := "if/return boolean literal can be simplified to a direct return"
+				remediation := "Return the boolean condition directly."
+				switch {
+				case v1 == "false" && v2 == "true":
+					remediation = "Return the negated boolean condition (!cond)."
+				case v1 == v2:
+					msg = "if/return branches return the same boolean literal " + v1
+					remediation = "Both branches return " + v1 + "; return " + v1 + " directly if the condition has no side effects."
+				}
 				line := fset.Position(ifStmt.Pos()).Line
 				if lineAllowed(line) {
 					out = append(out, protocol.Finding{
@@ -184,9 +195,9 @@ func checkBoolIfReturn(fset *token.FileSet, body *ast.BlockStmt, filePath string
 						Confidence:  protocol.ConfidenceHigh,
 						File:        filePath,
 						Line:        line,
-						Message:     "if/return boolean literal can be simplified to a direct return",
+						Message:     msg,
 						Evidence:    getLine(line),
-						Remediation: "Return the boolean condition directly.",
+						Remediation: remediation,
 					})
 				}
 			}
