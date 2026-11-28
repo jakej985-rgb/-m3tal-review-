@@ -317,6 +317,14 @@ func mixedShortDeclExistingPtr() error {
 	e = nil
 	return e
 }
+
+func interfaceAssignedPointerThenNil() error {
+	var e error
+	var p *MyErr
+	e = p
+	e = nil
+	return e
+}
 `
 	out := Run(protocol.Input{
 		Protocol: protocol.Version,

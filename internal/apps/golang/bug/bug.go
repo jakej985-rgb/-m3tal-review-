@@ -335,7 +335,7 @@ func walkTypedNilStmts(
 								nextNil = true
 							}
 						} else {
-							if pointerVars[rhsID.Name] {
+							if !reusedExisting && pointerVars[rhsID.Name] {
 								nextPtr = true
 							}
 							if typedNilVars[rhsID.Name] {
