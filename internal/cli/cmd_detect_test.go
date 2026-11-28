@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/apps"
+	"github.com/jakej985-rgb/m3tal-review/internal/apps/golang"
+	"github.com/jakej985-rgb/m3tal-review/internal/apps/ts"
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 	"github.com/jakej985-rgb/m3tal-review/protocol"
 )
@@ -91,5 +93,41 @@ func TestCollectAppOutputsAndDeduplication(t *testing.T) {
 	}
 	if merged[0].Rule != "hardcoded-credential" || merged[1].Rule != "tls-verification" || merged[2].Rule != "ts/security/eval-injection" {
 		t.Fatalf("unexpected merged order/rules: %+v", merged)
+	}
+}
+
+func TestDedupeRealLegacyAndAppOutputs(t *testing.T) {
+	tsSrc := "eval(input)\n"
+	goSrc := "package main\nimport \"crypto/tls\"\nvar c = &tls.Config{InsecureSkipVerify: true}\n"
+	diff := "diff --git a/app.ts b/app.ts\nnew file mode 100644\n--- /dev/null\n+++ b/app.ts\n@@ -0,0 +1 @@\n+eval(input)\n" +
+		"diff --git a/tls.go b/tls.go\nnew file mode 100644\n--- /dev/null\n+++ b/tls.go\n@@ -0,0 +1,3 @@\n+package main\n+import \"crypto/tls\"\n+var c = &tls.Config{InsecureSkipVerify: true}\n"
+
+	engine := review.NewEngine(review.EvalRule{}, review.TLSRule{})
+	legacyFindings := engine.Run(diff)
+
+	var appFindings []review.Finding
+	tsOut := (ts.App{}).Run(protocol.Input{
+		Protocol: protocol.Version,
+		Files:    []protocol.File{{Path: "app.ts", Status: "added", Content: tsSrc}},
+	})
+	for _, f := range tsOut.Findings {
+		appFindings = append(appFindings, protocolToReviewFinding(f))
+	}
+	goOut := golang.Run(protocol.Input{
+		Protocol: protocol.Version,
+		Files:    []protocol.File{{Path: "tls.go", Status: "added", Content: goSrc}},
+	})
+	for _, f := range goOut.Findings {
+		appFindings = append(appFindings, protocolToReviewFinding(f))
+	}
+
+	merged := dedupeAppAndLegacyFindings(legacyFindings, appFindings)
+	if len(merged) != 2 {
+		t.Fatalf("expected 2 deduplicated findings (ts/security/eval-call and go/security/tls-insecure-skip-verify), got %+v", merged)
+	}
+	for _, f := range merged {
+		if f.Rule == "dangerous-eval" || f.Rule == "insecure-tls-verification" {
+			t.Fatalf("expected legacy alias %q to be deduplicated, got %+v", f.Rule, merged)
+		}
 	}
 }

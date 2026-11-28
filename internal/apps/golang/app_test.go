@@ -299,6 +299,16 @@ func elseBranchBuggy(bad bool) error {
 	}
 	return nil
 }
+
+func shadowedPointerInBlock() error {
+	var e error
+	{
+		var e *MyErr
+		_ = e
+	}
+	e = nil
+	return e
+}
 `
 	out := Run(protocol.Input{
 		Protocol: protocol.Version,

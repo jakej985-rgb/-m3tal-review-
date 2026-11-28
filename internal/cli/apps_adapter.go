@@ -239,9 +239,9 @@ func normalizeRuleForDedupe(rule string) string {
 		r = r[idx+1:]
 	}
 	switch r {
-	case "eval-injection":
+	case "eval-injection", "dangerous-eval":
 		return "eval-call"
-	case "tls-verification":
+	case "tls-verification", "insecure-tls-verification":
 		return "tls-insecure-skip-verify"
 	case "hardcoded-credentials":
 		return "hardcoded-credential"

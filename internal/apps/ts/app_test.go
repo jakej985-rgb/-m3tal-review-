@@ -49,3 +49,25 @@ func TestRegexBraceInsideTemplateDoesNotHideLaterCode(t *testing.T) {
 		t.Fatalf("expected ts/security/eval-call on line 2 after regex in template, got %+v", out.Findings)
 	}
 }
+
+func TestPostfixDivisionDoesNotHideEvalCall(t *testing.T) {
+	src := "let i = 1; i++ / eval(input);\n"
+	out := (App{}).Run(protocol.Input{
+		Protocol: protocol.Version,
+		Files: []protocol.File{{
+			Path:    "div.ts",
+			Status:  "added",
+			Content: src,
+		}},
+	})
+	var found bool
+	for _, f := range out.Findings {
+		if f.Rule == "ts/security/eval-call" && f.Line == 1 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected ts/security/eval-call on line 1 after postfix ++ /, got %+v", out.Findings)
+	}
+}

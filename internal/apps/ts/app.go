@@ -261,7 +261,12 @@ func isRegexStart(src string, slashIdx int) bool {
 		return true
 	}
 	switch src[j] {
-	case '(', '[', '{', ',', ';', '=', ':', '!', '&', '|', '?', '+', '-', '*', '%', '^', '~', '<', '>':
+	case '+', '-':
+		if j > 0 && src[j-1] == src[j] {
+			return false
+		}
+		return true
+	case '(', '[', '{', ',', ';', '=', ':', '!', '&', '|', '?', '*', '%', '^', '~', '<', '>':
 		return true
 	}
 	return false

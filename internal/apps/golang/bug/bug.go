@@ -276,6 +276,7 @@ func walkTypedNilStmts(
 					continue
 				}
 				for _, name := range vs.Names {
+					delete(pointerVars, name.Name)
 					delete(typedNilVars, name.Name)
 				}
 			}
@@ -301,6 +302,9 @@ func walkTypedNilStmts(
 				if isTypedNil {
 					typedNilVars[id.Name] = true
 				} else {
+					if s.Tok == token.DEFINE {
+						delete(pointerVars, id.Name)
+					}
 					delete(typedNilVars, id.Name)
 				}
 			}
@@ -329,58 +333,62 @@ func walkTypedNilStmts(
 				}
 			}
 		case *ast.BlockStmt:
-			walkTypedNilStmts(fset, s.List, typedNilVars, pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+			walkTypedNilStmts(fset, s.List, typedNilVars, cloneStringBoolMap(pointerVars), errIdx, filePath, getLine, lineAllowed, out)
 		case *ast.IfStmt:
+			blockPtrs := cloneStringBoolMap(pointerVars)
 			if s.Init != nil {
-				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, blockPtrs, errIdx, filePath, getLine, lineAllowed, out)
 			}
 			clearAssignedInNode(s.Cond, typedNilVars)
 			incoming := cloneStringBoolMap(typedNilVars)
 			if s.Body != nil {
-				walkTypedNilStmts(fset, s.Body.List, cloneStringBoolMap(incoming), pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+				walkTypedNilStmts(fset, s.Body.List, cloneStringBoolMap(incoming), cloneStringBoolMap(blockPtrs), errIdx, filePath, getLine, lineAllowed, out)
 				clearAssignedInNode(s.Body, typedNilVars)
 			}
 			if s.Else != nil {
-				walkTypedNilStmts(fset, []ast.Stmt{s.Else}, cloneStringBoolMap(incoming), pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+				walkTypedNilStmts(fset, []ast.Stmt{s.Else}, cloneStringBoolMap(incoming), cloneStringBoolMap(blockPtrs), errIdx, filePath, getLine, lineAllowed, out)
 				clearAssignedInNode(s.Else, typedNilVars)
 			}
 		case *ast.ForStmt:
+			blockPtrs := cloneStringBoolMap(pointerVars)
 			if s.Init != nil {
-				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, blockPtrs, errIdx, filePath, getLine, lineAllowed, out)
 			}
 			clearAssignedInNode(s.Body, typedNilVars)
 			if s.Body != nil {
 				branch := cloneStringBoolMap(typedNilVars)
-				walkTypedNilStmts(fset, s.Body.List, branch, pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+				walkTypedNilStmts(fset, s.Body.List, branch, blockPtrs, errIdx, filePath, getLine, lineAllowed, out)
 			}
 		case *ast.RangeStmt:
 			clearAssignedInNode(s.Body, typedNilVars)
 			if s.Body != nil {
 				branch := cloneStringBoolMap(typedNilVars)
-				walkTypedNilStmts(fset, s.Body.List, branch, pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+				walkTypedNilStmts(fset, s.Body.List, branch, cloneStringBoolMap(pointerVars), errIdx, filePath, getLine, lineAllowed, out)
 			}
 		case *ast.SwitchStmt:
+			blockPtrs := cloneStringBoolMap(pointerVars)
 			if s.Init != nil {
-				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, blockPtrs, errIdx, filePath, getLine, lineAllowed, out)
 			}
 			if s.Body != nil {
 				for _, clause := range s.Body.List {
 					if cc, ok := clause.(*ast.CaseClause); ok {
 						branch := cloneStringBoolMap(typedNilVars)
-						walkTypedNilStmts(fset, cc.Body, branch, pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+						walkTypedNilStmts(fset, cc.Body, branch, cloneStringBoolMap(blockPtrs), errIdx, filePath, getLine, lineAllowed, out)
 					}
 				}
 				clearAssignedInNode(s.Body, typedNilVars)
 			}
 		case *ast.TypeSwitchStmt:
+			blockPtrs := cloneStringBoolMap(pointerVars)
 			if s.Init != nil {
-				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+				walkTypedNilStmts(fset, []ast.Stmt{s.Init}, typedNilVars, blockPtrs, errIdx, filePath, getLine, lineAllowed, out)
 			}
 			if s.Body != nil {
 				for _, clause := range s.Body.List {
 					if cc, ok := clause.(*ast.CaseClause); ok {
 						branch := cloneStringBoolMap(typedNilVars)
-						walkTypedNilStmts(fset, cc.Body, branch, pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+						walkTypedNilStmts(fset, cc.Body, branch, cloneStringBoolMap(blockPtrs), errIdx, filePath, getLine, lineAllowed, out)
 					}
 				}
 				clearAssignedInNode(s.Body, typedNilVars)
@@ -390,7 +398,7 @@ func walkTypedNilStmts(
 				for _, clause := range s.Body.List {
 					if cc, ok := clause.(*ast.CommClause); ok {
 						branch := cloneStringBoolMap(typedNilVars)
-						walkTypedNilStmts(fset, cc.Body, branch, pointerVars, errIdx, filePath, getLine, lineAllowed, out)
+						walkTypedNilStmts(fset, cc.Body, branch, cloneStringBoolMap(pointerVars), errIdx, filePath, getLine, lineAllowed, out)
 					}
 				}
 				clearAssignedInNode(s.Body, typedNilVars)
