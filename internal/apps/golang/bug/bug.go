@@ -261,6 +261,29 @@ func clearAssignedInNode(n ast.Node, vars map[string]bool) {
 	})
 }
 
+func exprPtrAndNil(expr ast.Expr, pointerVars, typedNilVars map[string]bool) (isPtr bool, isNil bool) {
+	switch e := expr.(type) {
+	case *ast.UnaryExpr:
+		if e.Op == token.AND {
+			return true, false
+		}
+	case *ast.CallExpr:
+		if len(e.Args) == 1 {
+			if arg, ok := e.Args[0].(*ast.Ident); ok && arg.Name == "nil" {
+				if _, isParen := e.Fun.(*ast.ParenExpr); isParen {
+					return true, true
+				}
+			}
+		}
+	case *ast.Ident:
+		if e.Name == "nil" {
+			return false, true
+		}
+		return pointerVars[e.Name], typedNilVars[e.Name]
+	}
+	return false, false
+}
+
 func walkTypedNilStmts(
 	fset *token.FileSet,
 	stmts []ast.Stmt,
@@ -297,6 +320,26 @@ func walkTypedNilStmts(
 					}
 					continue
 				}
+				if vs.Type == nil && len(vs.Values) > 0 {
+					for i, name := range vs.Names {
+						declaredInScope[name.Name] = true
+						var rhsPtr, rhsNil bool
+						if i < len(vs.Values) {
+							rhsPtr, rhsNil = exprPtrAndNil(vs.Values[i], pointerVars, typedNilVars)
+						}
+						if rhsPtr {
+							pointerVars[name.Name] = true
+						} else {
+							delete(pointerVars, name.Name)
+						}
+						if rhsPtr && rhsNil {
+							typedNilVars[name.Name] = true
+						} else {
+							delete(typedNilVars, name.Name)
+						}
+					}
+					continue
+				}
 				for _, name := range vs.Names {
 					declaredInScope[name.Name] = true
 					delete(pointerVars, name.Name)
@@ -322,25 +365,20 @@ func walkTypedNilStmts(
 				nextPtr := reusedExisting && pointerVars[id.Name]
 				nextNil := false
 				if i < len(s.Rhs) {
-					if call, ok := s.Rhs[i].(*ast.CallExpr); ok && len(call.Args) == 1 {
-						if arg, ok := call.Args[0].(*ast.Ident); ok && arg.Name == "nil" {
-							if _, isParen := call.Fun.(*ast.ParenExpr); isParen {
-								nextPtr = true
-								nextNil = true
-							}
+					rhsPtr, rhsNil := exprPtrAndNil(s.Rhs[i], pointerVars, typedNilVars)
+					if call, ok := s.Rhs[i].(*ast.CallExpr); ok && len(call.Args) == 1 && rhsPtr && rhsNil {
+						nextPtr = true
+						nextNil = true
+					} else if rhsID, ok := s.Rhs[i].(*ast.Ident); ok && rhsID.Name == "nil" {
+						if nextPtr {
+							nextNil = true
 						}
-					} else if rhsID, ok := s.Rhs[i].(*ast.Ident); ok {
-						if rhsID.Name == "nil" {
-							if nextPtr {
-								nextNil = true
-							}
-						} else {
-							if !reusedExisting && pointerVars[rhsID.Name] {
-								nextPtr = true
-							}
-							if typedNilVars[rhsID.Name] {
-								nextNil = true
-							}
+					} else {
+						if !reusedExisting && rhsPtr {
+							nextPtr = true
+						}
+						if rhsNil {
+							nextNil = true
 						}
 					}
 				}

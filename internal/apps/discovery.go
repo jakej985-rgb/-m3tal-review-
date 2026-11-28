@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/jakej985-rgb/m3tal-review/protocol"
@@ -89,7 +90,10 @@ func Discover(ctx context.Context, cfg RunConfig) ([]App, []protocol.Diagnostic,
 			seenPaths[resolved] = struct{}{}
 
 			info, err := os.Stat(resolved)
-			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			if runtime.GOOS != "windows" && info.Mode().Perm()&0111 == 0 {
 				continue
 			}
 			if absRoot != "" && isInsideDir(resolved, absRoot) {
@@ -97,6 +101,9 @@ func Discover(ctx context.Context, cfg RunConfig) ([]App, []protocol.Diagnostic,
 					Level:   "warning",
 					Message: fmt.Sprintf("refused repo-local app %s", resolved),
 				})
+				continue
+			}
+			if runtime.GOOS == "windows" && !hasWindowsExecExt(resolved) {
 				continue
 			}
 
@@ -124,6 +131,14 @@ func Discover(ctx context.Context, cfg RunConfig) ([]App, []protocol.Diagnostic,
 	}
 
 	return discovered, diags, nil
+}
+
+func hasWindowsExecExt(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".exe", ".bat", ".cmd", ".com":
+		return true
+	}
+	return false
 }
 
 func isAppBinaryName(name string) bool {

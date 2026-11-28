@@ -3,12 +3,16 @@ package cli
 import (
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func TestRunAppsListAndDoctor(t *testing.T) {
 	binDir := t.TempDir()
 	goBin := filepath.Join(binDir, "m3tal-review-go")
+	if runtime.GOOS == "windows" {
+		goBin += ".exe"
+	}
 	if out, err := exec.Command("go", "build", "-o", goBin, "../../cmd/m3tal-review-go").CombinedOutput(); err != nil {
 		t.Fatalf("build m3tal-review-go: %v\n%s", err, string(out))
 	}
