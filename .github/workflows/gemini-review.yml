@@ -33,7 +33,7 @@ jobs:
   review:
     name: Gemini CLI PR Review
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     if: |-
       github.event_name == 'workflow_dispatch' ||
       (
@@ -157,6 +157,7 @@ jobs:
         if: steps.check_auth.outputs.enabled == 'true'
         uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
         id: gemini_pr_review
+        continue-on-error: true
         env:
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
@@ -194,7 +195,7 @@ jobs:
                     "--rm",
                     "-e",
                     "GITHUB_PERSONAL_ACCESS_TOKEN",
-                    "ghcr.io/github/github-mcp-server:v0.27.0"
+                    "ghcr.io/github/github-mcp-server:v2.3.0"
                   ],
                   "includeTools": [
                     "add_comment_to_pending_review",
@@ -227,3 +228,132 @@ jobs:
               "https://github.com/gemini-cli-extensions/code-review"
             ]
           prompt: '/m3tal-pr-review'
+
+      - name: Resume Gemini review after rate limit
+        if: >-
+          steps.check_auth.outputs.enabled == 'true' &&
+          steps.gemini_pr_review.outcome == 'failure'
+        env:
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
+          GEMINI_MODEL: "${{ vars.GEMINI_MODEL || 'gemini-3.1-flash-lite' }}"
+          GEMINI_DEBUG: '${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || false) }}'
+          SURFACE: 'GitHub'
+          GOOGLE_CLOUD_PROJECT: ''
+          GOOGLE_CLOUD_LOCATION: ''
+          GOOGLE_GENAI_USE_VERTEXAI: 'false'
+          GOOGLE_API_KEY: ''
+          GOOGLE_GENAI_USE_GCA: 'false'
+          GOOGLE_CLOUD_ACCESS_TOKEN: ''
+          REPOSITORY: '${{ github.repository }}'
+          PULL_REQUEST_NUMBER: '${{ steps.prepare_context.outputs.pr_number }}'
+          ISSUE_TITLE: '${{ github.event.pull_request.title || github.event.issue.title }}'
+          GH_WORKFLOW_NAME: 'gemini-review'
+          GH_PR_NUMBER: '${{ steps.prepare_context.outputs.pr_number }}'
+          GEMINI_ERROR: '${{ steps.gemini_pr_review.outputs.error }}'
+        run: |
+          set -euo pipefail
+
+          get_error_text() {
+            local raw="${1:-}"
+            if [[ -n "${raw}" ]]; then
+              printf '%s' "${raw}"
+              return
+            fi
+            if [[ -f gemini-artifacts/stdout.log ]] &&
+              jq -e '.error' gemini-artifacts/stdout.log >/dev/null 2>&1; then
+              jq -c '.error' gemini-artifacts/stdout.log
+              return
+            fi
+            if [[ -f gemini-artifacts/stderr.log ]]; then
+              cat gemini-artifacts/stderr.log
+            fi
+          }
+
+          is_per_minute_rate_limit() {
+            local err_text="$1"
+            printf '%s' "${err_text}" |
+              grep -qiE 'Quota exceeded|rate.?limit|Please retry in|"code":[[:space:]]*429|status:[[:space:]]*429' ||
+              return 1
+            if printf '%s' "${err_text}" | grep -qi 'generate_content_free_tier_requests'; then
+              return 1
+            fi
+            return 0
+          }
+
+          compute_wait_seconds() {
+            local err_text="$1"
+            local delay_s
+            delay_s="$(
+              printf '%s' "${err_text}" |
+                sed -nE 's/.*Please retry in ([0-9]+)(\.[0-9]+)?s.*/\1/p' |
+                head -n 1
+            )"
+            if [[ -z "${delay_s}" ]]; then
+              printf '65'
+              return
+            fi
+            delay_s=$((delay_s + 5))
+            if ((delay_s < 62)); then
+              delay_s=62
+            elif ((delay_s > 95)); then
+              delay_s=95
+            fi
+            printf '%s' "${delay_s}"
+          }
+
+          err_text="$(get_error_text "${GEMINI_ERROR:-}")"
+          if ! is_per_minute_rate_limit "${err_text}"; then
+            echo "::error::Gemini CLI failed with a non-retryable error."
+            printf '%s\n' "${err_text}" >&2
+            exit 1
+          fi
+
+          mkdir -p gemini-artifacts
+          for attempt in 1 2 3; do
+            wait_secs="$(compute_wait_seconds "${err_text}")"
+            echo "::notice::Rate limit hit; sleeping ${wait_secs}s before resume (${attempt}/3)."
+            sleep "${wait_secs}"
+
+            out_file="gemini-artifacts/resume-stdout-${attempt}.log"
+            err_file="gemini-artifacts/resume-stderr-${attempt}.log"
+            if find "${HOME}/.gemini/tmp" -type f \
+              \( -name 'session-*.jsonl' -o -name 'session-*.json' \) 2>/dev/null |
+              grep -q .; then
+              resume_prompt="The 1-minute token rate-limit window has reset. Continue the PR"
+              resume_prompt+=" review where you left off and ensure the final review is submitted"
+              resume_prompt+=" via mcp_github_pull_request_review_write using ONLY event: COMMENT."
+              cmd_args=(--yolo --resume latest --prompt "${resume_prompt}" --output-format json)
+            else
+              cmd_args=(--yolo --prompt "/m3tal-pr-review" --output-format json)
+            fi
+
+            rc=0
+            gemini "${cmd_args[@]}" 1>"${out_file}" 2>"${err_file}" || rc=$?
+            if [[ "${rc}" -eq 0 ]]; then
+              response="$(jq -r '.response // ""' "${out_file}" 2>/dev/null || true)"
+              if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -n "${response}" ]]; then
+                {
+                  echo "### Gemini CLI Execution (Resumed after wait ${attempt})"
+                  echo
+                  printf '%s\n' "${response}"
+                } >> "${GITHUB_STEP_SUMMARY}"
+              fi
+              exit 0
+            fi
+
+            if jq -e '.error' "${out_file}" >/dev/null 2>&1; then
+              err_text="$(jq -c '.error' "${out_file}")"
+            else
+              err_text="$(cat "${err_file}")"
+            fi
+            if ! is_per_minute_rate_limit "${err_text}"; then
+              echo "::error::Resumed Gemini CLI failed with a non-retryable error."
+              cat "${err_file}" >&2
+              exit 1
+            fi
+          done
+
+          echo "::error::Gemini CLI remained rate-limited after 3 cooldown waits."
+          exit 1
