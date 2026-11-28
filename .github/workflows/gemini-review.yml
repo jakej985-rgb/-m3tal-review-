@@ -115,8 +115,8 @@ jobs:
           # Pin <0.70.0 until google-gemini/gemini-cli#30416 fixes GIT_CONFIG_SYSTEM.
           gemini_cli_version: "${{ vars.GEMINI_CLI_VERSION || '0.69.0' }}"
           gemini_debug: '${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || false) }}'
-          # Default to GA gemini-3.8-flash (gemini-2.5-flash is retired; override via vars.GEMINI_MODEL).
-          gemini_model: "${{ vars.GEMINI_MODEL || 'gemini-3.8-flash' }}"
+          # Default to gemini-3.1-flash-lite (highest free-tier quota; override via vars.GEMINI_MODEL).
+          gemini_model: "${{ vars.GEMINI_MODEL || 'gemini-3.1-flash-lite' }}"
           upload_artifacts: '${{ vars.UPLOAD_ARTIFACTS }}'
           workflow_name: 'gemini-review'
           github_pr_number: '${{ steps.prepare_context.outputs.pr_number }}'
