@@ -123,10 +123,13 @@ jobs:
           <PROTOCOL>
           1. Call `activate_skill` with `name: "code-review-commons"` and follow project rules in `GEMINI.md`
              (skip formatting/indentation/import-order comments).
-          2. Read the PR via `mcp_github_pull_request_read` (`owner`, `repo`, numeric `pullNumber` from context):
-             - Call `mcp_github_pull_request_read` with `method: "get"` and `method: "get_diff"`.
-             - Do not list the whole repository; use targeted `read_file` or `grep_search` only when
-               verifying a potential bug, and finish within 10 turns to stay under token-rate limits.
+          2. Read PR metadata first via `mcp_github_pull_request_read` (`method: "get"`, `owner`, `repo`,
+             numeric `pullNumber`):
+             - If `changed_files <= 20` and `(additions + deletions) <= 1500`: call `method: "get_diff"`.
+             - Otherwise (large PRs), do NOT call `get_diff` (to stay under 250k input tokens/min); call
+               `method: "get_files"` with `perPage: 15`, `page: 1` (plus `page: 2` if needed) and inspect key
+               files with targeted `read_file` ranges.
+             - Do not list the whole repository; finish within 8 turns.
           3. Report only verifiable bugs, security/traversal issues, cross-platform hazards, or missing tests on
              changed (`+`/`-`) lines with `🔴`/`🟠`/`🟡`/`🟢` severity.
           4. Always post the review to GitHub using ONLY `event: "COMMENT"` (never `APPROVE` or
@@ -141,6 +144,7 @@ jobs:
                   `## 🔍 General Feedback`).
              - If there are no inline comments, call `mcp_github_pull_request_review_write` once with
                `method: "create"`, `owner`, `repo`, `pullNumber`, `event: "COMMENT"`, and `body`.
+             - After submitting the review successfully, stop immediately and summarize what was posted.
           </PROTOCOL>
           EOF
           } > .gemini/m3tal-pr-review.prompt.txt
@@ -164,7 +168,7 @@ jobs:
           gemini_api_key: '${{ secrets.GEMINI_API_KEY }}'
           # Pin <0.70.0 until google-gemini/gemini-cli#30416 fixes GIT_CONFIG_SYSTEM.
           gemini_cli_version: "${{ vars.GEMINI_CLI_VERSION || '0.69.0' }}"
-          gemini_debug: '${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || true) }}'
+          gemini_debug: '${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || false) }}'
           # Default to gemini-3.1-flash-lite (highest free-tier quota; override via vars.GEMINI_MODEL).
           gemini_model: "${{ vars.GEMINI_MODEL || 'gemini-3.1-flash-lite' }}"
           upload_artifacts: "${{ vars.UPLOAD_ARTIFACTS || 'true' }}"
