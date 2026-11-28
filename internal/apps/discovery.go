@@ -152,6 +152,10 @@ func isAppBinaryName(name string) bool {
 }
 
 func isInsideDir(target, dir string) bool {
+	if filepath.IsAbs(target) && filepath.IsAbs(dir) &&
+		!strings.EqualFold(filepath.VolumeName(target), filepath.VolumeName(dir)) {
+		return false
+	}
 	rel, err := filepath.Rel(dir, target)
 	if err != nil {
 		return true

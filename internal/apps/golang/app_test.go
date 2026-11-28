@@ -333,6 +333,11 @@ func inferredPointerVarNilReset() error {
 	e = nil
 	return e
 }
+
+func nilInterfaceCast() error {
+	var e = (error)(nil)
+	return e
+}
 `
 	out := Run(protocol.Input{
 		Protocol: protocol.Version,

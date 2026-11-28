@@ -270,8 +270,11 @@ func exprPtrAndNil(expr ast.Expr, pointerVars, typedNilVars map[string]bool) (is
 	case *ast.CallExpr:
 		if len(e.Args) == 1 {
 			if arg, ok := e.Args[0].(*ast.Ident); ok && arg.Name == "nil" {
-				if _, isParen := e.Fun.(*ast.ParenExpr); isParen {
-					return true, true
+				if paren, isParen := e.Fun.(*ast.ParenExpr); isParen {
+					if _, isStar := paren.X.(*ast.StarExpr); isStar {
+						return true, true
+					}
+					return false, true
 				}
 			}
 		}
@@ -369,15 +372,11 @@ func walkTypedNilStmts(
 					if call, ok := s.Rhs[i].(*ast.CallExpr); ok && len(call.Args) == 1 && rhsPtr && rhsNil {
 						nextPtr = true
 						nextNil = true
-					} else if rhsID, ok := s.Rhs[i].(*ast.Ident); ok && rhsID.Name == "nil" {
-						if nextPtr {
-							nextNil = true
-						}
 					} else {
 						if !reusedExisting && rhsPtr {
 							nextPtr = true
 						}
-						if rhsNil {
+						if rhsNil && (rhsPtr || nextPtr) {
 							nextNil = true
 						}
 					}
