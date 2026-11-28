@@ -392,7 +392,7 @@ func runAuditCommand(commandArgs []string) error {
 		if appErr != nil {
 			return appErr
 		}
-		findings = append(findings, appFindings...)
+		findings = dedupeAppAndLegacyFindings(findings, appFindings)
 		unanalyzedFiles = append(unanalyzedFiles, appUnanalyzed...)
 		frameworkChecks = append(frameworkChecks, appChecks...)
 	}
