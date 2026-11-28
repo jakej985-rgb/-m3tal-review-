@@ -271,7 +271,7 @@ func exprPtrAndNil(expr ast.Expr, pointerVars, typedNilVars map[string]bool) (is
 		if len(e.Args) == 1 {
 			if arg, ok := e.Args[0].(*ast.Ident); ok && arg.Name == "nil" {
 				if paren, isParen := e.Fun.(*ast.ParenExpr); isParen {
-					if _, isStar := paren.X.(*ast.StarExpr); isStar {
+					if _, isStar := ast.Unparen(paren.X).(*ast.StarExpr); isStar {
 						return true, true
 					}
 					return false, true

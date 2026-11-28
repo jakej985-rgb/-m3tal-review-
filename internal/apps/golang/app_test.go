@@ -338,6 +338,11 @@ func nilInterfaceCast() error {
 	var e = (error)(nil)
 	return e
 }
+
+func doubleParenNilPtr() error {
+	var e = ((*MyErr))(nil)
+	return e
+}
 `
 	out := Run(protocol.Input{
 		Protocol: protocol.Version,
@@ -349,8 +354,8 @@ func nilInterfaceCast() error {
 			lines = append(lines, f.Line)
 		}
 	}
-	if len(lines) != 5 || lines[0] != 22 || lines[1] != 29 || lines[2] != 37 || lines[3] != 57 || lines[4] != 73 {
-		t.Fatalf("expected typed-nil-error on lines [22 29 37 57 73], got lines %v (%+v)", lines, out.Findings)
+	if len(lines) != 6 || lines[0] != 22 || lines[1] != 29 || lines[2] != 37 || lines[3] != 57 || lines[4] != 73 || lines[5] != 83 {
+		t.Fatalf("expected typed-nil-error on lines [22 29 37 57 73 83], got lines %v (%+v)", lines, out.Findings)
 	}
 }
 
