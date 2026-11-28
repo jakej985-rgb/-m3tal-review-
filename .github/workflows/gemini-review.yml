@@ -112,7 +112,8 @@ jobs:
           GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
         with:
           gemini_api_key: '${{ secrets.GEMINI_API_KEY }}'
-          gemini_cli_version: '${{ vars.GEMINI_CLI_VERSION }}'
+          # Pin <0.70.0 until google-gemini/gemini-cli#30416 fixes GIT_CONFIG_SYSTEM.
+          gemini_cli_version: "${{ vars.GEMINI_CLI_VERSION || '0.69.0' }}"
           gemini_debug: '${{ fromJSON(vars.GEMINI_DEBUG || vars.ACTIONS_STEP_DEBUG || false) }}'
           gemini_model: '${{ vars.GEMINI_MODEL }}'
           upload_artifacts: '${{ vars.UPLOAD_ARTIFACTS }}'
