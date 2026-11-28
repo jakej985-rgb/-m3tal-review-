@@ -6,7 +6,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/jakej985-rgb/m3tal-review/internal/apps"
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
 )
 
@@ -41,6 +43,10 @@ type reviewOptions struct {
 	AllowRepoPlugins bool
 	Progress         *bool
 	Semantic         semanticCLIOptions
+	Apps             bool
+	NoApps           bool
+	AppPaths         []string
+	AppTimeout       time.Duration
 	// seen records which flags were explicitly passed, so user config
 	// defaults only fill in flags the user did not set.
 	seen map[string]bool
@@ -262,6 +268,26 @@ func parseReviewOptions(args []string) (reviewOptions, error) {
 			options.PluginDir = v
 		case "--allow-repo-plugins":
 			options.AllowRepoPlugins = true
+		case "--apps":
+			options.Apps = true
+		case "--no-apps":
+			options.NoApps = true
+		case "--app-path":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			options.AppPaths = append(options.AppPaths, v)
+		case "--app-timeout":
+			v, err := next()
+			if err != nil {
+				return options, err
+			}
+			d, err := time.ParseDuration(v)
+			if err != nil || d <= 0 || d > apps.MaxTimeout {
+				return options, fmt.Errorf("invalid --app-timeout %q (must be > 0 and <= %s)", v, apps.MaxTimeout)
+			}
+			options.AppTimeout = d
 		default:
 			if handled, err := options.Semantic.parseSemanticFlag(arg, next); handled {
 				if err != nil {

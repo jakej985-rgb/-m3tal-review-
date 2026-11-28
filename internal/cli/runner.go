@@ -44,6 +44,7 @@ type RunnerConfig struct {
 	Coverage        *review.CoverageMetadata
 	WorkingTreeDiff bool
 	Checks          []review.CheckResult
+	Apps            []review.AppRun
 
 	// Review-specific integration flags
 	CheckRun    bool
@@ -228,6 +229,7 @@ func RunPipeline(cfg RunnerConfig) error {
 	report.Profile = cfg.Profile
 	report.Checks = append(report.Checks, confidenceChecks...)
 	report.Checks = append(report.Checks, cfg.Checks...)
+	report.Apps = cfg.Apps
 	report.Scope = cfg.Scope
 	report.Coverage = cfg.Coverage
 	report.Analysis = analysisSection

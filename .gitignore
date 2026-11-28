@@ -1,3 +1,5 @@
 .m3tal-review/
 /m3tal-review
 *.patch
+.gemini/
+gha-creds-*.json

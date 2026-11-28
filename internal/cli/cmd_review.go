@@ -252,14 +252,29 @@ func runReviewCommand(commandArgs []string) error {
 	}
 	rules = filterRules(rules, options.Only, options.Skip)
 	capProcessCPU(options.Jobs)
+	var appFindings []review.Finding
+	var appUnanalyzed []string
+	var appChecks []review.CheckResult
+	var appRuns []review.AppRun
+	appIncomplete := false
+	if shouldRunApps(repositoryRoot, options) {
+		var appErr error
+		appFindings, appUnanalyzed, appChecks, appRuns, _, appIncomplete, appErr = runAppsForReview(repositoryRoot, options, diff, stagedFiles, stagedStatuses)
+		if appErr != nil {
+			return appErr
+		}
+	}
+
 	progress.Stage(2, 4, "Executing heuristic review rules")
 	engine := cappedEngine(options.Jobs, rules...)
 
-	findings := engine.Run(diff)
+	findings := dedupeAppAndLegacyFindings(engine.Run(diff), appFindings)
+	unanalyzedFiles = append(unanalyzedFiles, appUnanalyzed...)
+	frameworkChecks = append(frameworkChecks, appChecks...)
 
 	progress.Stage(3, 4, "Running review pipeline and integrations")
 
-	return RunPipeline(RunnerConfig{
+	if err := RunPipeline(RunnerConfig{
 		Scope:                 "staged",
 		RepositoryRoot:        repositoryRoot,
 		Branch:                branch,
@@ -284,6 +299,7 @@ func runReviewCommand(commandArgs []string) error {
 		InitialFindings:       findings,
 		WorkingTreeDiff:       options.Base != "",
 		Checks:                frameworkChecks,
+		Apps:                  appRuns,
 		CheckRun:              options.CheckRun,
 		CheckRunSHA:           options.CheckRunSHA,
 		PRComment:             options.PRComment,
@@ -292,7 +308,12 @@ func runReviewCommand(commandArgs []string) error {
 		RepoPluginAllowSHA256: cfg.PluginAllowSHA256,
 		Semantic:              options.Semantic.pipelineOptions(repositoryRoot),
 		Progress:              progress,
-	})
+	}); err != nil {
+		return err
+	} else if appIncomplete {
+		return fmt.Errorf("review incomplete: one or more language apps failed or are missing")
+	}
+	return nil
 }
 
 func runGoConfidenceChecks(repositoryRoot string) ([]review.Finding, []review.CheckResult) {

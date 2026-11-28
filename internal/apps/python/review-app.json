@@ -1,0 +1,18 @@
+{
+  "name": "review-python",
+  "version": "0.1.0",
+  "protocol": "review-app/1",
+  "extensions": [".py", ".pyi"],
+  "inputs": ["content"],
+  "description": "Standalone Python review app written in Go with bug, security, and slop submodules",
+  "rules": [
+    "py/bug/bare-except",
+    "py/bug/mutable-default-arg",
+    "py/security/eval-exec",
+    "py/security/subprocess-shell-true",
+    "py/security/unsafe-deserialization",
+    "py/security/sql-fstring",
+    "py/slop/redundant-bool-compare",
+    "py/slop/none-equality"
+  ]
+}

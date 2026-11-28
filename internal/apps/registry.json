@@ -1,0 +1,44 @@
+{
+  "apps": [
+    {
+      "name": "review-go",
+      "extensions": [".go"],
+      "optional": false
+    },
+    {
+      "name": "review-ts",
+      "extensions": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
+      "optional": true
+    },
+    {
+      "name": "review-python",
+      "extensions": [".py", ".pyi"],
+      "optional": true
+    },
+    {
+      "name": "review-shell",
+      "extensions": [".sh", ".bash", ".zsh"],
+      "optional": true
+    },
+    {
+      "name": "review-repo",
+      "extensions": [".env", ".tf", ".tfvars"],
+      "optional": true
+    },
+    {
+      "name": "review-rust",
+      "extensions": [".rs"],
+      "optional": true
+    },
+    {
+      "name": "review-cpp",
+      "extensions": [".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx"],
+      "optional": true
+    },
+    {
+      "name": "review-jvm",
+      "extensions": [".java", ".kt", ".kts"],
+      "optional": true
+    }
+  ]
+}

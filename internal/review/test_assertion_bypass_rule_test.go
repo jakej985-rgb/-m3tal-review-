@@ -190,4 +190,22 @@ new file mode 100644
 			t.Fatalf("expected 0 findings for untouched guard in another test, got %d", len(findings))
 		}
 	})
+
+	t.Run("ignores guard fixtures inside Go raw strings", func(t *testing.T) {
+		diff := "diff --git a/internal/review/example_rule_test.go b/internal/review/example_rule_test.go\n" +
+			"--- a/internal/review/example_rule_test.go\n" +
+			"+++ b/internal/review/example_rule_test.go\n" +
+			"@@ -1,2 +1,7 @@\n" +
+			" func TestExample(t *testing.T) {\n" +
+			"+    fixture := `void main() {\n" +
+			"+      if (result != null) {\n" +
+			"+        expect(result.passed, isTrue);\n" +
+			"+      }\n" +
+			"+    }`\n" +
+			" }\n"
+		findings := rule.Check(diff)
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings for a guard inside a Go raw string, got %d", len(findings))
+		}
+	})
 }

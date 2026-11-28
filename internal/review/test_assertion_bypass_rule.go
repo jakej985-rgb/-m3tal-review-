@@ -108,7 +108,10 @@ func hasRelevantDeletedAssertion(b diffSourceBlock, lines []string, guardIdx int
 
 func checkTestBypassBlock(b diffSourceBlock, text string, start int, wt bool, seen map[string]bool) []Finding {
 	var bypassFindings []Finding
-	lines := strings.Split(text, "\n")
+	// Rule fixtures and other data live inside string literals (notably Go raw
+	// strings in this package's tests); only executable test code can bypass
+	// assertions. Masking preserves line numbers so findings still map to the diff.
+	lines := strings.Split(string(maskNonCode(b.file, text)), "\n")
 	for i, line := range lines {
 		lineNum := start + i
 		trimmed := strings.TrimSpace(line)

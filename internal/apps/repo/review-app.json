@@ -1,0 +1,15 @@
+{
+  "name": "review-repo",
+  "version": "0.1.0",
+  "protocol": "review-app/1",
+  "extensions": [".env", ".tf", ".tfvars"],
+  "file_patterns": [".env*", "package.json", "requirements.txt"],
+  "inputs": ["content"],
+  "description": "Standalone repository-level review app written in Go with bug, security, and slop submodules",
+  "rules": [
+    "repo/bug/unpinned-dependency",
+    "repo/security/hardcoded-secret",
+    "repo/security/env-secret-committed",
+    "repo/security/iac-public-cidr"
+  ]
+}
