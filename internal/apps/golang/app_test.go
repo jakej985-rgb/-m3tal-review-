@@ -282,6 +282,23 @@ func buggyNil() error {
 	var e *MyErr
 	return e
 }
+
+func nilReset() error {
+	var e *MyErr
+	e = &MyErr{}
+	e = nil
+	return e
+}
+
+func elseBranchBuggy(bad bool) error {
+	var e *MyErr
+	if bad {
+		e = &MyErr{}
+	} else {
+		return e
+	}
+	return nil
+}
 `
 	out := Run(protocol.Input{
 		Protocol: protocol.Version,
@@ -293,8 +310,8 @@ func buggyNil() error {
 			lines = append(lines, f.Line)
 		}
 	}
-	if len(lines) != 1 || lines[0] != 22 {
-		t.Fatalf("expected single typed-nil-error on line 22, got lines %v (%+v)", lines, out.Findings)
+	if len(lines) != 3 || lines[0] != 22 || lines[1] != 29 || lines[2] != 37 {
+		t.Fatalf("expected typed-nil-error on lines [22 29 37], got lines %v (%+v)", lines, out.Findings)
 	}
 }
 

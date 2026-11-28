@@ -233,29 +233,45 @@ func runAppsForAudit(repoRoot string, options auditOptions, reviewedFiles []stri
 	return outFindings, unanalyzed, checks, appRuns, incomplete, nil
 }
 
+func normalizeRuleForDedupe(rule string) string {
+	r := strings.ToLower(strings.TrimSpace(rule))
+	if idx := strings.LastIndex(r, "/"); idx >= 0 {
+		r = r[idx+1:]
+	}
+	switch r {
+	case "eval-injection":
+		return "eval-call"
+	case "tls-verification":
+		return "tls-insecure-skip-verify"
+	case "hardcoded-credentials":
+		return "hardcoded-credential"
+	}
+	return r
+}
+
 func dedupeAppAndLegacyFindings(legacyFindings, appFindings []review.Finding) []review.Finding {
 	if len(appFindings) == 0 {
 		return legacyFindings
 	}
 	type overlapKey struct {
-		file     string
-		line     int
-		category string
+		file string
+		line int
+		rule string
 	}
 	seen := make(map[overlapKey]bool, len(appFindings))
 	for _, f := range appFindings {
 		seen[overlapKey{
-			file:     f.File,
-			line:     f.Line,
-			category: strings.ToLower(strings.TrimSpace(f.Category)),
+			file: f.File,
+			line: f.Line,
+			rule: normalizeRuleForDedupe(f.Rule),
 		}] = true
 	}
 	out := make([]review.Finding, 0, len(legacyFindings)+len(appFindings))
 	for _, f := range legacyFindings {
 		k := overlapKey{
-			file:     f.File,
-			line:     f.Line,
-			category: strings.ToLower(strings.TrimSpace(f.Category)),
+			file: f.File,
+			line: f.Line,
+			rule: normalizeRuleForDedupe(f.Rule),
 		}
 		if seen[k] {
 			continue

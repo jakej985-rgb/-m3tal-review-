@@ -157,6 +157,35 @@ func maskTSRange(src string, i int, stopAtCloseBrace bool, out *strings.Builder)
 			}
 			continue
 		}
+		if ch == '/' && next != '/' && next != '*' && isRegexStart(src, i) {
+			out.WriteByte('/')
+			i++
+			inClass := false
+			for i < n && src[i] != '\n' {
+				if src[i] == '\\' && i+1 < n {
+					out.WriteByte(' ')
+					if src[i+1] == '\n' {
+						out.WriteByte('\n')
+					} else {
+						out.WriteByte(' ')
+					}
+					i += 2
+					continue
+				}
+				if src[i] == '[' {
+					inClass = true
+				} else if src[i] == ']' {
+					inClass = false
+				} else if src[i] == '/' && !inClass {
+					out.WriteByte('/')
+					i++
+					break
+				}
+				out.WriteByte(' ')
+				i++
+			}
+			continue
+		}
 		if ch == '"' || ch == '\'' {
 			q := ch
 			out.WriteByte(q)
@@ -221,4 +250,19 @@ func maskTSRange(src string, i int, stopAtCloseBrace bool, out *strings.Builder)
 		i++
 	}
 	return i
+}
+
+func isRegexStart(src string, slashIdx int) bool {
+	j := slashIdx - 1
+	for j >= 0 && (src[j] == ' ' || src[j] == '\t' || src[j] == '\n' || src[j] == '\r') {
+		j--
+	}
+	if j < 0 {
+		return true
+	}
+	switch src[j] {
+	case '(', '[', '{', ',', ';', '=', ':', '!', '&', '|', '?', '+', '-', '*', '%', '^', '~', '<', '>':
+		return true
+	}
+	return false
 }

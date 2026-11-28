@@ -82,13 +82,14 @@ func TestCollectAppOutputsAndDeduplication(t *testing.T) {
 
 	legacy := []review.Finding{
 		{Rule: "eval-injection", Category: "security", File: "app.ts", Line: 2},
+		{Rule: "hardcoded-credential", Category: "security", File: "app.ts", Line: 2},
 		{Rule: "tls-verification", Category: "security", File: "app.ts", Line: 5},
 	}
 	merged := dedupeAppAndLegacyFindings(legacy, appFindings)
-	if len(merged) != 2 {
-		t.Fatalf("expected 2 merged findings (tls-verification preserved + app eval-injection), got %+v", merged)
+	if len(merged) != 3 {
+		t.Fatalf("expected 3 merged findings (hardcoded-credential + tls-verification + app eval-call), got %+v", merged)
 	}
-	if merged[0].Rule != "tls-verification" || merged[1].Rule != "ts/security/eval-injection" {
+	if merged[0].Rule != "hardcoded-credential" || merged[1].Rule != "tls-verification" || merged[2].Rule != "ts/security/eval-injection" {
 		t.Fatalf("unexpected merged order/rules: %+v", merged)
 	}
 }
