@@ -146,7 +146,7 @@ func runAnalyzersCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	all := planning.DefaultAnalyzers()
+	all := defaultreg.New().Catalog()
 	var filtered []planning.AnalyzerMetadata
 	langSet := make(map[string]bool, len(opts.Language))
 	for _, l := range opts.Language {
@@ -193,7 +193,7 @@ func runExplainCommand(args []string) error {
 	plan := planning.BuildPlan(det, fws, builds, planning.PlanConfig{
 		Profile:        opts.Profile,
 		LanguageFilter: opts.Language,
-	}, planning.DefaultAnalyzers())
+	}, defaultreg.New().Catalog())
 
 	if opts.Format == "json" {
 		return printJSON(plan)
@@ -210,6 +210,10 @@ func runExplainCommand(args []string) error {
 }
 
 func runMultiLangCheckCommand(args []string) error {
+	const (
+		maxCheckFileBytes  int64 = 2 << 20
+		maxCheckTotalBytes int64 = 64 << 20
+	)
 	opts, err := parseDetectCLIOptions(args)
 	if err != nil {
 		return err
@@ -233,14 +237,19 @@ func runMultiLangCheckCommand(args []string) error {
 		langByPath[fd.Path] = fd
 	}
 	var targetFiles []analyzers.TargetFile
+	var totalBytes int64
 	for _, f := range inv.Files {
-		if f.Excluded {
+		if f.Excluded || f.Binary {
+			continue
+		}
+		if f.Size > maxCheckFileBytes || totalBytes+f.Size > maxCheckTotalBytes {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(inv.Root, filepath.FromSlash(f.Path)))
 		if err != nil {
 			continue
 		}
+		totalBytes += int64(len(data))
 		fd := langByPath[f.Path]
 		targetFiles = append(targetFiles, analyzers.TargetFile{
 			Path:      f.Path,
@@ -251,16 +260,28 @@ func runMultiLangCheckCommand(args []string) error {
 	}
 
 	cache := analyzers.NewResultCache(version)
-	findings, ranIDs := reg.RunPlan(context.Background(), plan, inv.Root, targetFiles, det, cache)
+	configKey := fmt.Sprintf("profile=%s;lang=%s", opts.Profile, strings.Join(opts.Language, ","))
+	rep := reg.RunPlan(context.Background(), plan, inv.Root, targetFiles, det, fws, configKey, cache)
 	if opts.Format == "json" {
-		return printJSON(struct {
-			Analyzers []string         `json:"analyzers"`
-			Findings  []review.Finding `json:"findings"`
-		}{Analyzers: ranIDs, Findings: findings})
+		if err := printJSON(struct {
+			Analyzers  []string                   `json:"analyzers"`
+			Statuses   []analyzers.AnalyzerStatus `json:"statuses"`
+			Incomplete bool                       `json:"incomplete,omitempty"`
+			Findings   []review.Finding           `json:"findings"`
+		}{Analyzers: rep.RanIDs, Statuses: rep.Statuses, Incomplete: rep.Incomplete, Findings: rep.Findings}); err != nil {
+			return err
+		}
+	} else {
+		fmt.Printf("Ran %d analyzer(s), found %d issue(s).\n", len(rep.RanIDs), len(rep.Findings))
+		for _, f := range rep.Findings {
+			fmt.Printf("%s:%d [%s] %s: %s\n", f.File, f.Line, f.Severity, f.Rule, f.Message)
+		}
 	}
-	fmt.Printf("Ran %d analyzer(s), found %d issue(s).\n", len(ranIDs), len(findings))
-	for _, f := range findings {
-		fmt.Printf("%s:%d [%s] %s: %s\n", f.File, f.Line, f.Severity, f.Rule, f.Message)
+	if rep.Incomplete {
+		return fmt.Errorf("check incomplete: one or more analyzers failed or were missing")
+	}
+	if len(rep.Findings) > 0 {
+		return fmt.Errorf("check failed: %d finding(s) detected", len(rep.Findings))
 	}
 	return nil
 }

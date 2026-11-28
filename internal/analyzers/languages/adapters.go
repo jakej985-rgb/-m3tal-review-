@@ -9,6 +9,7 @@ import (
 	"github.com/jakej985-rgb/m3tal-review/internal/apps/jvm"
 	"github.com/jakej985-rgb/m3tal-review/internal/apps/python"
 	"github.com/jakej985-rgb/m3tal-review/internal/apps/rust"
+	"github.com/jakej985-rgb/m3tal-review/internal/apps/shell"
 	"github.com/jakej985-rgb/m3tal-review/internal/apps/ts"
 	"github.com/jakej985-rgb/m3tal-review/internal/planning"
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
@@ -103,11 +104,19 @@ func RegisterAll(reg *analyzers.Registry) {
 	})
 	reg.Register(protocolAdapter{
 		meta: planning.AnalyzerMetadata{
-			ID: "lang-java", Name: "Java language analysis", Kind: planning.KindLanguage,
-			Languages: []string{"Java"}, Capabilities: []string{"static"},
-			Description: "Java security and concurrency analysis",
+			ID: "lang-java", Name: "Java/Kotlin language analysis", Kind: planning.KindLanguage,
+			Languages: []string{"Java", "Kotlin"}, Capabilities: []string{"static"},
+			Description: "Java and Kotlin security, coroutine, and concurrency analysis",
 		},
 		run: (jvm.App{}).Run,
+	})
+	reg.Register(protocolAdapter{
+		meta: planning.AnalyzerMetadata{
+			ID: "lang-shell", Name: "Shell language analysis", Kind: planning.KindLanguage,
+			Languages: []string{"Shell"}, Capabilities: []string{"static"},
+			Description: "Shell script safety and strict-mode analysis",
+		},
+		run: (shell.App{}).Run,
 	})
 	reg.Register(protocolAdapter{
 		meta: planning.AnalyzerMetadata{

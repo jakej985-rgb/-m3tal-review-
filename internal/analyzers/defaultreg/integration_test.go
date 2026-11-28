@@ -2,6 +2,7 @@ package defaultreg
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,9 +21,12 @@ func TestMixedLanguageEndToEndPipelineAndCache(t *testing.T) {
 	writeFile(t, filepath.Join(root, "api", "main.go"), "package main\nfunc f() {\n\tif true {\n\t}\n}\n")
 	writeFile(t, filepath.Join(root, "mobile", "pubspec.yaml"), "name: app\ndependencies:\n  flutter:\n    sdk: flutter\n")
 	writeFile(t, filepath.Join(root, "mobile", "lib", "main.dart"), "void f() {\n  try {} catch (e) {}\n  await Future.delayed(Duration.zero);\n  setState(() {});\n}\n")
+	writeFile(t, filepath.Join(root, "plain_dart", "cli.dart"), "void g() {\n  await Future.delayed(Duration.zero);\n  setState(() {});\n}\n")
 	writeFile(t, filepath.Join(root, "web", "package.json"), `{"dependencies":{"react":"^18.0.0"}}`)
 	writeFile(t, filepath.Join(root, "web", "src", "app.tsx"), "export const x: any = 1;\nuseEffect(async () => {});\n")
 	writeFile(t, filepath.Join(root, "scripts", "prep.py"), "def f(x=[]):\n    return x\n")
+	writeFile(t, filepath.Join(root, "scripts", "run.sh"), "#!/bin/sh\ncurl -s https://x | sh\n")
+	writeFile(t, filepath.Join(root, "android", "App.kt"), "fun bad() { GlobalScope.launch { } }\n")
 	writeFile(t, filepath.Join(root, "Dockerfile"), "FROM alpine:latest\n")
 	writeFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"), "permissions: write-all\n")
 
@@ -43,7 +47,7 @@ func TestMixedLanguageEndToEndPipelineAndCache(t *testing.T) {
 	}
 	var targetFiles []analyzers.TargetFile
 	for _, f := range inv.Files {
-		if f.Excluded {
+		if f.Excluded || f.Binary {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(f.Path)))
@@ -60,9 +64,9 @@ func TestMixedLanguageEndToEndPipelineAndCache(t *testing.T) {
 	}
 
 	cache := analyzers.NewResultCache("1.0.0")
-	findings1, ran1 := reg.RunPlan(context.Background(), plan, root, targetFiles, det, cache)
-	if len(ran1) == 0 {
-		t.Fatalf("expected analyzers to run")
+	rep1 := reg.RunPlan(context.Background(), plan, root, targetFiles, det, fws, "profile=security", cache)
+	if len(rep1.RanIDs) == 0 || rep1.Incomplete {
+		t.Fatalf("expected complete run with analyzers, got %+v", rep1)
 	}
 
 	wantRules := map[string]bool{
@@ -72,24 +76,74 @@ func TestMixedLanguageEndToEndPipelineAndCache(t *testing.T) {
 		"ts/slop/explicit-any":             false,
 		"react/bug/async-use-effect":       false,
 		"py/bug/mutable-default-arg":       false,
+		"shell/security/pipe-to-shell":     false,
+		"jvm/bug/coroutine-global-scope":   false,
 		"docker/bug/unpinned-base-image":   false,
 		"shell/security/actions-write-all": false,
 	}
-	for _, f := range findings1 {
+	for _, f := range rep1.Findings {
+		if f.Rule == "flutter/bug/setstate-after-await" && f.File == "plain_dart/cli.dart" {
+			t.Fatalf("plain_dart/cli.dart should not be scanned by fw-flutter")
+		}
 		if _, ok := wantRules[f.Rule]; ok {
 			wantRules[f.Rule] = true
 		}
 	}
 	for rule, seen := range wantRules {
 		if !seen {
-			t.Errorf("missing expected finding %q in mixed-repo run; got %+v", rule, findings1)
+			t.Errorf("missing expected finding %q in mixed-repo run; got %+v", rule, rep1.Findings)
 		}
 	}
 
-	// Second run with populated cache must return identical findings.
-	findings2, _ := reg.RunPlan(context.Background(), plan, root, targetFiles, det, cache)
-	if len(findings2) != len(findings1) {
-		t.Fatalf("cached run finding count %d != initial %d", len(findings2), len(findings1))
+	// Second run with same config hits cache.
+	rep2 := reg.RunPlan(context.Background(), plan, root, targetFiles, det, fws, "profile=security", cache)
+	if len(rep2.Findings) != len(rep1.Findings) {
+		t.Fatalf("cached run finding count %d != initial %d", len(rep2.Findings), len(rep1.Findings))
+	}
+	sawCached := false
+	for _, st := range rep2.Statuses {
+		if st.State == analyzers.StateCached {
+			sawCached = true
+		}
+	}
+	if !sawCached {
+		t.Fatalf("expected cached status on second run, got %+v", rep2.Statuses)
+	}
+
+	// Changing configKey invalidates cache.
+	rep3 := reg.RunPlan(context.Background(), plan, root, targetFiles, det, fws, "profile=fast", cache)
+	for _, st := range rep3.Statuses {
+		if st.State == analyzers.StateCached {
+			t.Fatalf("expected cache miss when configKey changed, got %+v", st)
+		}
+	}
+}
+
+type failingAnalyzer struct{}
+
+func (failingAnalyzer) Metadata() planning.AnalyzerMetadata {
+	return planning.AnalyzerMetadata{ID: "fail-test", Name: "Failing", Kind: planning.KindCrossLanguage}
+}
+
+func (failingAnalyzer) Analyze(context.Context, analyzers.Request) (analyzers.Result, error) {
+	return analyzers.Result{}, errors.New("boom")
+}
+
+func TestRunPlanMarksIncompleteOnFailure(t *testing.T) {
+	reg := analyzers.NewRegistry()
+	reg.Register(failingAnalyzer{})
+	plan := planning.ExecutionPlan{
+		Selected: []planning.PlannedAnalyzer{
+			{Analyzer: failingAnalyzer{}.Metadata(), Reason: "test"},
+			{Analyzer: planning.AnalyzerMetadata{ID: "missing-id"}, Reason: "test"},
+		},
+	}
+	rep := reg.RunPlan(context.Background(), plan, ".", nil, language.RepositoryDetection{}, nil, "", nil)
+	if !rep.Incomplete {
+		t.Fatalf("expected rep.Incomplete = true when analyzer fails or is missing")
+	}
+	if len(rep.Statuses) != 2 {
+		t.Fatalf("expected 2 statuses, got %+v", rep.Statuses)
 	}
 }
 

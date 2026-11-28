@@ -59,6 +59,32 @@ fi
 	}
 }
 
+func TestDiscoveryRefusesRelativeRepoAppPath(t *testing.T) {
+	repoDir := t.TempDir()
+	toolsDir := filepath.Join(repoDir, "tools")
+	if err := os.MkdirAll(toolsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeApp(t, toolsDir, "review-fake", "#!/bin/sh\necho ok\n")
+	origWD, _ := os.Getwd()
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+	t.Setenv("REVIEW_APPS_PATH", "tools")
+
+	discovered, diags, err := Discover(context.Background(), RunConfig{Root: repoDir})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(discovered) != 0 {
+		t.Fatalf("expected 0 discovered apps for relative repo path, got %d", len(discovered))
+	}
+	if len(diags) == 0 || !strings.Contains(diags[0].Message, "refused repo-local app") {
+		t.Fatalf("expected refused repo-local diagnostic, got %+v", diags)
+	}
+}
+
 func TestHostileAppsAndPartialResults(t *testing.T) {
 	appDir := t.TempDir()
 	// Good app for .good files

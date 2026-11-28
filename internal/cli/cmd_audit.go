@@ -381,8 +381,14 @@ func runAuditCommand(commandArgs []string) error {
 	if err != nil {
 		return err
 	}
+	var appRuns []review.AppRun
+	appIncomplete := false
 	if options.Apps && !options.NoApps {
-		appFindings, appUnanalyzed, appChecks, appErr := runAppsForAudit(repositoryRoot, options, reviewedFiles)
+		var appFindings []review.Finding
+		var appUnanalyzed []string
+		var appChecks []review.CheckResult
+		var appErr error
+		appFindings, appUnanalyzed, appChecks, appRuns, appIncomplete, appErr = runAppsForAudit(repositoryRoot, options, reviewedFiles)
 		if appErr != nil {
 			return appErr
 		}
@@ -425,7 +431,7 @@ func runAuditCommand(commandArgs []string) error {
 		}
 	}
 	progress.Stage(3, 4, "Executing audit pipeline and finalizing report")
-	return RunPipeline(RunnerConfig{
+	if err := RunPipeline(RunnerConfig{
 		Scope:                 "working-tree",
 		RepositoryRoot:        repositoryRoot,
 		Branch:                branch,
@@ -447,6 +453,7 @@ func runAuditCommand(commandArgs []string) error {
 		SnapshotHash:          snapshotHash,
 		Coverage:              coverage,
 		Checks:                frameworkChecks,
+		Apps:                  appRuns,
 		MaxFiles:              options.MaxFiles,
 		MaxBytes:              options.MaxBytes,
 		IncludeIgnored:        options.IncludeIgnored,
@@ -455,7 +462,12 @@ func runAuditCommand(commandArgs []string) error {
 		RepoPluginAllowSHA256: cfg.PluginAllowSHA256,
 		Semantic:              options.Semantic.pipelineOptions(repositoryRoot),
 		Progress:              progress,
-	})
+	}); err != nil {
+		return err
+	} else if appIncomplete {
+		return fmt.Errorf("audit incomplete: one or more language apps failed or are missing")
+	}
+	return nil
 }
 
 func workingTreeSnapshotWithOptions(repositoryRoot string, options auditOptions) (string, []string, []string, error) {

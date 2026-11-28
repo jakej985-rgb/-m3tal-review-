@@ -71,7 +71,14 @@ func Discover(ctx context.Context, cfg RunConfig) ([]App, []protocol.Diagnostic,
 			if !isAppBinaryName(name) {
 				continue
 			}
-			fullPath := filepath.Join(dir, name)
+			fullPath, absErr := filepath.Abs(filepath.Join(dir, name))
+			if absErr != nil {
+				diags = append(diags, protocol.Diagnostic{
+					Level:   "warning",
+					Message: fmt.Sprintf("refused unresolvable app %s: %v", name, absErr),
+				})
+				continue
+			}
 			resolved, err := filepath.EvalSymlinks(fullPath)
 			if err != nil {
 				resolved = fullPath
@@ -132,7 +139,7 @@ func isAppBinaryName(name string) bool {
 func isInsideDir(target, dir string) bool {
 	rel, err := filepath.Rel(dir, target)
 	if err != nil {
-		return false
+		return true
 	}
 	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..")
 }

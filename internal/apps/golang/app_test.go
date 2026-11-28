@@ -172,7 +172,7 @@ func TestRunFix(t *testing.T) {
 		Files: []protocol.File{{
 			Path:    "a.go",
 			Status:  "modified",
-			Content: "package a\nfunc f(ok bool) bool {\n\tif ok == true {\n\t\treturn true\n\t}\n\treturn false\n}\n",
+			Content: "package a\nfunc f(ok bool) bool {\n\tif ok == true { println(\"x == true\") }\n\treturn false\n}\n",
 		}},
 		Findings: []protocol.Finding{{
 			Rule:     "go/slop/redundant-bool-compare",
@@ -183,8 +183,9 @@ func TestRunFix(t *testing.T) {
 			Message:  "redundant",
 		}},
 	})
-	if len(fixOut.Patches) != 1 || fixOut.Patches[0].Replacement != "\tif ok {" {
-		t.Fatalf("unexpected patches: %+v", fixOut.Patches)
+	want := "\tif ok { println(\"x == true\") }"
+	if len(fixOut.Patches) != 1 || fixOut.Patches[0].Replacement != want {
+		t.Fatalf("expected %q, got %+v", want, fixOut.Patches)
 	}
 	if err := protocol.ValidateFixOutput(fixOut, "review-go", map[string]struct{}{"a.go": {}}); err != nil {
 		t.Fatalf("ValidateFixOutput failed: %v", err)

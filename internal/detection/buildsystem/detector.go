@@ -2,6 +2,7 @@ package buildsystem
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/jakej985-rgb/m3tal-review/internal/repository/scanner"
 )
@@ -35,7 +36,8 @@ func Detect(inv scanner.RepositoryInventory) []BuildSystemInfo {
 	for manifest, paths := range inv.Manifests {
 		name, ok := manifestToBuildSystem[manifest]
 		if !ok {
-			if len(paths) > 0 && (inv.Files[0].Ext == ".csproj" || len(manifest) > 7) {
+			lower := strings.ToLower(manifest)
+			if strings.HasSuffix(lower, ".csproj") || strings.HasSuffix(lower, ".sln") {
 				name = "NuGet/MSBuild"
 			} else {
 				continue

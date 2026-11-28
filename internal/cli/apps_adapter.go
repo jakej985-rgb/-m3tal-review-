@@ -24,13 +24,22 @@ func shouldRunApps(repoRoot string, options reviewOptions) bool {
 	return err == nil && len(discovered) > 0
 }
 
-func runAppsForReview(repoRoot string, options reviewOptions, stagedFiles []string, statuses map[string]string) ([]review.Finding, []string, []review.CheckResult, []review.AppRun, map[string]bool, error) {
+func runAppsForReview(repoRoot string, options reviewOptions, diff string, stagedFiles []string, statuses map[string]string) ([]review.Finding, []string, []review.CheckResult, []review.AppRun, map[string]bool, bool, error) {
+	addedByFile := make(map[string][]int)
+	for _, fd := range review.ParseDiff(diff) {
+		addedByFile[fd.Path] = fd.AddedLines
+	}
+
 	files := make([]protocol.File, 0, len(stagedFiles))
 	useWorktree := options.Base != "" || options.Unstaged
 	for _, rel := range stagedFiles {
 		status := statuses[rel]
 		if status == "" {
 			status = "modified"
+		}
+		added := addedByFile[rel]
+		if status != "deleted" && len(added) == 0 {
+			continue
 		}
 		var content string
 		if status != "deleted" {
@@ -47,9 +56,10 @@ func runAppsForReview(repoRoot string, options reviewOptions, stagedFiles []stri
 			}
 		}
 		files = append(files, protocol.File{
-			Path:    rel,
-			Status:  status,
-			Content: content,
+			Path:       rel,
+			Status:     status,
+			AddedLines: added,
+			Content:    content,
 		})
 	}
 
@@ -61,18 +71,23 @@ func runAppsForReview(repoRoot string, options reviewOptions, stagedFiles []stri
 		Timeout:  options.AppTimeout,
 	}, files)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, true, err
 	}
 
-	outFindings, checks, appRuns := collectAppOutputs(rep)
-	return outFindings, rep.UnanalyzedFiles, checks, appRuns, rep.RoutedFiles, nil
+	outFindings, checks, appRuns, unanalyzed, incomplete := collectAppOutputs(rep, options.Only, options.Skip)
+	return outFindings, unanalyzed, checks, appRuns, rep.RoutedFiles, incomplete, nil
 }
 
-func collectAppOutputs(rep apps.RunReport) ([]review.Finding, []review.CheckResult, []review.AppRun) {
+func collectAppOutputs(rep apps.RunReport, only, skip []string) ([]review.Finding, []review.CheckResult, []review.AppRun, []string, bool) {
 	var outFindings []review.Finding
 	for _, f := range rep.Findings {
-		outFindings = append(outFindings, protocolToReviewFinding(f))
+		if ruleAllowed(only, skip, f.Rule) {
+			outFindings = append(outFindings, protocolToReviewFinding(f))
+		}
 	}
+
+	unanalyzed := append([]string(nil), rep.UnanalyzedFiles...)
+	incomplete := rep.ExitCode >= protocol.ExitError || len(rep.MissingClaims) > 0
 
 	var checks []review.CheckResult
 	for _, mc := range rep.MissingClaims {
@@ -89,6 +104,7 @@ func collectAppOutputs(rep apps.RunReport) ([]review.Finding, []review.CheckResu
 		errText := ""
 		if ar.Status != "ok" {
 			status = "failed"
+			incomplete = true
 			msg = fmt.Sprintf("%s failed: %v", ar.App.Name, ar.Err)
 			errText = ar.Err.Error()
 			fmt.Fprintln(os.Stderr, msg)
@@ -110,7 +126,7 @@ func collectAppOutputs(rep apps.RunReport) ([]review.Finding, []review.CheckResu
 			Error:      errText,
 		})
 	}
-	return outFindings, checks, appRuns
+	return outFindings, checks, appRuns, unanalyzed, incomplete
 }
 
 func stripRoutedFilesFromDiff(diff string, routed map[string]bool) string {
@@ -150,7 +166,6 @@ func stripRoutedFilesFromDiff(diff string, routed map[string]bool) string {
 
 func diffChunkPath(chunk string) string {
 	firstLine, _, _ := strings.Cut(chunk, "\n")
-	// Format: diff --git a/<path> b/<path>
 	if idx := strings.LastIndex(firstLine, " b/"); idx >= 0 {
 		return strings.TrimSpace(firstLine[idx+3:])
 	}
@@ -172,7 +187,7 @@ func protocolToReviewFinding(f protocol.Finding) review.Finding {
 	}
 }
 
-func runAppsForAudit(repoRoot string, options auditOptions, reviewedFiles []string) ([]review.Finding, []string, []review.CheckResult, error) {
+func runAppsForAudit(repoRoot string, options auditOptions, reviewedFiles []string) ([]review.Finding, []string, []review.CheckResult, []review.AppRun, bool, error) {
 	files := make([]protocol.File, 0, len(reviewedFiles))
 	for _, rel := range reviewedFiles {
 		data, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
@@ -194,38 +209,11 @@ func runAppsForAudit(repoRoot string, options auditOptions, reviewedFiles []stri
 		Timeout:  options.AppTimeout,
 	}, files)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, true, err
 	}
 
-	var outFindings []review.Finding
-	for _, f := range rep.Findings {
-		outFindings = append(outFindings, protocolToReviewFinding(f))
-	}
-
-	var checks []review.CheckResult
-	for _, mc := range rep.MissingClaims {
-		checks = append(checks, review.CheckResult{
-			Name:    "app:" + mc.App,
-			Status:  "failed",
-			Message: mc.String(),
-		})
-	}
-	for _, ar := range rep.Apps {
-		status := "passed"
-		msg := fmt.Sprintf("%s %s (%d findings)", ar.App.Name, ar.App.Version, len(ar.Output.Findings))
-		if ar.Status != "ok" {
-			status = "failed"
-			msg = fmt.Sprintf("%s failed: %v", ar.App.Name, ar.Err)
-			fmt.Fprintln(os.Stderr, msg)
-		}
-		checks = append(checks, review.CheckResult{
-			Name:    "app:" + ar.App.Name,
-			Status:  status,
-			Message: msg,
-		})
-	}
-
-	return outFindings, rep.UnanalyzedFiles, checks, nil
+	outFindings, checks, appRuns, unanalyzed, incomplete := collectAppOutputs(rep, options.Only, options.Skip)
+	return outFindings, unanalyzed, checks, appRuns, incomplete, nil
 }
 
 func appCacheSalt(repoRoot string, appPaths []string) string {

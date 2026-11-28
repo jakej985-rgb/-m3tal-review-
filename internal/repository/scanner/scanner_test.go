@@ -40,6 +40,31 @@ func TestScanDiscoversManifestsAndExcludesGeneratedAndVendored(t *testing.T) {
 	}
 }
 
+func TestScanExcludesOutsideSymlink(t *testing.T) {
+	outside := t.TempDir()
+	secretPath := filepath.Join(outside, "secret.txt")
+	mustWrite(t, secretPath, "TOP_SECRET_VALUE")
+
+	root := t.TempDir()
+	if err := os.Symlink(secretPath, filepath.Join(root, "leak.txt")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	inv, err := Scan(root, ScanOptions{})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	for _, f := range inv.Files {
+		if f.Path == "leak.txt" {
+			if !f.Excluded || f.Header != "" {
+				t.Fatalf("expected outside symlink to be excluded with empty header, got %+v", f)
+			}
+			return
+		}
+	}
+	t.Fatalf("leak.txt not found in inventory")
+}
+
 func mustWrite(t *testing.T, p, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {

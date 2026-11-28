@@ -14,13 +14,14 @@ type FrameworkInfo struct {
 	Name       string   `json:"name"`
 	Kind       string   `json:"kind"` // "framework" | "infrastructure"
 	Confidence float64  `json:"confidence"`
+	Roots      []string `json:"roots,omitempty"`
 	Evidence   []string `json:"evidence"`
 }
 
 // Detect identifies frameworks and infrastructure platforms from repository inventory.
 func Detect(inv scanner.RepositoryInventory) []FrameworkInfo {
 	found := make(map[string]*FrameworkInfo)
-	add := func(name, kind string, conf float64, ev string) {
+	add := func(name, kind string, conf float64, rootDir, ev string) {
 		f, ok := found[name]
 		if !ok {
 			f = &FrameworkInfo{Name: name, Kind: kind, Confidence: conf}
@@ -28,6 +29,18 @@ func Detect(inv scanner.RepositoryInventory) []FrameworkInfo {
 		}
 		if conf > f.Confidence {
 			f.Confidence = conf
+		}
+		if rootDir != "" {
+			seenRoot := false
+			for _, r := range f.Roots {
+				if r == rootDir {
+					seenRoot = true
+					break
+				}
+			}
+			if !seenRoot {
+				f.Roots = append(f.Roots, rootDir)
+			}
 		}
 		for _, existing := range f.Evidence {
 			if existing == ev {
@@ -41,7 +54,7 @@ func Detect(inv scanner.RepositoryInventory) []FrameworkInfo {
 	for _, rel := range inv.Manifests["pubspec.yaml"] {
 		if data, err := os.ReadFile(filepath.Join(inv.Root, filepath.FromSlash(rel))); err == nil {
 			if strings.Contains(string(data), "flutter:") || strings.Contains(string(data), "sdk: flutter") {
-				add("Flutter", "framework", 0.98, "manifest "+rel+" declares flutter SDK")
+				add("Flutter", "framework", 0.98, filepath.ToSlash(filepath.Dir(rel)), "manifest "+rel+" declares flutter SDK")
 			}
 		}
 	}
@@ -50,17 +63,18 @@ func Detect(inv scanner.RepositoryInventory) []FrameworkInfo {
 	for _, rel := range inv.Manifests["package.json"] {
 		if data, err := os.ReadFile(filepath.Join(inv.Root, filepath.FromSlash(rel))); err == nil {
 			text := string(data)
+			dir := filepath.ToSlash(filepath.Dir(rel))
 			if strings.Contains(text, `"react"`) {
-				add("React", "framework", 0.95, "manifest "+rel+" depends on react")
+				add("React", "framework", 0.95, dir, "manifest "+rel+" depends on react")
 			}
 			if strings.Contains(text, `"next"`) {
-				add("Next.js", "framework", 0.95, "manifest "+rel+" depends on next")
+				add("Next.js", "framework", 0.95, dir, "manifest "+rel+" depends on next")
 			}
 			if strings.Contains(text, `"vue"`) {
-				add("Vue", "framework", 0.95, "manifest "+rel+" depends on vue")
+				add("Vue", "framework", 0.95, dir, "manifest "+rel+" depends on vue")
 			}
 			if strings.Contains(text, `"@angular/core"`) {
-				add("Angular", "framework", 0.95, "manifest "+rel+" depends on @angular/core")
+				add("Angular", "framework", 0.95, dir, "manifest "+rel+" depends on @angular/core")
 			}
 		}
 	}
@@ -70,11 +84,12 @@ func Detect(inv scanner.RepositoryInventory) []FrameworkInfo {
 		for _, rel := range inv.Manifests[key] {
 			if data, err := os.ReadFile(filepath.Join(inv.Root, filepath.FromSlash(rel))); err == nil {
 				lower := strings.ToLower(string(data))
+				dir := filepath.ToSlash(filepath.Dir(rel))
 				if strings.Contains(lower, "django") {
-					add("Django", "framework", 0.90, "manifest "+rel+" references django")
+					add("Django", "framework", 0.90, dir, "manifest "+rel+" references django")
 				}
 				if strings.Contains(lower, "fastapi") {
-					add("FastAPI", "framework", 0.90, "manifest "+rel+" references fastapi")
+					add("FastAPI", "framework", 0.90, dir, "manifest "+rel+" references fastapi")
 				}
 			}
 		}
@@ -85,11 +100,12 @@ func Detect(inv scanner.RepositoryInventory) []FrameworkInfo {
 		for _, rel := range inv.Manifests[key] {
 			if data, err := os.ReadFile(filepath.Join(inv.Root, filepath.FromSlash(rel))); err == nil {
 				text := string(data)
+				dir := filepath.ToSlash(filepath.Dir(rel))
 				if strings.Contains(text, "com.android.") {
-					add("Android", "framework", 0.95, "manifest "+rel+" uses Android Gradle plugin")
+					add("Android", "framework", 0.95, dir, "manifest "+rel+" uses Android Gradle plugin")
 				}
 				if strings.Contains(text, "spring-boot") {
-					add("Spring", "framework", 0.95, "manifest "+rel+" uses spring-boot")
+					add("Spring", "framework", 0.95, dir, "manifest "+rel+" uses spring-boot")
 				}
 			}
 		}
@@ -100,19 +116,20 @@ func Detect(inv scanner.RepositoryInventory) []FrameworkInfo {
 		if f.Excluded {
 			continue
 		}
+		dir := filepath.ToSlash(filepath.Dir(f.Path))
 		switch {
 		case f.Ext == ".csproj" || f.Ext == ".sln":
-			add(".NET", "framework", 0.95, "file "+f.Path)
+			add(".NET", "framework", 0.95, dir, "file "+f.Path)
 		case f.Ext == ".vue":
-			add("Vue", "framework", 0.95, "file "+f.Path)
+			add("Vue", "framework", 0.95, dir, "file "+f.Path)
 		case f.Base == "AndroidManifest.xml":
-			add("Android", "framework", 0.95, "file "+f.Path)
+			add("Android", "framework", 0.95, dir, "file "+f.Path)
 		case f.Base == "Dockerfile" || strings.HasPrefix(f.Base, "Dockerfile.") || f.Base == "compose.yaml" || f.Base == "docker-compose.yml":
-			add("Docker", "infrastructure", 0.98, "file "+f.Path)
+			add("Docker", "infrastructure", 0.98, dir, "file "+f.Path)
 		case f.Ext == ".tf" || f.Ext == ".tfvars":
-			add("Terraform", "infrastructure", 0.98, "file "+f.Path)
+			add("Terraform", "infrastructure", 0.98, dir, "file "+f.Path)
 		case strings.HasPrefix(f.Path, ".github/workflows/") && (f.Ext == ".yml" || f.Ext == ".yaml"):
-			add("GitHub Actions", "infrastructure", 0.98, "workflow "+f.Path)
+			add("GitHub Actions", "infrastructure", 0.98, ".github/workflows", "workflow "+f.Path)
 		}
 	}
 

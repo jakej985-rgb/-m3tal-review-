@@ -310,15 +310,29 @@ func RunVet(root string, files []protocol.File) ([]protocol.Finding, []protocol.
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	_ = cmd.Run()
+	runErr := cmd.Run()
+
+	var diags []protocol.Diagnostic
+	if ctx.Err() != nil {
+		diags = append(diags, protocol.Diagnostic{
+			Level:   "error",
+			Message: "go vet timed out: " + ctx.Err().Error(),
+		})
+	}
 
 	var findings []protocol.Finding
+	decodedAny := false
 	dec := json.NewDecoder(&stdout)
 	for dec.More() {
 		var pkgMap map[string]map[string][]vetEntry
 		if err := dec.Decode(&pkgMap); err != nil {
+			diags = append(diags, protocol.Diagnostic{
+				Level:   "error",
+				Message: "failed to decode go vet JSON output: " + err.Error(),
+			})
 			break
 		}
+		decodedAny = true
 		for _, analyzerMap := range pkgMap {
 			for analyzer, entries := range analyzerMap {
 				for _, e := range entries {
@@ -346,7 +360,17 @@ func RunVet(root string, files []protocol.File) ([]protocol.Finding, []protocol.
 			}
 		}
 	}
-	return findings, nil
+	if runErr != nil && !decodedAny && ctx.Err() == nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = runErr.Error()
+		}
+		diags = append(diags, protocol.Diagnostic{
+			Level:   "error",
+			Message: "go vet failed: " + msg,
+		})
+	}
+	return findings, diags
 }
 
 func parseVetPosn(root, posn string) (string, int) {

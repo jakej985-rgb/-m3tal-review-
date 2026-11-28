@@ -53,6 +53,14 @@ func TestMultiEvidenceLanguageDetection(t *testing.T) {
 	if got := byPath[".github/workflows/ci.yml"]; len(got.SecondaryLanguages) == 0 || got.SecondaryLanguages[0] != "Shell" {
 		t.Errorf("expected secondary Shell language in workflow, got %+v", got)
 	}
+	for _, l := range det.Languages {
+		if l.Name == "Go" && l.FileCount != 1 {
+			t.Errorf("expected Go FileCount == 1 (go.mod excluded), got %d", l.FileCount)
+		}
+		if l.Name == "Dockerfile" {
+			t.Errorf("expected Dockerfile not to appear as a source language in det.Languages")
+		}
+	}
 }
 
 func writeFile(t *testing.T, p, content string) {

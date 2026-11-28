@@ -20,6 +20,7 @@ type FileEntry struct {
 	Excluded  bool
 	ExclWhy   string
 	Generated bool
+	Binary    bool
 	Header    string
 }
 
@@ -76,6 +77,11 @@ func Scan(root string, opts ScanOptions) (RepositoryInventory, error) {
 		Manifests: make(map[string][]string),
 	}
 
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		resolvedRoot = absRoot
+	}
+
 	err = filepath.WalkDir(absRoot, func(p string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -106,19 +112,45 @@ func Scan(root string, opts ScanOptions) (RepositoryInventory, error) {
 			return nil
 		}
 
+		base := d.Name()
+		ext := strings.ToLower(filepath.Ext(base))
+
+		if d.Type()&os.ModeSymlink != 0 {
+			target, evalErr := filepath.EvalSymlinks(p)
+			if evalErr != nil || !isWithinRoot(target, resolvedRoot) {
+				inv.Files = append(inv.Files, FileEntry{
+					Path:     slashRel,
+					Ext:      ext,
+					Base:     base,
+					Excluded: true,
+					ExclWhy:  "symlink outside repository root",
+				})
+				return nil
+			}
+			st, stErr := os.Stat(target)
+			if stErr != nil || !st.Mode().IsRegular() {
+				inv.Files = append(inv.Files, FileEntry{
+					Path:     slashRel,
+					Ext:      ext,
+					Base:     base,
+					Excluded: true,
+					ExclWhy:  "non-regular symlink target",
+				})
+				return nil
+			}
+		}
+
 		info, err := d.Info()
 		var size int64
 		if err == nil {
 			size = info.Size()
 		}
 
-		base := d.Name()
-		ext := strings.ToLower(filepath.Ext(base))
 		if knownManifests[base] || ext == ".csproj" || ext == ".sln" {
 			inv.Manifests[base] = append(inv.Manifests[base], slashRel)
 		}
 
-		header := readHeader(p)
+		header, isBin := readHeader(p)
 		generated := isGeneratedContent(base, header)
 		excluded := generated
 		exclWhy := ""
@@ -141,6 +173,7 @@ func Scan(root string, opts ScanOptions) (RepositoryInventory, error) {
 			Excluded:  excluded,
 			ExclWhy:   exclWhy,
 			Generated: generated,
+			Binary:    isBin,
 			Header:    header,
 		})
 		return nil
@@ -158,22 +191,30 @@ func Scan(root string, opts ScanOptions) (RepositoryInventory, error) {
 	return inv, nil
 }
 
-func readHeader(path string) string {
+func isWithinRoot(target, root string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func readHeader(path string) (string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	defer f.Close()
 	var buf [headerReadBytes]byte
 	n, err := io.ReadFull(f, buf[:])
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return ""
+		return "", false
 	}
 	slice := buf[:n]
 	if bytes.IndexByte(slice, 0) >= 0 {
-		return "" // binary file
+		return "", true // binary file
 	}
-	return string(slice)
+	return string(slice), false
 }
 
 func isGeneratedContent(base, header string) bool {

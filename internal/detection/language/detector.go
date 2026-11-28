@@ -120,6 +120,18 @@ func Detect(inv scanner.RepositoryInventory, cfg DetectConfig) RepositoryDetecti
 		res.Files = append(res.Files, fd)
 		switch fd.Status {
 		case Detected:
+			if fd.IsManifest {
+				// Retain manifest evidence without inflating source-file counts.
+				if info, ok := langStats[fd.Language]; ok {
+					for _, e := range fd.Evidence {
+						if !langEvidenceSet[fd.Language][e] {
+							langEvidenceSet[fd.Language][e] = true
+							info.Evidence = append(info.Evidence, e)
+						}
+					}
+				}
+				continue
+			}
 			tier := lookupTier(fd.Language)
 			recordLang(fd.Language, tier, fd.Confidence, fd.Evidence)
 		case Ambiguous:
@@ -165,13 +177,14 @@ func classifyFile(f scanner.FileEntry, inv scanner.RepositoryInventory, cfg Dete
 		}
 	}
 
-	// 2. Known filenames & project manifests (High priority)
+	// 2. Known filenames & project manifests (High priority, excluded from source counts)
 	if known, ok := filenameToLang[f.Base]; ok {
 		return FileDetection{
 			Path:       f.Path,
 			Language:   known.lang,
 			Confidence: 0.98,
 			Status:     Detected,
+			IsManifest: true,
 			Evidence:   []string{"known filename/manifest: " + f.Base},
 		}
 	}
@@ -181,6 +194,7 @@ func classifyFile(f scanner.FileEntry, inv scanner.RepositoryInventory, cfg Dete
 			Language:   "Dockerfile",
 			Confidence: 0.95,
 			Status:     Detected,
+			IsManifest: true,
 			Evidence:   []string{"filename prefix: Dockerfile."},
 		}
 	}

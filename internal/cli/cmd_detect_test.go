@@ -31,6 +31,12 @@ func TestDetectionAndPlanningCLICommands(t *testing.T) {
 		t.Fatalf("explain failed: %v", err)
 	}
 	if err := runMultiLangCheckCommand([]string{root, "--profile", "security", "--format", "json"}); err != nil {
-		t.Fatalf("check failed: %v", err)
+		t.Fatalf("check failed on clean repo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bad.go"), []byte("package main\nfunc f() {\n\tif true {\n\t}\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runMultiLangCheckCommand([]string{root, "--profile", "fast", "--format", "json"}); err == nil {
+		t.Fatalf("expected check to return error when findings exist")
 	}
 }

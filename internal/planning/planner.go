@@ -36,7 +36,7 @@ type ExecutionPlan struct {
 }
 
 // BuildPlan selects applicable analyzers based on repository detection, frameworks, build systems, and config.
-func BuildPlan(det language.RepositoryDetection, frameworks []framework.FrameworkInfo, _ []buildsystem.BuildSystemInfo, cfg PlanConfig, catalog []AnalyzerMetadata) ExecutionPlan {
+func BuildPlan(det language.RepositoryDetection, frameworks []framework.FrameworkInfo, buildSystems []buildsystem.BuildSystemInfo, cfg PlanConfig, catalog []AnalyzerMetadata) ExecutionPlan {
 	detectedLangs := make(map[string]int, len(det.Languages))
 	for _, l := range det.Languages {
 		detectedLangs[strings.ToLower(l.Name)] = l.FileCount
@@ -44,6 +44,10 @@ func BuildPlan(det language.RepositoryDetection, frameworks []framework.Framewor
 	detectedFW := make(map[string]framework.FrameworkInfo, len(frameworks))
 	for _, fw := range frameworks {
 		detectedFW[strings.ToLower(fw.Name)] = fw
+	}
+	buildNames := make([]string, 0, len(buildSystems))
+	for _, bs := range buildSystems {
+		buildNames = append(buildNames, bs.Name)
 	}
 
 	langFilter := make(map[string]bool, len(cfg.LanguageFilter))
@@ -141,6 +145,20 @@ func BuildPlan(det language.RepositoryDetection, frameworks []framework.Framewor
 			})
 
 		default:
+			if containsIgnoreCase(a.Capabilities, "dependencies") {
+				if len(buildNames) == 0 {
+					plan.Skipped = append(plan.Skipped, SkippedAnalyzer{
+						Analyzer: a,
+						Reason:   "no package/build manifest detected",
+					})
+					continue
+				}
+				plan.Selected = append(plan.Selected, PlannedAnalyzer{
+					Analyzer: a,
+					Reason:   fmt.Sprintf("detected build system(s): %s", strings.Join(buildNames, ", ")),
+				})
+				continue
+			}
 			plan.Selected = append(plan.Selected, PlannedAnalyzer{
 				Analyzer: a,
 				Reason:   fmt.Sprintf("enabled for profile %q", profile),

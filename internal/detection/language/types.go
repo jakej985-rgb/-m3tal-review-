@@ -17,6 +17,7 @@ type FileDetection struct {
 	SecondaryLanguages []string        `json:"secondary_languages,omitempty"`
 	Confidence         float64         `json:"confidence"`
 	Status             DetectionStatus `json:"status"`
+	IsManifest         bool            `json:"is_manifest,omitempty"`
 	Evidence           []string        `json:"evidence,omitempty"`
 }
 
