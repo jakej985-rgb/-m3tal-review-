@@ -116,6 +116,9 @@ func executeWithArgs(command string, commandArgs []string) error {
 		return commandCheckDeps(commandArgs)
 
 	case "check":
+		if len(commandArgs) > 0 {
+			return runMultiLangCheckCommand(commandArgs)
+		}
 		return runCheckCommand()
 
 	case "review":
@@ -123,6 +126,24 @@ func executeWithArgs(command string, commandArgs []string) error {
 
 	case "audit":
 		return runAuditCommand(commandArgs)
+
+	case "apps":
+		return runAppsCommand(commandArgs)
+
+	case "scan":
+		return runScanCommand(commandArgs)
+
+	case "detect":
+		return runDetectCommand(commandArgs)
+
+	case "languages":
+		return runLanguagesCommand(commandArgs)
+
+	case "analyzers":
+		return runAnalyzersCommand(commandArgs)
+
+	case "plan", "explain-plan":
+		return runExplainCommand(commandArgs)
 
 	case "history":
 		return runHistoryCommand(commandArgs)

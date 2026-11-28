@@ -1,0 +1,14 @@
+{
+  "name": "review-jvm",
+  "version": "0.1.0",
+  "protocol": "review-app/1",
+  "extensions": [".java", ".kt", ".kts"],
+  "inputs": ["content"],
+  "description": "Standalone Java/Kotlin review app written in Go with bug, security, and slop submodules",
+  "rules": [
+    "jvm/bug/coroutine-global-scope",
+    "jvm/security/insecure-deserialization",
+    "jvm/security/command-injection",
+    "jvm/slop/debug-leftover"
+  ]
+}

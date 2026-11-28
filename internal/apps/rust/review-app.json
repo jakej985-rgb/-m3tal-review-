@@ -1,0 +1,14 @@
+{
+  "name": "review-rust",
+  "version": "0.1.0",
+  "protocol": "review-app/1",
+  "extensions": [".rs"],
+  "inputs": ["content"],
+  "description": "Standalone Rust review app written in Go with bug, security, and slop submodules",
+  "rules": [
+    "rust/bug/unwrap-in-prod",
+    "rust/security/unsafe-without-safety",
+    "rust/security/insecure-tls",
+    "rust/slop/broad-allow-lint"
+  ]
+}

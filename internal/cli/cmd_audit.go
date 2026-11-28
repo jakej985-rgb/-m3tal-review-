@@ -10,7 +10,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/jakej985-rgb/m3tal-review/internal/apps"
 	"github.com/jakej985-rgb/m3tal-review/internal/deps"
 	"github.com/jakej985-rgb/m3tal-review/internal/git"
 	"github.com/jakej985-rgb/m3tal-review/internal/review"
@@ -44,6 +46,10 @@ type auditOptions struct {
 	AllowRepoPlugins bool
 	Progress         *bool
 	Semantic         semanticCLIOptions
+	Apps             bool
+	NoApps           bool
+	AppPaths         []string
+	AppTimeout       time.Duration
 	seen             map[string]bool
 }
 
@@ -238,6 +244,36 @@ func parseAuditOptions(args []string) (auditOptions, error) {
 			options.PluginDir = v
 		case arg == "--allow-repo-plugins":
 			options.AllowRepoPlugins = true
+		case arg == "--apps":
+			options.Apps = true
+		case arg == "--no-apps":
+			options.NoApps = true
+		case arg == "--app-path":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("--app-path requires a directory")
+			}
+			i++
+			options.AppPaths = append(options.AppPaths, args[i])
+		case strings.HasPrefix(arg, "--app-path="):
+			_, v, _ := strings.Cut(arg, "=")
+			options.AppPaths = append(options.AppPaths, v)
+		case arg == "--app-timeout":
+			if i+1 >= len(args) {
+				return auditOptions{}, fmt.Errorf("--app-timeout requires a duration")
+			}
+			i++
+			d, err := time.ParseDuration(args[i])
+			if err != nil || d <= 0 || d > apps.MaxTimeout {
+				return auditOptions{}, fmt.Errorf("invalid --app-timeout %q (must be > 0 and <= %s)", args[i], apps.MaxTimeout)
+			}
+			options.AppTimeout = d
+		case strings.HasPrefix(arg, "--app-timeout="):
+			_, v, _ := strings.Cut(arg, "=")
+			d, err := time.ParseDuration(v)
+			if err != nil || d <= 0 || d > apps.MaxTimeout {
+				return auditOptions{}, fmt.Errorf("invalid --app-timeout %q (must be > 0 and <= %s)", v, apps.MaxTimeout)
+			}
+			options.AppTimeout = d
 		default:
 			if strings.HasPrefix(arg, "--semantic") {
 				flag := arg
@@ -344,6 +380,15 @@ func runAuditCommand(commandArgs []string) error {
 	findings, reviewedFiles, unanalyzedFiles, snapshotHash, coverage, err := analyzeWorkingTree(repositoryRoot, options, rules, progress)
 	if err != nil {
 		return err
+	}
+	if options.Apps && !options.NoApps {
+		appFindings, appUnanalyzed, appChecks, appErr := runAppsForAudit(repositoryRoot, options, reviewedFiles)
+		if appErr != nil {
+			return appErr
+		}
+		findings = append(findings, appFindings...)
+		unanalyzedFiles = append(unanalyzedFiles, appUnanalyzed...)
+		frameworkChecks = append(frameworkChecks, appChecks...)
 	}
 	if options.VulnScan || options.CheckDeps {
 		progress.Stage(2, 4, "Scanning dependencies and vulnerability databases")
@@ -562,7 +607,11 @@ func analyzeWorkingTree(repositoryRoot string, options auditOptions, rules []rev
 		}
 	}
 	engine := cappedEngine(options.Jobs, fileRules...)
-	cache := newAuditCache(repositoryRoot, fileRules, true)
+	salt := ""
+	if options.Apps && !options.NoApps {
+		salt = appCacheSalt(repositoryRoot, options.AppPaths)
+	}
+	cache := newAuditCacheWithSalt(repositoryRoot, fileRules, salt, true)
 	defer cache.flush()
 	hash := sha256.New()
 	var findings []review.Finding

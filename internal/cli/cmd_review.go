@@ -252,10 +252,28 @@ func runReviewCommand(commandArgs []string) error {
 	}
 	rules = filterRules(rules, options.Only, options.Skip)
 	capProcessCPU(options.Jobs)
+	var appFindings []review.Finding
+	var appUnanalyzed []string
+	var appChecks []review.CheckResult
+	var appRuns []review.AppRun
+	legacyDiff := diff
+	if shouldRunApps(repositoryRoot, options) {
+		var routed map[string]bool
+		var appErr error
+		appFindings, appUnanalyzed, appChecks, appRuns, routed, appErr = runAppsForReview(repositoryRoot, options, stagedFiles, stagedStatuses)
+		if appErr != nil {
+			return appErr
+		}
+		legacyDiff = stripRoutedFilesFromDiff(diff, routed)
+	}
+
 	progress.Stage(2, 4, "Executing heuristic review rules")
 	engine := cappedEngine(options.Jobs, rules...)
 
-	findings := engine.Run(diff)
+	findings := engine.Run(legacyDiff)
+	findings = append(findings, appFindings...)
+	unanalyzedFiles = append(unanalyzedFiles, appUnanalyzed...)
+	frameworkChecks = append(frameworkChecks, appChecks...)
 
 	progress.Stage(3, 4, "Running review pipeline and integrations")
 
@@ -284,6 +302,7 @@ func runReviewCommand(commandArgs []string) error {
 		InitialFindings:       findings,
 		WorkingTreeDiff:       options.Base != "",
 		Checks:                frameworkChecks,
+		Apps:                  appRuns,
 		CheckRun:              options.CheckRun,
 		CheckRunSHA:           options.CheckRunSHA,
 		PRComment:             options.PRComment,

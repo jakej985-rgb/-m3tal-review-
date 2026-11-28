@@ -1,0 +1,25 @@
+{
+  "name": "review-go",
+  "version": "0.1.0",
+  "protocol": "review-app/1",
+  "extensions": [".go"],
+  "inputs": ["content", "worktree"],
+  "description": "Standalone Go language review app with bug, security, and slop detectors",
+  "rules": [
+    "go/bug/empty-branch",
+    "go/bug/defer-in-loop",
+    "go/bug/waitgroup-add-in-goroutine",
+    "go/bug/unchecked-type-assert",
+    "go/bug/typed-nil-error",
+    "go/bug/vet-diagnostic",
+    "go/security/tls-insecure-skip-verify",
+    "go/security/exec-command-var",
+    "go/security/sql-string-concat",
+    "go/security/ssrf-unvalidated-url",
+    "go/slop/restating-comment",
+    "go/slop/redundant-bool-compare",
+    "go/slop/deep-nesting",
+    "go/slop/else-after-return",
+    "go/slop/bool-if-return"
+  ]
+}

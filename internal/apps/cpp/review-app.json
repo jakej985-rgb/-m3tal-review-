@@ -1,0 +1,14 @@
+{
+  "name": "review-cpp",
+  "version": "0.1.0",
+  "protocol": "review-app/1",
+  "extensions": [".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx"],
+  "inputs": ["content"],
+  "description": "Standalone C/C++ review app written in Go with bug, security, and slop submodules",
+  "rules": [
+    "cpp/bug/empty-catch",
+    "cpp/security/unbounded-buffer",
+    "cpp/security/command-exec",
+    "cpp/slop/using-namespace-header"
+  ]
+}

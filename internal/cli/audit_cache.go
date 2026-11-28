@@ -35,6 +35,10 @@ type auditCache struct {
 }
 
 func newAuditCache(repositoryRoot string, rules []review.Rule, enabled bool) *auditCache {
+	return newAuditCacheWithSalt(repositoryRoot, rules, "", enabled)
+}
+
+func newAuditCacheWithSalt(repositoryRoot string, rules []review.Rule, salt string, enabled bool) *auditCache {
 	if !enabled {
 		return nil
 	}
@@ -51,7 +55,7 @@ func newAuditCache(repositoryRoot string, rules []review.Rule, enabled bool) *au
 		names = append(names, r.Name())
 	}
 	sort.Strings(names)
-	ruleSum := sha256.Sum256([]byte(strings.Join(names, "\x00") + "\x00" + auditCacheSchema + "\x00" + version))
+	ruleSum := sha256.Sum256([]byte(strings.Join(names, "\x00") + "\x00" + auditCacheSchema + "\x00" + version + "\x00" + salt))
 	dir := filepath.Join(base, "m3tal-review", hex.EncodeToString(rootSum[:8]))
 	c := &auditCache{
 		path:    filepath.Join(dir, "audit-"+hex.EncodeToString(ruleSum[:8])+".json"),

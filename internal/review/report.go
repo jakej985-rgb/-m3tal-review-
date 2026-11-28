@@ -78,9 +78,24 @@ type Report struct {
 	// separates semantic-engine diagnostics and per-analyzer status
 	// from the pattern-tier findings.
 	Analysis *AnalysisSection `json:"analysis,omitempty"`
+	// Apps records per-language-app execution metadata when --apps is used.
+	Apps []AppRun `json:"apps,omitempty"`
 	// Grade holds the deterministic quality score (0–100) and letter
 	// grade (A–F) computed from findings. Always present.
 	Grade *GradeResult `json:"grade,omitempty"`
+}
+
+// AppRun records execution telemetry for a single language app in a run.
+type AppRun struct {
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	Status     string `json:"status"`
+	ExitCode   int    `json:"exit_code"`
+	DurationMs int64  `json:"duration_ms"`
+	Files      int    `json:"files"`
+	Rules      int    `json:"rules"`
+	Findings   int    `json:"findings"`
+	Error      string `json:"error,omitempty"`
 }
 
 func NewReport(

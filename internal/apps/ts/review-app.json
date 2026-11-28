@@ -1,0 +1,18 @@
+{
+  "name": "review-ts",
+  "version": "0.1.0",
+  "protocol": "review-app/1",
+  "extensions": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
+  "inputs": ["content"],
+  "description": "Standalone TypeScript/JavaScript review app written in Go with bug, security, and slop submodules",
+  "rules": [
+    "ts/bug/empty-catch",
+    "ts/bug/missing-radix",
+    "ts/bug/non-strict-equality",
+    "ts/security/eval-call",
+    "ts/security/child-process-exec",
+    "ts/security/dom-xss",
+    "ts/slop/explicit-any",
+    "ts/slop/redundant-boolean"
+  ]
+}

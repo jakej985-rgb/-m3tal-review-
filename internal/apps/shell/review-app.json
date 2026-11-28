@@ -1,0 +1,17 @@
+{
+  "name": "review-shell",
+  "version": "0.1.0",
+  "protocol": "review-app/1",
+  "extensions": [".sh", ".bash", ".zsh"],
+  "file_patterns": ["Dockerfile", "Dockerfile.*", "Makefile", "*.mk", ".github/workflows/*.yml", ".github/workflows/*.yaml"],
+  "inputs": ["content"],
+  "description": "Standalone Shell & CI workflow review app written in Go with bug, security, and slop submodules",
+  "rules": [
+    "shell/bug/cd-without-exit",
+    "shell/security/pipe-to-shell",
+    "shell/security/unquoted-rm-var",
+    "shell/security/actions-write-all",
+    "shell/security/actions-unpinned-uses",
+    "shell/slop/missing-strict-mode"
+  ]
+}
