@@ -239,7 +239,7 @@ func ValidateRelativePath(p string) error {
 	if p == "" {
 		return errors.New("path must be non-empty")
 	}
-	if strings.HasPrefix(p, "/") || strings.Contains(p, "\\") {
+	if strings.HasPrefix(p, "/") || strings.Contains(p, "\\") || hasWindowsDrivePrefix(p) {
 		return fmt.Errorf("path %q must be relative and slash-separated", p)
 	}
 	for i := 0; i < len(p); i++ {
@@ -252,6 +252,14 @@ func ValidateRelativePath(p string) error {
 		return fmt.Errorf("path %q is not clean or escapes root", p)
 	}
 	return nil
+}
+
+func hasWindowsDrivePrefix(p string) bool {
+	if len(p) < 2 || p[1] != ':' {
+		return false
+	}
+	c := p[0]
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 // IsValidRuleID reports whether id matches <lang>/<category>/<slug>.

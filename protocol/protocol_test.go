@@ -183,3 +183,30 @@ func TestValidateOutputAgainstDescribe(t *testing.T) {
 		t.Fatalf("expected error for undeclared runtime rule")
 	}
 }
+
+func TestValidateRelativePath(t *testing.T) {
+	valid := []string{"a/b.go", "main.go", "internal/apps/exec_windows.go"}
+	for _, p := range valid {
+		if err := ValidateRelativePath(p); err != nil {
+			t.Fatalf("expected %q to be valid, got %v", p, err)
+		}
+	}
+	invalid := []string{
+		"",
+		".",
+		"..",
+		"../escape.go",
+		"a/../b.go",
+		"/etc/passwd",
+		"a\\b.go",
+		"C:/Users/victim/secret.go",
+		"c:relative.go",
+		"D:\\secret.go",
+		"foo\x00bar.go",
+	}
+	for _, p := range invalid {
+		if err := ValidateRelativePath(p); err == nil {
+			t.Fatalf("expected %q to fail ValidateRelativePath", p)
+		}
+	}
+}

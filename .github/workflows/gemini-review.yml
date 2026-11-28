@@ -21,10 +21,6 @@ on:
         type: string
         default: ''
 
-concurrency:
-  group: 'gemini-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}'
-  cancel-in-progress: true
-
 defaults:
   run:
     shell: bash
@@ -56,6 +52,11 @@ jobs:
           github.event.comment.author_association || github.event.review.author_association
         )
       )
+    concurrency:
+      group: >-
+        gemini-review-${{ github.event.pull_request.number ||
+        github.event.issue.number || inputs.pr_number }}
+      cancel-in-progress: true
     permissions:
       contents: read
       issues: write
@@ -78,6 +79,9 @@ jobs:
         if: steps.check_auth.outputs.enabled == 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: >-
+            ${{ github.event.pull_request.head.sha ||
+            format('refs/pull/{0}/head', github.event.issue.number || inputs.pr_number) }}
           persist-credentials: false
 
       - name: Prepare prompt context
@@ -123,13 +127,13 @@ jobs:
           <PROTOCOL>
           1. Call `activate_skill` with `name: "code-review-commons"` and follow project rules in `GEMINI.md`
              (skip formatting/indentation/import-order comments).
-          2. Read PR metadata first via `mcp_github_pull_request_read` (`method: "get"`, `owner`, `repo`,
-             numeric `pullNumber`):
-             - If `changed_files <= 20` and `(additions + deletions) <= 1500`: call `method: "get_diff"`.
-             - Otherwise (large PRs), do NOT call `get_diff` (to stay under 250k input tokens/min); call
-               `method: "get_files"` with `perPage: 15`, `page: 1` (plus `page: 2` if needed) and inspect key
-               files with targeted `read_file` ranges.
-             - Do not list the whole repository; finish within 8 turns.
+          2. Read PR metadata and diff via `mcp_github_pull_request_read` (`owner`, `repo`, numeric
+             `pullNumber`):
+             - Call `mcp_github_pull_request_read` with `method: "get"` and `method: "get_diff"`.
+             - Do NOT call `get_files`, `get_commits`, or `get_reviews` (array MCP outputs fail client
+               schema validation).
+             - Do not list the whole repository; use targeted `read_file` or `grep_search` ranges only to
+               verify a potential bug.
           3. Report only verifiable bugs, security/traversal issues, cross-platform hazards, or missing tests on
              changed (`+`/`-`) lines with `🔴`/`🟠`/`🟡`/`🟢` severity.
           4. Always post the review to GitHub using ONLY `event: "COMMENT"` (never `APPROVE` or
